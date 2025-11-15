@@ -9,6 +9,15 @@ import {
   IonTabButton,
   IonTabs,
   setupIonicReact,
+  IonMenu,
+  IonContent,
+  IonList,
+  IonItem,
+  IonMenuToggle,
+  IonHeader,
+  IonToolbar,
+  IonTitle,
+  IonListHeader,
 } from "@ionic/react";
 import { IonReactRouter } from "@ionic/react-router";
 import { ellipse, square, triangle } from "ionicons/icons";
@@ -17,6 +26,9 @@ import Transactions from "./pages/Transactions";
 import AddTransaction from "./pages/AddTransaction";
 import TransactionDetails from "./pages/TransactionDetails";
 import Tab3 from "./pages/Tab3";
+import BucketsManagement from "./pages/BucketsManagement";
+import AccountsManagement from "./pages/AccountsManagement";
+import RecipientsManagement from "./pages/RecipientsManagement";
 
 /* Core CSS required for Ionic components to work properly */
 import "@ionic/react/css/core.css";
@@ -34,15 +46,7 @@ import "@ionic/react/css/text-transformation.css";
 import "@ionic/react/css/flex-utils.css";
 import "@ionic/react/css/display.css";
 
-/**
- * Ionic Dark Mode
- * -----------------------------------------------------
- * For more info, please see:
- * https://ionicframework.com/docs/theming/dark-mode
- */
-
-/* import '@ionic/react/css/palettes/dark.always.css'; */
-/* import '@ionic/react/css/palettes/dark.class.css'; */
+/* Ionic Dark Mode */
 import "@ionic/react/css/palettes/dark.system.css";
 
 /* Theme variables */
@@ -56,8 +60,33 @@ const InnerApp: React.FC = () => {
   return (
     <IonApp>
       <IonReactRouter>
+        {/* Side menu */}
+        <IonMenu side="start" contentId="main">
+          <IonHeader>
+            <IonToolbar>
+              <IonTitle>Manage</IonTitle>
+            </IonToolbar>
+          </IonHeader>
+          <IonContent>
+            <IonList>
+              <IonListHeader>Manage</IonListHeader>
+              <IonMenuToggle autoHide={true}>
+                <IonItem button routerLink="/accounts-management">
+                  <IonLabel>Accounts</IonLabel>
+                </IonItem>
+                <IonItem button routerLink="/buckets-management">
+                  <IonLabel>Buckets</IonLabel>
+                </IonItem>
+                <IonItem button routerLink="/recipients-management">
+                  <IonLabel>Recipients</IonLabel>
+                </IonItem>
+              </IonMenuToggle>
+            </IonList>
+          </IonContent>
+        </IonMenu>
+
         <IonTabs>
-          <IonRouterOutlet>
+          <IonRouterOutlet id="main">
             <Route
               exact
               path="/transactions"
@@ -68,6 +97,15 @@ const InnerApp: React.FC = () => {
             </Route>
             <Route exact path="/transaction-details/:id">
               <TransactionDetails />
+            </Route>
+            <Route path="/buckets-management">
+              <BucketsManagement />
+            </Route>
+            <Route path="/accounts-management">
+              <AccountsManagement />
+            </Route>
+            <Route path="/recipients-management">
+              <RecipientsManagement />
             </Route>
             <Route path="/tab3">
               <Tab3 />

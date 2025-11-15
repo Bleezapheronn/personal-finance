@@ -1,30 +1,113 @@
 import Dexie from "dexie";
 
-// Define your database
+// Define TypeScript interfaces for each table
+
+export interface Transaction {
+  id?: number;
+  categoryId: number;
+  paymentChannelId: number;
+  recipientId: number;
+  date: Date;
+  amount: number;
+  originalAmount?: number;
+  originalCurrency?: string;
+  exchangeRate?: number;
+  transactionReference?: string;
+  transactionCost?: number;
+  description?: string;
+}
+
+export interface Bucket {
+  id?: number;
+  name?: string;
+  description?: string;
+  minPercentage: number;
+  maxPercentage: number;
+  minFixedAmount?: number;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Category {
+  id?: number;
+  name?: string;
+  bucketId: number;
+  description?: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Account {
+  id?: number;
+  name: string;
+  description?: string;
+  currency?: string;
+  // store uploaded image as a Blob so we can keep it fully local
+  imageBlob?: Blob | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PaymentMethod {
+  id?: number;
+  accountId: number;
+  name: string;
+  description?: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Recipient {
+  id?: number;
+  name: string;
+  email?: string;
+  phone?: string;
+  tillNumber?: string;
+  paybill?: string;
+  accountNumber?: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Define your database class with all tables
+
 export class FinanceDB extends Dexie {
   transactions: Dexie.Table<Transaction, number>;
+  buckets: Dexie.Table<Bucket, number>;
+  categories: Dexie.Table<Category, number>;
+  accounts: Dexie.Table<Account, number>;
+  paymentMethods: Dexie.Table<PaymentMethod, number>;
+  recipients: Dexie.Table<Recipient, number>;
 
   constructor() {
     super("FinanceDB");
-    this.version(2).stores({
-      transactions:
-        "++id, date, amount, transactionCost, category, paymentMode, paymentChannel, description, recipient",
-    });
-    this.transactions = this.table("transactions");
-  }
-}
 
-// Define the type for your transactions
-export interface Transaction {
-  id?: number;
-  date: Date;
-  amount: number;
-  transactionCost?: number;
-  category: string;
-  paymentMode: string;
-  paymentChannel?: string;
-  description?: string;
-  recipient?: string;
+    this.version(5).stores({
+      transactions:
+        "++id, categoryId, paymentChannelId, recipientId, date, amount, originalAmount, originalCurrency, exchangeRate, transactionReference, description",
+      buckets:
+        "++id, name, description, minPercentage, maxPercentage, minFixedAmount, isActive, createdAt, updatedAt",
+      categories:
+        "++id, name, bucketId, description, isActive, createdAt, updatedAt",
+      accounts:
+        "++id, name, currency, description, isActive, createdAt, updatedAt",
+      paymentMethods:
+        "++id, accountId, name, description, isActive, createdAt, updatedAt",
+      recipients: "++id, name, email, phone, tillNumber, paybill, accountNumber, isActive, createdAt, updatedAt",
+    });
+
+    this.transactions = this.table("transactions");
+    this.buckets = this.table("buckets");
+    this.categories = this.table("categories");
+    this.accounts = this.table("accounts");
+    this.paymentMethods = this.table("paymentMethods");
+    this.recipients = this.table("recipients");
+  }
 }
 
 // Export a singleton db instance
