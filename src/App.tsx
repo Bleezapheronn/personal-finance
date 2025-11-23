@@ -29,6 +29,7 @@ import Tab3 from "./pages/Tab3";
 import BucketsManagement from "./pages/BucketsManagement";
 import AccountsManagement from "./pages/AccountsManagement";
 import RecipientsManagement from "./pages/RecipientsManagement";
+import SmsImportTemplatesManagement from "./pages/SmsImportTemplatesManagement";
 
 /* Core CSS required for Ionic components to work properly */
 import "@ionic/react/css/core.css";
@@ -80,6 +81,9 @@ const InnerApp: React.FC = () => {
                 <IonItem button routerLink="/recipients-management">
                   <IonLabel>Recipients</IonLabel>
                 </IonItem>
+                <IonItem button routerLink="/sms-import-templates">
+                  <IonLabel>SMS Import Templates</IonLabel>
+                </IonItem>
               </IonMenuToggle>
             </IonList>
           </IonContent>
@@ -95,6 +99,9 @@ const InnerApp: React.FC = () => {
             <Route exact path="/add">
               <AddTransaction />
             </Route>
+            <Route exact path="/edit/:id">
+              <AddTransaction />
+            </Route>
             <Route exact path="/transaction-details/:id">
               <TransactionDetails />
             </Route>
@@ -106,6 +113,9 @@ const InnerApp: React.FC = () => {
             </Route>
             <Route path="/recipients-management">
               <RecipientsManagement />
+            </Route>
+            <Route path="/sms-import-templates">
+              <SmsImportTemplatesManagement />
             </Route>
             <Route path="/tab3">
               <Tab3 />

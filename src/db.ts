@@ -74,6 +74,26 @@ export interface Recipient {
   updatedAt: Date;
 }
 
+export interface SmsImportTemplate {
+  id?: number;
+  name: string;
+  description?: string;
+  paymentMethodId?: number; // Link to specific payment method
+  // Regex patterns for parsing
+  referencePattern?: string;
+  amountPattern?: string;
+  recipientNamePattern?: string;
+  recipientPhonePattern?: string;
+  dateTimePattern?: string;
+  costPattern?: string;
+  // Pattern to detect transaction type (income/expense)
+  incomePattern?: string; // e.g., "You have received"
+  expensePattern?: string; // e.g., "sent to"
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // Define your database class with all tables
 
 export class FinanceDB extends Dexie {
@@ -83,11 +103,12 @@ export class FinanceDB extends Dexie {
   accounts: Dexie.Table<Account, number>;
   paymentMethods: Dexie.Table<PaymentMethod, number>;
   recipients: Dexie.Table<Recipient, number>;
+  smsImportTemplates: Dexie.Table<SmsImportTemplate, number>;
 
   constructor() {
     super("FinanceDB");
 
-    this.version(5).stores({
+    this.version(6).stores({
       transactions:
         "++id, categoryId, paymentChannelId, recipientId, date, amount, originalAmount, originalCurrency, exchangeRate, transactionReference, description",
       buckets:
@@ -98,7 +119,10 @@ export class FinanceDB extends Dexie {
         "++id, name, currency, description, isActive, createdAt, updatedAt",
       paymentMethods:
         "++id, accountId, name, description, isActive, createdAt, updatedAt",
-      recipients: "++id, name, email, phone, tillNumber, paybill, accountNumber, isActive, createdAt, updatedAt",
+      recipients:
+        "++id, name, email, phone, tillNumber, paybill, accountNumber, isActive, createdAt, updatedAt",
+      smsImportTemplates:
+        "++id, name, paymentMethodId, description, isActive, createdAt, updatedAt",
     });
 
     this.transactions = this.table("transactions");
@@ -107,6 +131,7 @@ export class FinanceDB extends Dexie {
     this.accounts = this.table("accounts");
     this.paymentMethods = this.table("paymentMethods");
     this.recipients = this.table("recipients");
+    this.smsImportTemplates = this.table("smsImportTemplates");
   }
 }
 

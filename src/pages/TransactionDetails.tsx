@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   IonPage,
   IonHeader,
   IonToolbar,
   IonTitle,
+  IonButtons,
+  IonMenuButton,
   IonContent,
   IonCard,
   IonCardHeader,
@@ -14,24 +16,59 @@ import {
   IonItem,
   IonLabel,
   useIonViewWillEnter,
+  IonIcon,
 } from "@ionic/react";
-import { useParams } from "react-router-dom";
-import { db, Transaction } from "../db"; // Adjust path as needed
+import { useParams, useHistory } from "react-router-dom";
+import { createOutline } from "ionicons/icons";
+import {
+  db,
+  Transaction,
+  Category,
+  PaymentMethod,
+  Recipient,
+  Account,
+} from "../db";
 
 const TransactionDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useHistory();
   const [txn, setTxn] = useState<Transaction | null>(null);
   const [history, setHistory] = useState<Transaction[]>([]);
+  const [category, setCategory] = useState<Category | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(
+    null
+  );
+  const [account, setAccount] = useState<Account | null>(null);
+  const [recipient, setRecipient] = useState<Recipient | null>(null);
 
   useIonViewWillEnter(() => {
     const fetchDetail = async () => {
       const transaction = await db.transactions.get(Number(id));
       setTxn(transaction || null);
-      if (transaction?.recipient) {
+      if (transaction) {
+        // Fetch related data
+        const [cat, pm, rec, acc] = await Promise.all([
+          db.categories.get(transaction.categoryId),
+          db.paymentMethods.get(transaction.paymentChannelId),
+          db.recipients.get(transaction.recipientId),
+          db.paymentMethods
+            .get(transaction.paymentChannelId)
+            .then(async (pm) => {
+              if (pm?.accountId) {
+                return db.accounts.get(pm.accountId);
+              }
+              return null;
+            }),
+        ]);
+        setCategory(cat || null);
+        setPaymentMethod(pm || null);
+        setRecipient(rec || null);
+        setAccount(acc || null);
+
         // Fetch recent history for same recipient
         const allForRecipient = await db.transactions
-          .where("recipient")
-          .equals(transaction.recipient)
+          .where("recipientId")
+          .equals(transaction.recipientId)
           .reverse()
           .sortBy("date");
         setHistory(
@@ -47,6 +84,9 @@ const TransactionDetails: React.FC = () => {
       <IonPage>
         <IonHeader>
           <IonToolbar>
+            <IonButtons slot="start">
+              <IonMenuButton />
+            </IonButtons>
             <IonTitle>Transaction Details</IonTitle>
           </IonToolbar>
         </IonHeader>
@@ -57,11 +97,22 @@ const TransactionDetails: React.FC = () => {
     );
   }
 
+  const totalAmount = txn.amount + (txn.transactionCost || 0);
+  const isNegative = totalAmount < 0;
+
   return (
     <IonPage>
       <IonHeader>
         <IonToolbar>
+          <IonButtons slot="start">
+            <IonMenuButton />
+          </IonButtons>
           <IonTitle>Transaction Details</IonTitle>
+          <IonButtons slot="end">
+            <IonButton onClick={() => navigate.push(`/edit/${id}`)}>
+              <IonIcon slot="icon-only" icon={createOutline} />
+            </IonButton>
+          </IonButtons>
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
@@ -70,23 +121,23 @@ const TransactionDetails: React.FC = () => {
           <IonText
             style={{
               fontSize: "2.3rem",
-              color: "orangered",
+              color: isNegative ? "orangered" : "green",
               fontWeight: "bold",
             }}
           >
-            KShs. {txn.amount + (txn.transactionCost || 0) < 0 ? "-" : ""}
-            {Math.abs(txn.amount + (txn.transactionCost || 0)).toLocaleString(
-              undefined,
-              { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-            )}
+            {isNegative ? "-" : ""}
+            {Math.abs(totalAmount).toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
           </IonText>
           <div style={{ fontSize: "0.9rem", color: "#888", marginTop: 5 }}>
-            Paid to
+            {isNegative ? "Paid to" : "Received from"}
           </div>
           <div
             style={{ fontSize: "1.2rem", fontWeight: "bold", marginBottom: 3 }}
           >
-            {txn.recipient}
+            {recipient?.name || "—"}
           </div>
           <div style={{ fontSize: "0.95rem", color: "#888" }}>
             {new Date(txn.date).toLocaleDateString(undefined, {
@@ -94,11 +145,15 @@ const TransactionDetails: React.FC = () => {
               month: "short",
               day: "numeric",
               year: "numeric",
+            })}{" "}
+            at{" "}
+            {new Date(txn.date).toLocaleTimeString(undefined, {
+              hour: "2-digit",
+              minute: "2-digit",
             })}
           </div>
           <div style={{ color: "#888", fontSize: "0.9rem" }}>
-            Via {txn.paymentMode}{" "}
-            {txn.paymentChannel ? `(${txn.paymentChannel})` : ""}
+            Via {account?.name || "—"} - {paymentMethod?.name || "—"}
           </div>
         </div>
 
@@ -109,13 +164,13 @@ const TransactionDetails: React.FC = () => {
           </IonCardHeader>
           <IonCardContent>
             <IonText style={{ fontWeight: "bold", fontSize: "1.1rem" }}>
-              {txn.description}
+              {txn.description || "—"}
             </IonText>
             <div style={{ marginTop: 12 }}>
               <IonText style={{ color: "#888" }}>Category</IonText>
               <br />
               <IonText style={{ fontWeight: "bold", fontSize: "1.1rem" }}>
-                {txn.category}
+                {category?.name || "—"}
               </IonText>
             </div>
             <div
@@ -146,57 +201,80 @@ const TransactionDetails: React.FC = () => {
                 </IonText>
               </div>
             </div>
+            {txn.originalAmount && (
+              <div style={{ marginTop: 18 }}>
+                <IonText style={{ color: "#888" }}>Original Amount</IonText>
+                <br />
+                <IonText style={{ fontWeight: "bold", fontSize: "1.12rem" }}>
+                  {txn.originalAmount.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}{" "}
+                  {txn.originalCurrency || ""}
+                  {txn.exchangeRate && (
+                    <span style={{ color: "#888", fontSize: "0.9rem" }}>
+                      {" "}
+                      @ {txn.exchangeRate}
+                    </span>
+                  )}
+                </IonText>
+              </div>
+            )}
+            {txn.transactionReference && (
+              <div style={{ marginTop: 18 }}>
+                <IonText style={{ color: "#888" }}>Reference</IonText>
+                <br />
+                <IonText style={{ fontWeight: "bold", fontSize: "1.12rem" }}>
+                  {txn.transactionReference}
+                </IonText>
+              </div>
+            )}
           </IonCardContent>
         </IonCard>
 
         {/* Recent Activity/History */}
-        <IonCard style={{ marginTop: "1.6rem" }}>
-          <IonCardHeader style={{ fontWeight: 500, fontSize: "1rem" }}>
-            Recent activity
-          </IonCardHeader>
-          <IonCardContent style={{ padding: 0 }}>
-            <IonList>
-              {history.map((h) => (
-                <IonItem
-                  key={h.id}
-                  style={{ fontSize: "1.05rem" }}
-                  lines="none"
-                >
-                  <IonLabel>
-                    <div style={{ fontSize: "0.9rem", color: "#888" }}>
-                      {new Date(h.date)
-                        .toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "2-digit",
-                        })
-                        .toUpperCase()}
-                    </div>
-                    {h.description}
-                  </IonLabel>
-                  <IonText color="danger">
-                    <span style={{ fontWeight: "bold" }}>
-                      {h.amount + (h.transactionCost || 0) < 0 ? "-" : ""}
-                      {Math.abs(
-                        h.amount + (h.transactionCost || 0)
-                      ).toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>
-                  </IonText>
-                </IonItem>
-              ))}
-            </IonList>
-            <IonButton
-              expand="block"
-              fill="clear"
-              color="primary"
-              style={{ marginTop: 5 }}
-            >
-              VIEW ALL
-            </IonButton>
-          </IonCardContent>
-        </IonCard>
+        {history.length > 0 && (
+          <IonCard style={{ marginTop: "1.6rem" }}>
+            <IonCardHeader style={{ fontWeight: 500, fontSize: "1rem" }}>
+              Recent activity with {recipient?.name || "this recipient"}
+            </IonCardHeader>
+            <IonCardContent style={{ padding: 0 }}>
+              <IonList>
+                {history.map((h) => {
+                  const hTotal = h.amount + (h.transactionCost || 0);
+                  return (
+                    <IonItem
+                      key={h.id}
+                      style={{ fontSize: "1.05rem" }}
+                      lines="none"
+                    >
+                      <IonLabel>
+                        <div style={{ fontSize: "0.9rem", color: "#888" }}>
+                          {new Date(h.date)
+                            .toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "2-digit",
+                            })
+                            .toUpperCase()}
+                        </div>
+                        {h.description || "—"}
+                      </IonLabel>
+                      <IonText color={hTotal < 0 ? "danger" : "success"}>
+                        <span style={{ fontWeight: "bold" }}>
+                          {hTotal < 0 ? "-" : ""}
+                          {Math.abs(hTotal).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </IonText>
+                    </IonItem>
+                  );
+                })}
+              </IonList>
+            </IonCardContent>
+          </IonCard>
+        )}
       </IonContent>
     </IonPage>
   );
