@@ -33,6 +33,7 @@ import {
   Account,
   PaymentMethod,
   Recipient,
+  SmsImportTemplate,
 } from "../db";
 import { closeCircleOutline } from "ionicons/icons";
 import { addOutline } from "ionicons/icons";
@@ -71,6 +72,7 @@ const AddTransaction: React.FC = () => {
     PaymentMethod[]
   >([]);
   const [sortedRecipients, setSortedRecipients] = useState<Recipient[]>([]);
+  const [smsTemplates, setSmsTemplates] = useState<SmsImportTemplate[]>([]);
   const [showRecipientModal, setShowRecipientModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
@@ -120,6 +122,19 @@ const AddTransaction: React.FC = () => {
   const [showSmsImportModal, setShowSmsImportModal] = useState(false);
   const [smsText, setSmsText] = useState("");
   const [smsParseError, setSmsParseError] = useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<
+    number | undefined
+  >(undefined);
+  const [parsedPreview, setParsedPreview] = useState<{
+    reference?: string;
+    amount?: string;
+    recipientName?: string;
+    recipientPhone?: string;
+    date?: string;
+    time?: string;
+    cost?: string;
+    isIncome?: boolean;
+  } | null>(null);
 
   // derive list of currencies available from accounts
   const currencies = Array.from(
@@ -153,20 +168,30 @@ const AddTransaction: React.FC = () => {
 
   // Load lookup data on mount
   useEffect(() => {
+    let isMounted = true;
+
     const load = async () => {
       try {
-        const [b, c, a, pm, r] = await Promise.all([
+        const [b, c, a, pm, r, allTemplates] = await Promise.all([
           db.buckets.toArray(),
           db.categories.toArray(),
           db.accounts.toArray(),
           db.paymentMethods.toArray(),
           db.recipients.toArray(),
+          db.smsImportTemplates.toArray(),
         ]);
+
+        if (!isMounted) return;
+
         setBuckets(b);
         setAccounts(a);
+        // Filter to only active templates
+        setSmsTemplates(allTemplates.filter((t) => t.isActive));
 
         // Count transactions per recipient
         const transactions = await db.transactions.toArray();
+
+        if (!isMounted) return;
 
         // Count transactions per recipient
         const recipientCounts = new Map<number, number>();
@@ -212,6 +237,10 @@ const AddTransaction: React.FC = () => {
       }
     };
     load();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Load transaction data in edit mode OR clear form in add mode when id changes
@@ -282,6 +311,8 @@ const AddTransaction: React.FC = () => {
 
   // Load descriptions sorted by frequency when component mounts
   useEffect(() => {
+    let isMounted = true;
+
     const loadDescriptions = async () => {
       const transactions = await db.transactions.toArray();
 
@@ -299,10 +330,16 @@ const AddTransaction: React.FC = () => {
         .map(([text, count]) => ({ text, count }))
         .sort((a, b) => b.count - a.count);
 
-      setDescriptionSuggestions(sortedDescriptions);
+      if (isMounted) {
+        setDescriptionSuggestions(sortedDescriptions);
+      }
     };
     loadDescriptions();
-  }, []);
+
+    return () => {
+      isMounted = false;
+    };
+  }, []); // No cleanup, could set state on unmounted component
 
   // Close suggestions when clicking outside
   useEffect(() => {
@@ -324,9 +361,11 @@ const AddTransaction: React.FC = () => {
 
     if (showDescriptionSuggestions) {
       document.addEventListener("mousedown", handleClickOutside);
-      return () =>
-        document.removeEventListener("mousedown", handleClickOutside);
     }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
   }, [showDescriptionSuggestions]);
 
   // Fuzzy match function - matches if all characters from query appear in order in the target
@@ -349,12 +388,17 @@ const AddTransaction: React.FC = () => {
   };
 
   // Filter suggestions based on input with fuzzy matching
-  const filteredDescriptions = descriptionSuggestions
-    .filter((item) => fuzzyMatch(description, item.text))
-    .slice(0, 5); // Limit to 5 suggestions
+  const MAX_SUGGESTIONS = 5;
+  const filteredDescriptions = React.useMemo(
+    () =>
+      descriptionSuggestions
+        .filter((item) => fuzzyMatch(description, item.text))
+        .slice(0, MAX_SUGGESTIONS),
+    [descriptionSuggestions, description]
+  );
 
   // Handle keyboard navigation
-  const handleDescriptionKeyDown = (e: React.KeyboardEvent) => {
+  const handleDescriptionKeyDown = async (e: React.KeyboardEvent) => {
     if (!showDescriptionSuggestions || filteredDescriptions.length === 0)
       return;
 
@@ -372,9 +416,9 @@ const AddTransaction: React.FC = () => {
       case "Enter":
         e.preventDefault();
         if (selectedSuggestionIndex >= 0) {
-          setDescription(filteredDescriptions[selectedSuggestionIndex].text);
-          setShowDescriptionSuggestions(false);
-          setSelectedSuggestionIndex(-1);
+          await selectSuggestion(
+            filteredDescriptions[selectedSuggestionIndex].text
+          );
         }
         break;
       case "Escape":
@@ -386,17 +430,26 @@ const AddTransaction: React.FC = () => {
   };
 
   const handleDescriptionChange = (value: string) => {
-    setDescription(value);
-    setShowDescriptionSuggestions(true);
-    setSelectedSuggestionIndex(-1);
+    try {
+      setDescription(value);
+      setShowDescriptionSuggestions(true);
+      setSelectedSuggestionIndex(-1);
+    } catch (err) {
+      console.error("Error updating description:", err);
+    }
   };
 
   const selectSuggestion = async (text: string) => {
     setDescription(text);
     setShowDescriptionSuggestions(false);
     setSelectedSuggestionIndex(-1);
-    // Populate fields from the most recent transaction with this description
-    await populateFromLastTransaction(text);
+
+    try {
+      // Populate fields from the most recent transaction with this description
+      await populateFromLastTransaction(text);
+    } catch (err) {
+      console.error("Failed to populate from last transaction:", err);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -679,9 +732,37 @@ const AddTransaction: React.FC = () => {
     }
   };
 
-  // Parse M-PESA SMS message
-  const parseMpesaSms = (
-    sms: string
+  // Helper function to apply a regex pattern from template
+  const applyPattern = (
+    sms: string,
+    pattern?: string,
+    captureGroup: number = 1
+  ): string | undefined => {
+    if (!pattern) return undefined;
+    try {
+      const regex = new RegExp(pattern, "i");
+      const match = sms.match(regex);
+      return match?.[captureGroup];
+    } catch (err) {
+      console.error(`Invalid regex pattern: ${pattern}`, err);
+      return undefined;
+    }
+  };
+
+  // Helper function to convert text to title case
+  const toTitleCase = (text: string): string => {
+    return text
+      .trim()
+      .toLowerCase()
+      .split(" ")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  };
+
+  // Try to parse SMS with a specific template
+  const tryParseWithTemplate = (
+    sms: string,
+    template: SmsImportTemplate
   ): {
     reference?: string;
     amount?: string;
@@ -704,101 +785,147 @@ const AddTransaction: React.FC = () => {
         isIncome?: boolean;
       } = {};
 
-      // Transaction reference (e.g., TK7M69J6QU)
-      const refMatch = sms.match(/^([A-Z0-9]{10})/);
-      if (refMatch) result.reference = refMatch[1];
-
-      // Check if this is an income (received) or expense (sent) transaction
-      const isReceived = sms.match(/You have received/i);
-      const isSent = sms.match(/sent to/i);
-
-      if (isReceived) {
+      // Determine transaction type
+      if (
+        template.incomePattern &&
+        sms.match(new RegExp(template.incomePattern, "i"))
+      ) {
         result.isIncome = true;
-
-        // Amount received (e.g., Ksh15.00)
-        const amountMatch = sms.match(/received\s+Ksh([\d,]+\.?\d*)/i);
-        if (amountMatch) {
-          result.amount = amountMatch[1].replace(/,/g, "");
-        }
-
-        // Sender name (e.g., ZIIDI)
-        const senderMatch = sms.match(/from\s+([A-Z\s]+?)(?:\s+on|\s+\d)/i);
-        if (senderMatch) {
-          // Convert to title case
-          result.recipientName = senderMatch[1]
-            .trim()
-            .toLowerCase()
-            .split(" ")
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(" ");
-        }
-      } else if (isSent) {
+      } else if (
+        template.expensePattern &&
+        sms.match(new RegExp(template.expensePattern, "i"))
+      ) {
         result.isIncome = false;
+      }
 
-        // Amount sent (e.g., Ksh1,000.00)
-        const amountMatch = sms.match(/Ksh([\d,]+\.?\d*)\s+sent/i);
-        if (amountMatch) {
-          result.amount = amountMatch[1].replace(/,/g, "");
-        }
+      // Extract reference
+      const reference = applyPattern(sms, template.referencePattern);
+      if (reference) result.reference = reference;
 
-        // Recipient name and optional phone (e.g., PHILLIP KARANJA 0721930371 or Patrick  Mbaluka)
-        const recipientWithPhoneMatch = sms.match(
-          /sent to\s+([A-Z\s]+?)\s+(\d{10})/i
+      // Extract amount (remove commas)
+      const amount = applyPattern(sms, template.amountPattern);
+      if (amount) result.amount = amount.replace(/,/g, "");
+
+      // Extract recipient/sender name (convert to title case)
+      const recipientName = applyPattern(sms, template.recipientNamePattern);
+      if (recipientName) result.recipientName = toTitleCase(recipientName);
+
+      // Extract phone number
+      const recipientPhone = applyPattern(sms, template.recipientPhonePattern);
+      if (recipientPhone) result.recipientPhone = recipientPhone;
+
+      // Extract cost (remove commas)
+      const cost = applyPattern(sms, template.costPattern);
+      if (cost) result.cost = cost.replace(/,/g, "");
+
+      // Extract date and time
+      if (template.dateTimePattern) {
+        const dateTimeMatch = sms.match(
+          new RegExp(template.dateTimePattern, "i")
         );
-        const recipientWithoutPhoneMatch = sms.match(
-          /sent to\s+([A-Z\s]+?)\s+on\s+/i
-        );
+        if (dateTimeMatch && dateTimeMatch.length >= 7) {
+          const day = dateTimeMatch[1].padStart(2, "0");
+          const month = dateTimeMatch[2].padStart(2, "0");
+          const year = "20" + dateTimeMatch[3];
+          result.date = `${year}-${month}-${day}`;
 
-        if (recipientWithPhoneMatch) {
-          // Has phone number
-          result.recipientName = recipientWithPhoneMatch[1]
-            .trim()
-            .toLowerCase()
-            .split(" ")
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(" ");
-          result.recipientPhone = recipientWithPhoneMatch[2];
-        } else if (recipientWithoutPhoneMatch) {
-          // No phone number
-          result.recipientName = recipientWithoutPhoneMatch[1]
-            .trim()
-            .toLowerCase()
-            .split(" ")
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(" ");
+          let hours = parseInt(dateTimeMatch[4]);
+          const minutes = dateTimeMatch[5];
+          const period = dateTimeMatch[6].toUpperCase();
+
+          if (period === "PM" && hours !== 12) hours += 12;
+          if (period === "AM" && hours === 12) hours = 0;
+
+          result.time = `${hours.toString().padStart(2, "0")}:${minutes}`;
         }
       }
 
-      // Date and time (e.g., 7/11/25 at 4:23 PM or 7/11/25 4:22 PM)
-      const dateTimeMatch = sms.match(
-        /(?:on\s+)?(\d{1,2})\/(\d{1,2})\/(\d{2})\s+(?:at\s+)?(\d{1,2}):(\d{2})\s+(AM|PM)/i
-      );
-      if (dateTimeMatch) {
-        const day = dateTimeMatch[1].padStart(2, "0");
-        const month = dateTimeMatch[2].padStart(2, "0");
-        const year = "20" + dateTimeMatch[3];
-        result.date = `${year}-${month}-${day}`;
-
-        let hours = parseInt(dateTimeMatch[4]);
-        const minutes = dateTimeMatch[5];
-        const period = dateTimeMatch[6].toUpperCase();
-
-        if (period === "PM" && hours !== 12) hours += 12;
-        if (period === "AM" && hours === 12) hours = 0;
-
-        result.time = `${hours.toString().padStart(2, "0")}:${minutes}`;
-      }
-
-      // Transaction cost (e.g., Ksh13.00)
-      const costMatch = sms.match(/Transaction cost,?\s*Ksh([\d,]+\.?\d*)/i);
-      if (costMatch) {
-        result.cost = costMatch[1].replace(/,/g, "");
-      }
-
+      // Only return if we extracted at least some data
       return Object.keys(result).length > 0 ? result : null;
+    } catch (err) {
+      console.error("Error parsing with template:", template.name, err);
+      return null;
+    }
+  };
+
+  // Parse SMS using database templates
+  const parseMpesaSms = async (
+    sms: string
+  ): Promise<{
+    reference?: string;
+    amount?: string;
+    recipientName?: string;
+    recipientPhone?: string;
+    date?: string;
+    time?: string;
+    cost?: string;
+    isIncome?: boolean;
+  } | null> => {
+    try {
+      // If we have a selected payment method, try its template first
+      if (paymentMethodId) {
+        const pmTemplate = smsTemplates.find(
+          (t) => t.paymentMethodId === paymentMethodId
+        );
+        if (pmTemplate) {
+          const result = tryParseWithTemplate(sms, pmTemplate);
+          if (result) return result;
+        }
+      }
+
+      // Try all active templates
+      for (const template of smsTemplates) {
+        // Skip if this is a payment-method-specific template and doesn't match
+        if (
+          template.paymentMethodId &&
+          template.paymentMethodId !== paymentMethodId
+        ) {
+          continue;
+        }
+
+        const result = tryParseWithTemplate(sms, template);
+        if (result) return result;
+      }
+
+      // No template matched
+      return null;
     } catch (err) {
       console.error("Error parsing SMS:", err);
       return null;
+    }
+  };
+
+  // Preview SMS parsing with selected template
+  const handlePreviewParse = async () => {
+    setSmsParseError("");
+    setParsedPreview(null);
+
+    if (!smsText.trim()) {
+      setSmsParseError("Please paste an SMS message");
+      return;
+    }
+
+    let result = null;
+
+    // If a template is selected, use only that template
+    if (selectedTemplateId) {
+      const template = smsTemplates.find((t) => t.id === selectedTemplateId);
+      if (template) {
+        result = tryParseWithTemplate(smsText, template);
+      }
+    } else {
+      // Try all templates (existing behavior)
+      result = await parseMpesaSms(smsText);
+    }
+
+    if (result) {
+      setParsedPreview(result);
+    } else {
+      setSmsParseError(
+        selectedTemplateId
+          ? "Selected template could not parse this SMS."
+          : "Could not parse SMS with any available template."
+      );
     }
   };
 
@@ -811,10 +938,13 @@ const AddTransaction: React.FC = () => {
       return;
     }
 
-    const parsed = parseMpesaSms(smsText);
+    // Use preview data if available, otherwise parse fresh
+    const parsed = parsedPreview || (await parseMpesaSms(smsText));
 
     if (!parsed) {
-      setSmsParseError("Could not parse SMS. Please check the format.");
+      setSmsParseError(
+        "Could not parse SMS. Please check the format or add/update SMS import templates."
+      );
       return;
     }
 
@@ -840,12 +970,16 @@ const AddTransaction: React.FC = () => {
       if (existingRecipient) {
         setRecipientId(existingRecipient.id);
         setSmsText("");
+        setSelectedTemplateId(undefined);
+        setParsedPreview(null);
         setShowSmsImportModal(false);
       } else {
         // Prompt to create new recipient
         setModalName(parsed.recipientName);
         setModalPhone(parsed.recipientPhone);
         setSmsText("");
+        setSelectedTemplateId(undefined);
+        setParsedPreview(null);
         setShowSmsImportModal(false);
         setShowRecipientModal(true);
       }
@@ -863,9 +997,13 @@ const AddTransaction: React.FC = () => {
         setShowRecipientModal(true);
       }
       setSmsText("");
+      setSelectedTemplateId(undefined);
+      setParsedPreview(null);
       setShowSmsImportModal(false);
     } else {
       setSmsText("");
+      setSelectedTemplateId(undefined);
+      setParsedPreview(null);
       setShowSmsImportModal(false);
     }
   };
@@ -917,7 +1055,7 @@ const AddTransaction: React.FC = () => {
               </IonCol>
             </IonRow>
             <IonRow>
-              <IonCol size="6">
+              <IonCol size="2">
                 {fieldErrors.date && (
                   <IonText color="danger" style={{ fontSize: "0.85rem" }}>
                     Required field
@@ -936,7 +1074,7 @@ const AddTransaction: React.FC = () => {
                   }}
                 />
               </IonCol>
-              <IonCol size="6">
+              <IonCol size="2">
                 {fieldErrors.time && (
                   <IonText color="danger" style={{ fontSize: "0.85rem" }}>
                     Required field
@@ -957,6 +1095,105 @@ const AddTransaction: React.FC = () => {
               </IonCol>
             </IonRow>
             <IonRow>
+              <IonCol size="7">
+                <IonInput
+                  ref={descriptionInputRef}
+                  label="Description"
+                  labelPlacement="stacked"
+                  fill="outline"
+                  type="text"
+                  placeholder="e.g. Grocery shopping"
+                  value={description}
+                  onIonInput={(e) => {
+                    handleDescriptionChange(e.detail.value!);
+                  }}
+                  onIonFocus={() => setShowDescriptionSuggestions(true)}
+                  onKeyDown={handleDescriptionKeyDown}
+                />
+                {showDescriptionSuggestions &&
+                  filteredDescriptions.length > 0 &&
+                  description && (
+                    <div
+                      id="description-suggestions"
+                      style={{
+                        position: "absolute",
+                        backgroundColor: "var(--ion-background-color)",
+                        border: "1px solid var(--ion-color-medium)",
+                        borderRadius: "4px",
+                        marginTop: "4px",
+                        maxHeight: "200px",
+                        overflowY: "auto",
+                        zIndex: 1000,
+                        width: "100%",
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                      }}
+                    >
+                      {filteredDescriptions.map((item, idx) => (
+                        <div
+                          key={idx}
+                          onClick={() => selectSuggestion(item.text)}
+                          style={{
+                            padding: "8px 12px",
+                            cursor: "pointer",
+                            backgroundColor:
+                              idx === selectedSuggestionIndex
+                                ? "var(--ion-color-primary)"
+                                : "transparent",
+                            color:
+                              idx === selectedSuggestionIndex
+                                ? "var(--ion-color-primary-contrast)"
+                                : "inherit",
+                            borderBottom:
+                              idx < filteredDescriptions.length - 1
+                                ? "1px solid var(--ion-color-light)"
+                                : "none",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                          onMouseEnter={(e) => {
+                            if (idx !== selectedSuggestionIndex) {
+                              e.currentTarget.style.backgroundColor =
+                                "var(--ion-color-light)";
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (idx !== selectedSuggestionIndex) {
+                              e.currentTarget.style.backgroundColor =
+                                "transparent";
+                            }
+                          }}
+                        >
+                          <span>{item.text}</span>
+                          <span
+                            style={{
+                              fontSize: "0.75rem",
+                              opacity: 0.7,
+                              marginLeft: "8px",
+                            }}
+                          >
+                            {item.count}x
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+              </IonCol>
+              <IonCol size="3">
+                <IonInput
+                  label="Transaction Reference (optional)"
+                  fill="outline"
+                  labelPlacement="stacked"
+                  placeholder="e.g. ABCD123XYZ"
+                  type="text"
+                  value={transactionReference}
+                  onIonChange={(e) =>
+                    setTransactionReference(e.detail.value ?? "")
+                  }
+                />
+              </IonCol>
+            </IonRow>
+            <IonRow>
               <IonCol size="10">
                 {fieldErrors.recipient && (
                   <IonText color="danger" style={{ fontSize: "0.85rem" }}>
@@ -973,7 +1210,13 @@ const AddTransaction: React.FC = () => {
                   value={recipientId}
                   onIonChange={(e) => {
                     const v = e.detail.value as string | number | undefined;
-                    const id = v == null ? undefined : Number(v);
+                    // const id = v == null ? undefined : Number(v);
+                    const id =
+                      v == null
+                        ? undefined
+                        : typeof v === "number"
+                        ? v
+                        : Number(v);
                     setRecipientId(id);
                     setFieldErrors((prev) => ({ ...prev, recipient: false }));
                   }}
@@ -1213,7 +1456,7 @@ const AddTransaction: React.FC = () => {
             </IonRow>
 
             <IonRow>
-              <IonCol size="6">
+              <IonCol size="7">
                 {fieldErrors.amount && (
                   <IonText color="danger" style={{ fontSize: "0.85rem" }}>
                     Required field
@@ -1236,129 +1479,29 @@ const AddTransaction: React.FC = () => {
                 />
               </IonCol>
 
-              <IonCol size="6">
-                <IonItem>
-                  <IonLabel position="stacked">Cost</IonLabel>
-                  <IonInput
-                    placeholder="Enter cost"
-                    fill="outline"
-                    type="number"
-                    value={transactionCost}
-                    onIonChange={(e) => setTransactionCost(e.detail.value!)}
-                    inputMode="decimal"
-                    step="0.01"
-                  />
-                </IonItem>
-              </IonCol>
-            </IonRow>
-
-            <IonRow>
-              <IonCol size="7">
-                <IonInput
-                  ref={descriptionInputRef}
-                  label="Description"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  type="text"
-                  placeholder="e.g. Grocery shopping"
-                  value={description}
-                  onIonInput={(e) => {
-                    handleDescriptionChange(e.detail.value!);
-                  }}
-                  onIonFocus={() => setShowDescriptionSuggestions(true)}
-                  onKeyDown={handleDescriptionKeyDown}
-                />
-                {showDescriptionSuggestions &&
-                  filteredDescriptions.length > 0 &&
-                  description && (
-                    <div
-                      id="description-suggestions"
-                      style={{
-                        position: "absolute",
-                        backgroundColor: "var(--ion-background-color)",
-                        border: "1px solid var(--ion-color-medium)",
-                        borderRadius: "4px",
-                        marginTop: "4px",
-                        maxHeight: "200px",
-                        overflowY: "auto",
-                        zIndex: 1000,
-                        width: "100%",
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                      }}
-                    >
-                      {filteredDescriptions.map((item, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() => selectSuggestion(item.text)}
-                          style={{
-                            padding: "8px 12px",
-                            cursor: "pointer",
-                            backgroundColor:
-                              idx === selectedSuggestionIndex
-                                ? "var(--ion-color-primary)"
-                                : "transparent",
-                            color:
-                              idx === selectedSuggestionIndex
-                                ? "var(--ion-color-primary-contrast)"
-                                : "inherit",
-                            borderBottom:
-                              idx < filteredDescriptions.length - 1
-                                ? "1px solid var(--ion-color-light)"
-                                : "none",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                          }}
-                          onMouseEnter={(e) => {
-                            if (idx !== selectedSuggestionIndex) {
-                              e.currentTarget.style.backgroundColor =
-                                "var(--ion-color-light)";
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (idx !== selectedSuggestionIndex) {
-                              e.currentTarget.style.backgroundColor =
-                                "transparent";
-                            }
-                          }}
-                        >
-                          <span>{item.text}</span>
-                          <span
-                            style={{
-                              fontSize: "0.75rem",
-                              opacity: 0.7,
-                              marginLeft: "8px",
-                            }}
-                          >
-                            {item.count}x
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-              </IonCol>
               <IonCol size="3">
                 <IonInput
-                  label="Transaction Reference (optional)"
-                  fill="outline"
+                  label="Transaction Cost"
                   labelPlacement="stacked"
-                  placeholder="e.g. ABCD123XYZ"
-                  type="text"
-                  value={transactionReference}
-                  onIonChange={(e) =>
-                    setTransactionReference(e.detail.value ?? "")
-                  }
+                  placeholder="e.g. 13.00"
+                  fill="outline"
+                  type="number"
+                  value={transactionCost}
+                  onIonChange={(e) => setTransactionCost(e.detail.value!)}
+                  inputMode="decimal"
+                  step="0.01"
                 />
               </IonCol>
             </IonRow>
 
             <IonRow>
               <IonCol size="6">
-                <IonLabel position="stacked">Original Amount</IonLabel>
                 <IonInput
-                  placeholder="Amount in original currency"
+                  placeholder="Amount in original currency, e.g. 100.00"
                   fill="outline"
                   type="number"
+                  label="Original Amount"
+                  labelPlacement="stacked"
                   value={originalAmount}
                   onIonChange={(e) => setOriginalAmount(e.detail.value ?? "")}
                   inputMode="decimal"
@@ -1366,16 +1509,16 @@ const AddTransaction: React.FC = () => {
                 />
               </IonCol>
 
-              <IonCol size="3">
-                <IonLabel position="stacked">Currency</IonLabel>
+              <IonCol size="2">
                 <IonSelect
-                  placeholder="Select currency"
+                  label="Currency"
+                  labelPlacement="stacked"
+                  placeholder="e.g. USD"
                   interface="popover"
                   value={originalCurrency || undefined}
                   onIonChange={(e) =>
                     setOriginalCurrency((e.detail.value as string) ?? "")
                   }
-                  labelPlacement="stacked"
                   fill="outline"
                 >
                   {currencies.map((cur) => (
@@ -1386,12 +1529,11 @@ const AddTransaction: React.FC = () => {
                 </IonSelect>
               </IonCol>
 
-              <IonCol size="3">
-                <IonLabel position="stacked">Exchange Rate</IonLabel>
+              <IonCol size="2">
                 <IonInput
                   label="Exchange Rate"
                   labelPlacement="stacked"
-                  placeholder="e.g. 1.2"
+                  placeholder="e.g. 125.00"
                   fill="outline"
                   type="number"
                   step="0.0001"
@@ -1713,6 +1855,8 @@ const AddTransaction: React.FC = () => {
           setShowSmsImportModal(false);
           setSmsText("");
           setSmsParseError("");
+          setSelectedTemplateId(undefined);
+          setParsedPreview(null);
         }}
       >
         <IonHeader>
@@ -1734,7 +1878,44 @@ const AddTransaction: React.FC = () => {
           <IonGrid>
             <IonRow>
               <IonCol>
-                <IonLabel position="stacked">Paste M-PESA SMS Message</IonLabel>
+                <IonSelect
+                  label="Select Template (optional)"
+                  labelPlacement="stacked"
+                  fill="outline"
+                  interface="popover"
+                  placeholder="Auto-detect from all templates"
+                  value={selectedTemplateId}
+                  onIonChange={(e) => {
+                    setSelectedTemplateId(e.detail.value);
+                    setParsedPreview(null); // Clear preview when template changes
+                  }}
+                >
+                  <IonSelectOption value={undefined}>
+                    Auto-detect from all templates
+                  </IonSelectOption>
+                  {smsTemplates.map((template) => (
+                    <IonSelectOption key={template.id} value={template.id}>
+                      {template.name}
+                      {template.paymentMethodId && (
+                        <>
+                          {" "}
+                          (
+                          {
+                            sortedPaymentMethods.find(
+                              (pm) => pm.id === template.paymentMethodId
+                            )?.name
+                          }
+                          )
+                        </>
+                      )}
+                    </IonSelectOption>
+                  ))}
+                </IonSelect>
+              </IonCol>
+            </IonRow>
+            <IonRow>
+              <IonCol>
+                <IonLabel position="stacked">Paste SMS Message</IonLabel>
                 <textarea
                   rows={8}
                   style={{
@@ -1746,15 +1927,114 @@ const AddTransaction: React.FC = () => {
                     fontFamily: "monospace",
                     fontSize: "0.9rem",
                   }}
-                  placeholder="TK7M69J6QU Confirmed. Ksh1,000.00 sent to..."
+                  placeholder="Paste your transaction SMS here..."
                   value={smsText}
-                  onChange={(e) => setSmsText(e.target.value)}
+                  onChange={(e) => {
+                    setSmsText(e.target.value);
+                    setParsedPreview(null); // Clear preview when text changes
+                  }}
                 />
               </IonCol>
             </IonRow>
             <IonRow>
               <IonCol>
-                <IonButton expand="block" onClick={handleSmsImport}>
+                <IonButton
+                  expand="block"
+                  fill="outline"
+                  onClick={handlePreviewParse}
+                  disabled={!smsText.trim()}
+                >
+                  Preview Parse
+                </IonButton>
+              </IonCol>
+            </IonRow>
+
+            {/* Preview Section */}
+            {parsedPreview && (
+              <>
+                <IonRow>
+                  <IonCol>
+                    <div
+                      style={{
+                        backgroundColor: "var(--ion-color-light)",
+                        padding: "12px",
+                        borderRadius: "8px",
+                        marginTop: "8px",
+                      }}
+                    >
+                      <h3
+                        style={{
+                          marginTop: 0,
+                          fontSize: "1rem",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        Parsed Information
+                      </h3>
+                      <div style={{ fontSize: "0.9rem" }}>
+                        {parsedPreview.isIncome !== undefined && (
+                          <div style={{ marginBottom: "8px" }}>
+                            <strong>Type:</strong>{" "}
+                            <IonText
+                              color={
+                                parsedPreview.isIncome ? "success" : "danger"
+                              }
+                            >
+                              {parsedPreview.isIncome ? "Income" : "Expense"}
+                            </IonText>
+                          </div>
+                        )}
+                        {parsedPreview.reference && (
+                          <div style={{ marginBottom: "8px" }}>
+                            <strong>Reference:</strong>{" "}
+                            {parsedPreview.reference}
+                          </div>
+                        )}
+                        {parsedPreview.amount && (
+                          <div style={{ marginBottom: "8px" }}>
+                            <strong>Amount:</strong> {parsedPreview.amount}
+                          </div>
+                        )}
+                        {parsedPreview.cost && (
+                          <div style={{ marginBottom: "8px" }}>
+                            <strong>Transaction Cost:</strong>{" "}
+                            {parsedPreview.cost}
+                          </div>
+                        )}
+                        {parsedPreview.recipientName && (
+                          <div style={{ marginBottom: "8px" }}>
+                            <strong>
+                              {parsedPreview.isIncome ? "Sender" : "Recipient"}:
+                            </strong>{" "}
+                            {parsedPreview.recipientName}
+                            {parsedPreview.recipientPhone && (
+                              <> ({parsedPreview.recipientPhone})</>
+                            )}
+                          </div>
+                        )}
+                        {parsedPreview.date && (
+                          <div style={{ marginBottom: "8px" }}>
+                            <strong>Date:</strong> {parsedPreview.date}
+                            {parsedPreview.time && (
+                              <> at {parsedPreview.time}</>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </IonCol>
+                </IonRow>
+              </>
+            )}
+
+            <IonRow>
+              <IonCol>
+                <IonButton
+                  expand="block"
+                  onClick={handleSmsImport}
+                  disabled={!parsedPreview}
+                  color="primary"
+                >
                   Parse & Import
                 </IonButton>
               </IonCol>
@@ -1763,16 +2043,21 @@ const AddTransaction: React.FC = () => {
               <IonCol>
                 <IonText color="medium">
                   <p style={{ fontSize: "0.85rem" }}>
-                    <strong>Supported format:</strong>
-                    <br />
-                    M-PESA confirmation messages (sent to recipient)
-                    <br />
-                    <br />
-                    <strong>Example:</strong>
-                    <br />
-                    TK7M69J6QU Confirmed. Ksh1,000.00 sent to PHILLIP KARANJA
-                    0721930371 on 7/11/25 at 4:23 PM. New M-PESA balance is
-                    Ksh2.51. Transaction cost, Ksh13.00.
+                    <strong>How to use:</strong>
+                  </p>
+                  <ol style={{ fontSize: "0.85rem", paddingLeft: "20px" }}>
+                    <li>Paste your SMS message above</li>
+                    <li>
+                      Optionally select a specific template or let the system
+                      auto-detect
+                    </li>
+                    <li>Click "Preview Parse" to see what will be extracted</li>
+                    <li>Review the parsed information</li>
+                    <li>Click "Parse & Import" to add the transaction</li>
+                  </ol>
+                  <p style={{ fontSize: "0.85rem" }}>
+                    If parsing fails, you may need to add or update SMS import
+                    templates in the management page.
                   </p>
                 </IonText>
               </IonCol>
