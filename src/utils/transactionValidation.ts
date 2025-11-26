@@ -6,6 +6,7 @@ export interface TransactionFormData {
   categoryId?: number;
   paymentMethodId?: number;
   recipientId?: number;
+  transferRecipientId?: number;
   transferToPaymentMethodId?: number;
   transactionType: "expense" | "income" | "transfer";
 }
@@ -18,6 +19,8 @@ export interface ValidationErrors {
   category?: boolean;
   paymentMethod?: boolean;
   recipient?: boolean;
+  transferRecipient?: boolean;
+  transferToPaymentMethod?: boolean;
 }
 
 export interface ValidationResult {
@@ -43,8 +46,12 @@ export const validateTransactionForm = (
 
   // Transfer-specific validation
   if (formData.transactionType === "transfer") {
+    if (formData.categoryId == null) errors.category = true;
+    if (formData.recipientId == null) errors.recipient = true;
+    if (formData.transferRecipientId == null) errors.transferRecipient = true;
     if (formData.paymentMethodId == null) errors.paymentMethod = true;
-    if (formData.transferToPaymentMethodId == null) errors.recipient = true;
+    if (formData.transferToPaymentMethodId == null)
+      errors.transferToPaymentMethod = true;
 
     if (formData.paymentMethodId === formData.transferToPaymentMethodId) {
       return {

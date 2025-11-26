@@ -26,7 +26,7 @@ import {
   IonToggle,
   IonTextarea,
 } from "@ionic/react";
-import { addOutline, createOutline, trashOutline } from "ionicons/icons";
+import { addOutline, createOutline, trashOutline, close } from "ionicons/icons";
 import { db, SmsImportTemplate, PaymentMethod, Account } from "../db";
 
 const SmsImportTemplatesManagement: React.FC = () => {
@@ -277,6 +277,11 @@ const SmsImportTemplatesManagement: React.FC = () => {
               <IonTitle>
                 {editingTemplate ? "Edit Template" : "Add Template"}
               </IonTitle>
+              <IonButtons slot="end">
+                <IonButton onClick={() => setShowModal(false)}>
+                  <IonIcon icon={close} />
+                </IonButton>
+              </IonButtons>
             </IonToolbar>
           </IonHeader>
           <IonContent className="ion-padding">
@@ -481,15 +486,6 @@ const SmsImportTemplatesManagement: React.FC = () => {
                 <IonCol>
                   <IonButton expand="block" onClick={handleSave}>
                     {editingTemplate ? "Update Template" : "Add Template"}
-                  </IonButton>
-                </IonCol>
-                <IonCol>
-                  <IonButton
-                    expand="block"
-                    color="medium"
-                    onClick={() => setShowModal(false)}
-                  >
-                    Cancel
                   </IonButton>
                 </IonCol>
               </IonRow>

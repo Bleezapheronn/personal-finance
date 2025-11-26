@@ -4,6 +4,8 @@ import {
   IonHeader,
   IonToolbar,
   IonTitle,
+  IonButtons,
+  IonButton,
   IonContent,
   IonGrid,
   IonRow,
@@ -11,9 +13,10 @@ import {
   IonInput,
   IonSelect,
   IonSelectOption,
-  IonButton,
   IonAlert,
+  IonIcon,
 } from "@ionic/react";
+import { close } from "ionicons/icons";
 import { db, Category, Bucket } from "../db";
 
 interface AddCategoryModalProps {
@@ -88,6 +91,11 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
       <IonHeader>
         <IonToolbar>
           <IonTitle>Add Category</IonTitle>
+          <IonButtons slot="end">
+            <IonButton onClick={handleClose}>
+              <IonIcon icon={close} />
+            </IonButton>
+          </IonButtons>
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
@@ -101,6 +109,27 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
           />
         )}
         <IonGrid>
+          <IonRow>
+            <IonCol>
+              <IonSelect
+                label="Bucket"
+                placeholder="Select bucket"
+                interface="popover"
+                value={bucketId}
+                onIonChange={(e) =>
+                  setBucketId(e.detail.value as number | undefined)
+                }
+                labelPlacement="stacked"
+                fill="outline"
+              >
+                {buckets.map((b) => (
+                  <IonSelectOption key={b.id} value={b.id}>
+                    {b.name}
+                  </IonSelectOption>
+                ))}
+              </IonSelect>
+            </IonCol>
+          </IonRow>
           <IonRow>
             <IonCol>
               <IonInput
@@ -127,34 +156,8 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
           </IonRow>
           <IonRow>
             <IonCol>
-              <IonSelect
-                label="Bucket"
-                placeholder="Select bucket"
-                interface="popover"
-                value={bucketId}
-                onIonChange={(e) =>
-                  setBucketId(e.detail.value as number | undefined)
-                }
-                labelPlacement="stacked"
-                fill="outline"
-              >
-                {buckets.map((b) => (
-                  <IonSelectOption key={b.id} value={b.id}>
-                    {b.name}
-                  </IonSelectOption>
-                ))}
-              </IonSelect>
-            </IonCol>
-          </IonRow>
-          <IonRow>
-            <IonCol>
               <IonButton expand="block" onClick={handleSave}>
                 Add Category
-              </IonButton>
-            </IonCol>
-            <IonCol>
-              <IonButton expand="block" color="medium" onClick={handleClose}>
-                Cancel
               </IonButton>
             </IonCol>
           </IonRow>

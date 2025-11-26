@@ -21,7 +21,6 @@ import {
   IonSegmentButton,
   IonItem,
   IonIcon,
-  IonModal,
   useIonViewWillEnter,
 } from "@ionic/react";
 import {
@@ -37,7 +36,6 @@ import {
 import { closeCircleOutline } from "ionicons/icons";
 import { addOutline } from "ionicons/icons";
 import { documentTextOutline } from "ionicons/icons";
-import { useSmsParser } from "../hooks/useSmsParser";
 import {
   validateTransactionForm,
   validateDateTime,
@@ -47,6 +45,9 @@ import {
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
 import { AddPaymentMethodModal } from "../components/AddPaymentMethodModal";
+import { SmsImportModal } from "../components/SmsImportModal";
+import { ParsedSmsData } from "../hooks/useSmsParser";
+import { PaymentMethodSelect } from "../components/PaymentMethodSelect";
 
 const AddTransaction: React.FC = () => {
   const history = useHistory();
@@ -82,6 +83,9 @@ const AddTransaction: React.FC = () => {
   >(undefined);
   const [editingTransaction, setEditingTransaction] =
     useState<Transaction | null>(null);
+  const [transferRecipientId, setTransferRecipientId] = useState<
+    number | undefined
+  >(undefined);
 
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [sortedCategories, setSortedCategories] = useState<Category[]>([]);
@@ -110,16 +114,7 @@ const AddTransaction: React.FC = () => {
 
   // SMS Import state
   const [showSmsImportModal, setShowSmsImportModal] = useState(false);
-  const [smsText, setSmsText] = useState("");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<
-    number | undefined
-  >(undefined);
-  const {
-    parsedPreview,
-    parseError: smsParseError,
-    previewParse,
-    clearParsedData,
-  } = useSmsParser(smsTemplates, paymentMethodId);
+
   // derive list of currencies available from accounts
   const currencies = Array.from(
     new Set(
@@ -248,13 +243,23 @@ const AddTransaction: React.FC = () => {
                 // This is the outgoing transaction
                 setPaymentMethodId(txn.paymentChannelId);
                 setTransferToPaymentMethodId(pairedTxn?.paymentChannelId);
+                setRecipientId(txn.recipientId); // Payer (source)
+                setTransferRecipientId(pairedTxn?.recipientId); // Recipient (destination)
               } else {
                 // This is the incoming transaction
                 setPaymentMethodId(pairedTxn?.paymentChannelId);
                 setTransferToPaymentMethodId(txn.paymentChannelId);
+                setRecipientId(pairedTxn?.recipientId); // Payer (source)
+                setTransferRecipientId(txn.recipientId); // Recipient (destination)
               }
+
+              // Set category from the transaction (both should have same category)
+              setCategoryId(txn.categoryId);
             } else {
               setTransactionType(txn.amount < 0 ? "expense" : "income");
+              setCategoryId(txn.categoryId);
+              setPaymentMethodId(txn.paymentChannelId);
+              setRecipientId(txn.recipientId);
             }
 
             // Format date as YYYY-MM-DD
@@ -282,13 +287,6 @@ const AddTransaction: React.FC = () => {
             setOriginalCurrency(txn.originalCurrency || "");
             setExchangeRate(txn.exchangeRate?.toString() || "");
             setExchangeRateOverride(!!txn.exchangeRate);
-
-            // Only set these for non-transfer transactions
-            if (!txn.isTransfer) {
-              setCategoryId(txn.categoryId);
-              setPaymentMethodId(txn.paymentChannelId);
-              setRecipientId(txn.recipientId);
-            }
             setDescription(txn.description || "");
           }
         } catch (err) {
@@ -313,6 +311,7 @@ const AddTransaction: React.FC = () => {
       setCategoryId(undefined);
       setPaymentMethodId(undefined);
       setRecipientId(undefined);
+      setTransferRecipientId(undefined);
       setTransferToPaymentMethodId(undefined);
       setDescription("");
       setEditingTransaction(null);
@@ -477,6 +476,7 @@ const AddTransaction: React.FC = () => {
       categoryId,
       paymentMethodId,
       recipientId,
+      transferRecipientId,
       transferToPaymentMethodId,
       transactionType,
     });
@@ -509,11 +509,6 @@ const AddTransaction: React.FC = () => {
     }
 
     const numericAmountRaw = parseFloat(amount);
-    // save negative values for expenses
-    const numericAmount =
-      transactionType === "expense"
-        ? -Math.abs(numericAmountRaw)
-        : Math.abs(numericAmountRaw);
 
     const parsedCost = transactionCost ? parseFloat(transactionCost) : NaN;
     const numericCost = !isNaN(parsedCost)
@@ -523,12 +518,6 @@ const AddTransaction: React.FC = () => {
     const numericOriginalAmountRaw = originalAmount
       ? parseFloat(originalAmount)
       : undefined;
-    const numericOriginalAmount =
-      numericOriginalAmountRaw == null
-        ? undefined
-        : transactionType === "expense"
-        ? -Math.abs(numericOriginalAmountRaw)
-        : Math.abs(numericOriginalAmountRaw);
 
     const txReference = transactionReference.trim() || undefined;
     const origCurrency = originalCurrency.trim() || undefined;
@@ -537,33 +526,134 @@ const AddTransaction: React.FC = () => {
       ? parseFloat(exchangeRate)
       : undefined;
 
-    const tx: Omit<Transaction, "id"> = {
-      date: selectedDateTime,
-      amount: numericAmount,
-      transactionCost: numericCost,
-      originalAmount: numericOriginalAmount,
-      originalCurrency: origCurrency,
-      exchangeRate: numericExchangeRate,
-      transactionReference: txReference,
-      categoryId: categoryId!,
-      paymentChannelId: paymentMethodId!,
-      recipientId: recipientId!,
-      description: description || undefined,
-      isTransfer: false, // Add this field
-      transferPairId: undefined, // Add this field
-    };
-
     try {
-      if (isEditMode && id) {
-        // Update existing transaction
-        await db.transactions.update(Number(id), tx);
-        setSuccessMsg("Transaction updated successfully!");
+      if (transactionType === "transfer") {
+        // Outgoing transaction (negative amount from source payment method)
+        const outgoingTx: Omit<Transaction, "id"> = {
+          date: selectedDateTime,
+          amount: -Math.abs(numericAmountRaw), // negative (outgoing)
+          transactionCost: numericCost,
+          originalAmount: numericOriginalAmountRaw
+            ? -Math.abs(numericOriginalAmountRaw)
+            : undefined,
+          originalCurrency: origCurrency,
+          exchangeRate: numericExchangeRate,
+          transactionReference: txReference,
+          categoryId: categoryId!,
+          paymentChannelId: paymentMethodId!, // FROM payment method
+          recipientId: recipientId!, // Payer
+          description: description || undefined,
+          isTransfer: true,
+          transferPairId: editingTransaction?.transferPairId || undefined,
+        };
+
+        // Incoming transaction (positive amount to destination payment method)
+        const incomingTx: Omit<Transaction, "id"> = {
+          date: selectedDateTime,
+          amount: Math.abs(numericAmountRaw), // positive (incoming)
+          transactionCost: undefined, // costs only on outgoing
+          originalAmount: numericOriginalAmountRaw
+            ? Math.abs(numericOriginalAmountRaw)
+            : undefined,
+          originalCurrency: origCurrency,
+          exchangeRate: numericExchangeRate,
+          transactionReference: txReference,
+          categoryId: categoryId!,
+          paymentChannelId: transferToPaymentMethodId!, // TO payment method
+          recipientId: transferRecipientId!, // Recipient
+          description: description || undefined,
+          isTransfer: true,
+          transferPairId: editingTransaction?.id || undefined,
+        };
+
+        console.log("=== TRANSFER UPDATE/CREATE ===");
+        console.log("Is Edit Mode:", isEditMode);
+        console.log("Editing Transaction ID:", editingTransaction?.id);
+        console.log("Outgoing TX:", outgoingTx);
+        console.log("Incoming TX:", incomingTx);
+
+        if (
+          isEditMode &&
+          editingTransaction?.id &&
+          editingTransaction?.transferPairId
+        ) {
+          // UPDATE MODE: Update both transactions in the pair
+          const outgoingTxId =
+            editingTransaction.amount < 0
+              ? editingTransaction.id
+              : editingTransaction.transferPairId;
+
+          const incomingTxId =
+            editingTransaction.amount < 0
+              ? editingTransaction.transferPairId
+              : editingTransaction.id;
+
+          console.log("Updating Outgoing ID:", outgoingTxId);
+          console.log("Updating Incoming ID:", incomingTxId);
+
+          await db.transactions.update(outgoingTxId, outgoingTx);
+          await db.transactions.update(incomingTxId, incomingTx);
+
+          setSuccessMsg("Transfer transaction updated successfully!");
+        } else {
+          // CREATE MODE: Create new pair of transactions
+          const outgoingId = await db.transactions.add(outgoingTx);
+          const incomingId = await db.transactions.add(incomingTx);
+
+          // Update both transactions to reference each other
+          await db.transactions.update(outgoingId, {
+            transferPairId: incomingId,
+          });
+          await db.transactions.update(incomingId, {
+            transferPairId: outgoingId,
+          });
+
+          console.log("=== TRANSFER PAIR CREATED ===");
+          console.log("Outgoing ID:", outgoingId);
+          console.log("Incoming ID:", incomingId);
+
+          setSuccessMsg("Transfer transaction added successfully!");
+        }
       } else {
-        // Add new transaction
-        await db.transactions.add(tx);
-        setSuccessMsg("Transaction added successfully!");
+        // REGULAR TRANSACTION (income/expense)
+        const numericAmount =
+          transactionType === "expense"
+            ? -Math.abs(numericAmountRaw)
+            : Math.abs(numericAmountRaw);
+
+        const numericOriginalAmount =
+          numericOriginalAmountRaw == null
+            ? undefined
+            : transactionType === "expense"
+            ? -Math.abs(numericOriginalAmountRaw)
+            : Math.abs(numericOriginalAmountRaw);
+
+        const tx: Omit<Transaction, "id"> = {
+          date: selectedDateTime,
+          amount: numericAmount,
+          transactionCost: numericCost,
+          originalAmount: numericOriginalAmount,
+          originalCurrency: origCurrency,
+          exchangeRate: numericExchangeRate,
+          transactionReference: txReference,
+          categoryId: categoryId!,
+          paymentChannelId: paymentMethodId!,
+          recipientId: recipientId!,
+          description: description || undefined,
+          isTransfer: false,
+          transferPairId: undefined,
+        };
+
+        if (isEditMode && id) {
+          await db.transactions.update(Number(id), tx);
+          setSuccessMsg("Transaction updated successfully!");
+        } else {
+          await db.transactions.add(tx);
+          setSuccessMsg("Transaction added successfully!");
+        }
       }
-      // reset
+
+      // Reset form
       setSelectedDate("");
       setSelectedTime("");
       setFieldErrors({});
@@ -577,8 +667,11 @@ const AddTransaction: React.FC = () => {
       setCategoryId(undefined);
       setPaymentMethodId(undefined);
       setRecipientId(undefined);
+      setTransferRecipientId(undefined);
+      setTransferToPaymentMethodId(undefined);
       setDescription("");
-      // navigate to transactions list
+
+      // Navigate to transactions list
       history.push("/transactions");
     } catch (error) {
       console.error("Error adding transaction:", error);
@@ -625,36 +718,31 @@ const AddTransaction: React.FC = () => {
   };
 
   // Handle SMS import
-  const handleSmsImport = async () => {
-    if (!parsedPreview) {
-      setErrorMsg("Please preview parse the SMS first");
-      return;
-    }
-
+  const handleSmsImport = async (parsedData: ParsedSmsData) => {
     // Populate fields from parsed data
-    if (parsedPreview.date) {
-      setSelectedDate(parsedPreview.date);
+    if (parsedData.date) {
+      setSelectedDate(parsedData.date);
     }
-    if (parsedPreview.time) {
-      setSelectedTime(parsedPreview.time);
+    if (parsedData.time) {
+      setSelectedTime(parsedData.time);
     }
-    if (parsedPreview.amount) {
-      setAmount(parsedPreview.amount);
+    if (parsedData.amount) {
+      setAmount(parsedData.amount);
     }
-    if (parsedPreview.reference) {
-      setTransactionReference(parsedPreview.reference);
+    if (parsedData.reference) {
+      setTransactionReference(parsedData.reference);
     }
-    if (parsedPreview.cost) {
-      setTransactionCost(parsedPreview.cost);
+    if (parsedData.cost) {
+      setTransactionCost(parsedData.cost);
     }
 
     // Set transaction type based on parsed data
-    if (parsedPreview.isIncome !== undefined) {
-      setTransactionType(parsedPreview.isIncome ? "income" : "expense");
+    if (parsedData.isIncome !== undefined) {
+      setTransactionType(parsedData.isIncome ? "income" : "expense");
     }
 
     // Auto-populate payment method from the template that was used
-    const usedTemplateId = selectedTemplateId || parsedPreview.templateId;
+    const usedTemplateId = parsedData.templateId;
     if (usedTemplateId) {
       const template = smsTemplates.find((t) => t.id === usedTemplateId);
       if (template?.paymentMethodId) {
@@ -663,18 +751,17 @@ const AddTransaction: React.FC = () => {
     }
 
     // Handle recipient
-    if (parsedPreview.recipientName) {
+    if (parsedData.recipientName) {
       let recipient = sortedRecipients.find(
-        (r) =>
-          r.name?.toLowerCase() === parsedPreview.recipientName?.toLowerCase()
+        (r) => r.name?.toLowerCase() === parsedData.recipientName?.toLowerCase()
       );
 
-      if (!recipient && parsedPreview.recipientName) {
+      if (!recipient && parsedData.recipientName) {
         try {
           const now = new Date();
           const recId = await db.recipients.add({
-            name: parsedPreview.recipientName,
-            phone: parsedPreview.recipientPhone,
+            name: parsedData.recipientName,
+            phone: parsedData.recipientPhone,
             isActive: true,
             createdAt: now,
             updatedAt: now,
@@ -692,11 +779,6 @@ const AddTransaction: React.FC = () => {
         setRecipientId(recipient.id);
       }
     }
-
-    // Close modal and clear SMS text
-    setShowSmsImportModal(false);
-    setSmsText("");
-    clearParsedData();
   };
 
   // Clear error message when all required fields are filled
@@ -711,6 +793,7 @@ const AddTransaction: React.FC = () => {
         categoryId,
         paymentMethodId,
         recipientId,
+        transferRecipientId,
         transferToPaymentMethodId,
         transactionType,
       });
@@ -730,6 +813,7 @@ const AddTransaction: React.FC = () => {
     categoryId,
     paymentMethodId,
     recipientId,
+    transferRecipientId,
     transferToPaymentMethodId,
     transactionType,
   ]);
@@ -761,6 +845,7 @@ const AddTransaction: React.FC = () => {
                 backgroundColor: "var(--ion-color-warning-tint)",
                 borderRadius: "4px",
                 marginBottom: "16px",
+                color: "#1a1a1a",
               }}
             >
               <strong>Note:</strong> This is a transfer transaction. Editing
@@ -959,10 +1044,55 @@ const AddTransaction: React.FC = () => {
 
             {transactionType === "transfer" ? (
               <>
-                {/* FROM Payment Method */}
+                {/* Payer (Source) - NEW FIELD */}
                 <IonRow>
                   <IonCol size="10">
-                    {fieldErrors.paymentMethod && (
+                    <IonSelect
+                      label="Payer"
+                      fill="outline"
+                      color={
+                        fieldErrors.transferRecipient ? "danger" : undefined
+                      }
+                      labelPlacement="stacked"
+                      interface="popover"
+                      placeholder="Select the source of the transfer"
+                      value={transferRecipientId}
+                      onIonChange={(e) => {
+                        const v = e.detail.value as string | number | undefined;
+                        const id =
+                          v == null
+                            ? undefined
+                            : typeof v === "number"
+                            ? v
+                            : Number(v);
+                        setTransferRecipientId(id);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          transferRecipient: false,
+                        }));
+                      }}
+                    >
+                      {sortedRecipients.map((r) => (
+                        <IonSelectOption key={r.id} value={r.id}>
+                          {r.name}
+                        </IonSelectOption>
+                      ))}
+                      <IonButton
+                        slot="end"
+                        fill="clear"
+                        size="small"
+                        color="medium"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTransferRecipientId(undefined);
+                        }}
+                        aria-label="Clear payer"
+                        title="Clear payer"
+                      >
+                        <IonIcon icon={closeCircleOutline} />
+                      </IonButton>
+                    </IonSelect>
+                    {fieldErrors.transferRecipient && (
                       <IonText
                         color="danger"
                         style={{
@@ -974,65 +1104,6 @@ const AddTransaction: React.FC = () => {
                         Required field
                       </IonText>
                     )}
-                    <IonSelect
-                      label="From Payment Method"
-                      labelPlacement="stacked"
-                      fill="outline"
-                      interface="popover"
-                      placeholder="Select source payment method"
-                      value={paymentMethodId}
-                      onIonChange={(e) => {
-                        const v = e.detail.value as string | number | undefined;
-                        setPaymentMethodId(v == null ? undefined : Number(v));
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          paymentMethod: false,
-                        }));
-                      }}
-                    >
-                      {accounts.map((a) => {
-                        const methods = sortedPaymentMethods.filter(
-                          (pm) => pm.accountId === a.id
-                        );
-                        if (methods.length === 0) return null;
-                        return (
-                          <React.Fragment key={a.id}>
-                            <IonSelectOption
-                              value={-1}
-                              disabled
-                              style={{ fontWeight: 700, opacity: 0.9 }}
-                            >
-                              {a.name}
-                            </IonSelectOption>
-                            {methods.map((pm) => (
-                              <IonSelectOption key={pm.id} value={pm.id}>
-                                {pm.name}
-                              </IonSelectOption>
-                            ))}
-                          </React.Fragment>
-                        );
-                      })}
-
-                      {sortedPaymentMethods.filter((pm) => pm.accountId == null)
-                        .length > 0 && (
-                        <>
-                          <IonSelectOption
-                            value={-1}
-                            disabled
-                            style={{ fontWeight: 700, opacity: 0.9 }}
-                          >
-                            Unlinked
-                          </IonSelectOption>
-                          {sortedPaymentMethods
-                            .filter((pm) => pm.accountId == null)
-                            .map((pm) => (
-                              <IonSelectOption key={pm.id} value={pm.id}>
-                                {pm.name}
-                              </IonSelectOption>
-                            ))}
-                        </>
-                      )}
-                    </IonSelect>
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
@@ -1040,18 +1111,62 @@ const AddTransaction: React.FC = () => {
                       expand="block"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setShowPaymentMethodModal(true);
+                        setShowRecipientModal(true);
                       }}
+                      aria-label="Add payer"
+                      title="Add payer"
                     >
                       <IonIcon icon={addOutline} />
-                      Add
+                      Add payer
                     </IonButton>
                   </IonCol>
                 </IonRow>
-
-                {/* TO Payment Method */}
+                {/* Recipient (Destination) */}
                 <IonRow>
                   <IonCol size="10">
+                    <IonSelect
+                      label="Recipient"
+                      fill="outline"
+                      color={fieldErrors.recipient ? "danger" : undefined}
+                      labelPlacement="stacked"
+                      interface="popover"
+                      placeholder="Select destination of the transfer"
+                      value={recipientId}
+                      onIonChange={(e) => {
+                        const v = e.detail.value as string | number | undefined;
+                        const id =
+                          v == null
+                            ? undefined
+                            : typeof v === "number"
+                            ? v
+                            : Number(v);
+                        setRecipientId(id);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          recipient: false,
+                        }));
+                      }}
+                    >
+                      {sortedRecipients.map((r) => (
+                        <IonSelectOption key={r.id} value={r.id}>
+                          {r.name}
+                        </IonSelectOption>
+                      ))}
+                      <IonButton
+                        slot="end"
+                        fill="clear"
+                        size="small"
+                        color="medium"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRecipientId(undefined);
+                        }}
+                        aria-label="Clear recipient"
+                        title="Clear recipient"
+                      >
+                        <IonIcon icon={closeCircleOutline} />
+                      </IonButton>
+                    </IonSelect>
                     {fieldErrors.recipient && (
                       <IonText
                         color="danger"
@@ -1064,67 +1179,162 @@ const AddTransaction: React.FC = () => {
                         Required field
                       </IonText>
                     )}
+                  </IonCol>
+                  <IonCol size="2">
+                    <IonButton
+                      color="primary"
+                      expand="block"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowRecipientModal(true);
+                      }}
+                      aria-label="Add recipient"
+                      title="Add recipient"
+                    >
+                      <IonIcon icon={addOutline} />
+                      Add recipient
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
+
+                {/* Category */}
+                <IonRow>
+                  <IonCol size="10">
                     <IonSelect
-                      label="To Payment Method"
-                      labelPlacement="stacked"
+                      label="Category"
                       fill="outline"
+                      color={fieldErrors.category ? "danger" : undefined}
+                      labelPlacement="stacked"
                       interface="popover"
-                      placeholder="Select destination payment method"
-                      value={transferToPaymentMethodId}
+                      placeholder="Select category"
+                      value={categoryId}
                       onIonChange={(e) => {
                         const v = e.detail.value as string | number | undefined;
-                        setTransferToPaymentMethodId(
-                          v == null ? undefined : Number(v)
-                        );
+                        setCategoryId(v == null ? undefined : Number(v));
                         setFieldErrors((prev) => ({
                           ...prev,
-                          recipient: false,
+                          category: false,
                         }));
                       }}
                     >
-                      {accounts.map((a) => {
-                        const methods = sortedPaymentMethods.filter(
-                          (pm) => pm.accountId === a.id
+                      {buckets.map((b) => {
+                        const cats = sortedCategories.filter(
+                          (c) => c.bucketId === b.id
                         );
-                        if (methods.length === 0) return null;
+                        if (cats.length === 0) return null;
                         return (
-                          <React.Fragment key={a.id}>
+                          <React.Fragment key={b.id}>
                             <IonSelectOption
                               value={-1}
                               disabled
-                              style={{ fontWeight: 700, opacity: 0.9 }}
+                              style={{ fontWeight: 900, opacity: 0.9 }}
                             >
-                              {a.name}
+                              {b.name}
                             </IonSelectOption>
-                            {methods.map((pm) => (
-                              <IonSelectOption key={pm.id} value={pm.id}>
-                                {pm.name}
+                            {cats.map((c) => (
+                              <IonSelectOption key={c.id} value={c.id}>
+                                {c.name}
                               </IonSelectOption>
                             ))}
                           </React.Fragment>
                         );
                       })}
 
-                      {sortedPaymentMethods.filter((pm) => pm.accountId == null)
-                        .length > 0 && (
+                      {sortedCategories.filter((c) => !c.bucketId).length >
+                        0 && (
                         <>
                           <IonSelectOption
                             value={-1}
                             disabled
                             style={{ fontWeight: 700, opacity: 0.9 }}
                           >
-                            Unlinked
+                            Unbucketed
                           </IonSelectOption>
-                          {sortedPaymentMethods
-                            .filter((pm) => pm.accountId == null)
-                            .map((pm) => (
-                              <IonSelectOption key={pm.id} value={pm.id}>
-                                {pm.name}
+                          {sortedCategories
+                            .filter((c) => !c.bucketId)
+                            .map((c) => (
+                              <IonSelectOption key={c.id} value={c.id}>
+                                {c.name}
                               </IonSelectOption>
                             ))}
                         </>
                       )}
+                      <IonButton
+                        slot="end"
+                        fill="clear"
+                        size="small"
+                        color="medium"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCategoryId(undefined);
+                        }}
+                        aria-label="Clear category"
+                        title="Clear category"
+                      >
+                        <IonIcon icon={closeCircleOutline} />
+                      </IonButton>
                     </IonSelect>
+                    {fieldErrors.category && (
+                      <IonText
+                        color="danger"
+                        style={{
+                          fontSize: "0.75rem",
+                          display: "block",
+                          marginTop: "4px",
+                        }}
+                      >
+                        Required field
+                      </IonText>
+                    )}
+                  </IonCol>
+                  <IonCol size="2">
+                    <IonButton
+                      color="primary"
+                      expand="block"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowCategoryModal(true);
+                      }}
+                      aria-label="Add category"
+                      title="Add category"
+                    >
+                      <IonIcon icon={addOutline} />
+                      Add category
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
+
+                {/* FROM Payment Method - using new component */}
+                <IonRow>
+                  <IonCol size="10">
+                    <PaymentMethodSelect
+                      label="From Payment Method"
+                      placeholder="Select source payment method"
+                      value={paymentMethodId}
+                      onChange={(v) => {
+                        setPaymentMethodId(v);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          paymentMethod: false,
+                        }));
+                      }}
+                      onClear={() => setPaymentMethodId(undefined)}
+                      accounts={accounts}
+                      paymentMethods={sortedPaymentMethods}
+                      error={fieldErrors.paymentMethod}
+                    />
+                    {fieldErrors.paymentMethod && (
+                      <IonText
+                        color="danger"
+                        style={{
+                          fontSize: "0.75rem",
+                          display: "block",
+                          marginTop: "4px",
+                        }}
+                      >
+                        Required field
+                      </IonText>
+                    )}
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
@@ -1136,7 +1346,54 @@ const AddTransaction: React.FC = () => {
                       }}
                     >
                       <IonIcon icon={addOutline} />
-                      Add
+                      Add Payment Method
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
+
+                {/* TO Payment Method - using new component */}
+                <IonRow>
+                  <IonCol size="10">
+                    <PaymentMethodSelect
+                      label="To Payment Method"
+                      placeholder="Select destination payment method"
+                      value={transferToPaymentMethodId}
+                      onChange={(v) => {
+                        setTransferToPaymentMethodId(v);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          transferToPaymentMethod: false,
+                        }));
+                      }}
+                      onClear={() => setTransferToPaymentMethodId(undefined)}
+                      accounts={accounts}
+                      paymentMethods={sortedPaymentMethods}
+                      error={fieldErrors.transferToPaymentMethod}
+                    />
+                    {fieldErrors.transferToPaymentMethod && (
+                      <IonText
+                        color="danger"
+                        style={{
+                          fontSize: "0.75rem",
+                          display: "block",
+                          marginTop: "4px",
+                        }}
+                      >
+                        Required field
+                      </IonText>
+                    )}
+                  </IonCol>
+                  <IonCol size="2">
+                    <IonButton
+                      color="primary"
+                      expand="block"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowPaymentMethodModal(true);
+                      }}
+                    >
+                      <IonIcon icon={addOutline} />
+                      Add Payment Method
                     </IonButton>
                   </IonCol>
                 </IonRow>
@@ -1342,9 +1599,25 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                 </IonRow>
 
-                {/* Existing Payment Method field */}
+                {/* Existing Payment Method field - using new component */}
                 <IonRow>
                   <IonCol size="10">
+                    <PaymentMethodSelect
+                      label="Payment Method"
+                      placeholder="Select payment method"
+                      value={paymentMethodId}
+                      onChange={(v) => {
+                        setPaymentMethodId(v);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          paymentMethod: false,
+                        }));
+                      }}
+                      onClear={() => setPaymentMethodId(undefined)}
+                      accounts={accounts}
+                      paymentMethods={sortedPaymentMethods}
+                      error={fieldErrors.paymentMethod}
+                    />
                     {fieldErrors.paymentMethod && (
                       <IonText
                         color="danger"
@@ -1357,79 +1630,6 @@ const AddTransaction: React.FC = () => {
                         Required field
                       </IonText>
                     )}
-                    <IonSelect
-                      label="Payment Method"
-                      labelPlacement="stacked"
-                      fill="outline"
-                      interface="popover"
-                      placeholder="Select payment method"
-                      value={paymentMethodId}
-                      onIonChange={(e) => {
-                        const v = e.detail.value as string | number | undefined;
-                        setPaymentMethodId(v == null ? undefined : Number(v));
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          paymentMethod: false,
-                        }));
-                      }}
-                    >
-                      {accounts.map((a) => {
-                        const methods = sortedPaymentMethods.filter(
-                          (pm) => pm.accountId === a.id
-                        );
-                        if (methods.length === 0) return null;
-                        return (
-                          <React.Fragment key={a.id}>
-                            <IonSelectOption
-                              value={-1}
-                              disabled
-                              style={{ fontWeight: 700, opacity: 0.9 }}
-                            >
-                              {a.name}
-                            </IonSelectOption>
-                            {methods.map((pm) => (
-                              <IonSelectOption key={pm.id} value={pm.id}>
-                                {pm.name}
-                              </IonSelectOption>
-                            ))}
-                          </React.Fragment>
-                        );
-                      })}
-
-                      {sortedPaymentMethods.filter((pm) => pm.accountId == null)
-                        .length > 0 && (
-                        <>
-                          <IonSelectOption
-                            value={-1}
-                            disabled
-                            style={{ fontWeight: 700, opacity: 0.9 }}
-                          >
-                            Unlinked
-                          </IonSelectOption>
-                          {sortedPaymentMethods
-                            .filter((pm) => pm.accountId == null)
-                            .map((pm) => (
-                              <IonSelectOption key={pm.id} value={pm.id}>
-                                {pm.name}
-                              </IonSelectOption>
-                            ))}
-                        </>
-                      )}
-                      <IonButton
-                        slot="end"
-                        fill="clear"
-                        size="small"
-                        color="medium"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPaymentMethodId(undefined);
-                        }}
-                        aria-label="Clear payment method"
-                        title="Clear payment method"
-                      >
-                        <IonIcon icon={closeCircleOutline} />
-                      </IonButton>
-                    </IonSelect>
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
@@ -1601,222 +1801,14 @@ const AddTransaction: React.FC = () => {
       />
 
       {/* Modal: Import SMS */}
-      <IonModal
+      <SmsImportModal
         isOpen={showSmsImportModal}
-        onDidDismiss={() => {
-          setShowSmsImportModal(false);
-          setSmsText("");
-          clearParsedData();
-          setSelectedTemplateId(undefined);
-          clearParsedData();
-        }}
-      >
-        <IonHeader>
-          <IonToolbar>
-            <IonTitle>Import from SMS</IonTitle>
-            <IonButtons slot="end">
-              <IonButton onClick={() => setShowSmsImportModal(false)}>
-                Close
-              </IonButton>
-            </IonButtons>
-          </IonToolbar>
-        </IonHeader>
-        <IonContent className="ion-padding">
-          {smsParseError && (
-            <IonText color="danger">
-              <p>{smsParseError}</p>
-            </IonText>
-          )}
-          <IonGrid>
-            <IonRow>
-              <IonCol>
-                <IonSelect
-                  label="Select Template (optional)"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  interface="popover"
-                  placeholder="Auto-detect from all templates"
-                  value={selectedTemplateId}
-                  onIonChange={(e) => {
-                    setSelectedTemplateId(e.detail.value);
-                    clearParsedData(); // Clear preview when template changes
-                  }}
-                >
-                  <IonSelectOption value={undefined}>
-                    Auto-detect from all templates
-                  </IonSelectOption>
-                  {smsTemplates.map((template) => (
-                    <IonSelectOption key={template.id} value={template.id}>
-                      {template.name}
-                      {template.paymentMethodId && (
-                        <>
-                          {" "}
-                          (
-                          {
-                            sortedPaymentMethods.find(
-                              (pm) => pm.id === template.paymentMethodId
-                            )?.name
-                          }
-                          )
-                        </>
-                      )}
-                    </IonSelectOption>
-                  ))}
-                </IonSelect>
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonLabel position="stacked">Paste SMS Message</IonLabel>
-                <textarea
-                  rows={8}
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    marginTop: "8px",
-                    borderRadius: "4px",
-                    border: "1px solid var(--ion-color-medium)",
-                    fontFamily: "monospace",
-                    fontSize: "0.9rem",
-                  }}
-                  placeholder="Paste your transaction SMS here..."
-                  value={smsText}
-                  onChange={(e) => {
-                    setSmsText(e.target.value);
-                    clearParsedData(); // Clear preview when text changes
-                  }}
-                />
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonButton
-                  expand="block"
-                  fill="outline"
-                  onClick={() => previewParse(smsText, selectedTemplateId)}
-                  disabled={!smsText.trim()}
-                >
-                  Preview Parse
-                </IonButton>
-              </IonCol>
-            </IonRow>
-
-            {/* Preview Section */}
-            {parsedPreview && (
-              <>
-                <IonRow>
-                  <IonCol>
-                    <div
-                      style={{
-                        backgroundColor: "var(--ion-color-light)",
-                        padding: "12px",
-                        borderRadius: "8px",
-                        marginTop: "8px",
-                      }}
-                    >
-                      <h3
-                        style={{
-                          marginTop: 0,
-                          fontSize: "1rem",
-                          fontWeight: "bold",
-                        }}
-                      >
-                        Parsed Information
-                      </h3>
-                      <div style={{ fontSize: "0.9rem" }}>
-                        {parsedPreview.isIncome !== undefined && (
-                          <div style={{ marginBottom: "8px" }}>
-                            <strong>Type:</strong>{" "}
-                            <IonText
-                              color={
-                                parsedPreview.isIncome ? "success" : "danger"
-                              }
-                            >
-                              {parsedPreview.isIncome ? "Income" : "Expense"}
-                            </IonText>
-                          </div>
-                        )}
-                        {parsedPreview.reference && (
-                          <div style={{ marginBottom: "8px" }}>
-                            <strong>Reference:</strong>{" "}
-                            {parsedPreview.reference}
-                          </div>
-                        )}
-                        {parsedPreview.amount && (
-                          <div style={{ marginBottom: "8px" }}>
-                            <strong>Amount:</strong> {parsedPreview.amount}
-                          </div>
-                        )}
-                        {parsedPreview.cost && (
-                          <div style={{ marginBottom: "8px" }}>
-                            <strong>Transaction Cost:</strong>{" "}
-                            {parsedPreview.cost}
-                          </div>
-                        )}
-                        {parsedPreview.recipientName && (
-                          <div style={{ marginBottom: "8px" }}>
-                            <strong>
-                              {parsedPreview.isIncome ? "Sender" : "Recipient"}:
-                            </strong>{" "}
-                            {parsedPreview.recipientName}
-                            {parsedPreview.recipientPhone && (
-                              <> ({parsedPreview.recipientPhone})</>
-                            )}
-                          </div>
-                        )}
-                        {parsedPreview.date && (
-                          <div style={{ marginBottom: "8px" }}>
-                            <strong>Date:</strong> {parsedPreview.date}
-                            {parsedPreview.time && (
-                              <> at {parsedPreview.time}</>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </IonCol>
-                </IonRow>
-              </>
-            )}
-
-            <IonRow>
-              <IonCol>
-                <IonButton
-                  expand="block"
-                  onClick={handleSmsImport}
-                  disabled={!parsedPreview}
-                  color="primary"
-                >
-                  Parse & Import
-                </IonButton>
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonText color="medium">
-                  <p style={{ fontSize: "0.85rem" }}>
-                    <strong>How to use:</strong>
-                  </p>
-                  <ol style={{ fontSize: "0.85rem", paddingLeft: "20px" }}>
-                    <li>Paste your SMS message above</li>
-                    <li>
-                      Optionally select a specific template or let the system
-                      auto-detect
-                    </li>
-                    <li>Click "Preview Parse" to see what will be extracted</li>
-                    <li>Review the parsed information</li>
-                    <li>Click "Parse & Import" to add the transaction</li>
-                  </ol>
-                  <p style={{ fontSize: "0.85rem" }}>
-                    If parsing fails, you may need to add or update SMS import
-                    templates in the management page.
-                  </p>
-                </IonText>
-              </IonCol>
-            </IonRow>
-          </IonGrid>
-        </IonContent>
-      </IonModal>
+        onClose={() => setShowSmsImportModal(false)}
+        onImport={handleSmsImport}
+        smsTemplates={smsTemplates}
+        paymentMethods={sortedPaymentMethods}
+        paymentMethodId={paymentMethodId}
+      />
     </IonPage>
   );
 };

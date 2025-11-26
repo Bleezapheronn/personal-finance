@@ -4,6 +4,8 @@ import {
   IonHeader,
   IonToolbar,
   IonTitle,
+  IonButtons,
+  IonButton,
   IonContent,
   IonGrid,
   IonRow,
@@ -11,9 +13,10 @@ import {
   IonInput,
   IonSelect,
   IonSelectOption,
-  IonButton,
   IonAlert,
+  IonIcon,
 } from "@ionic/react";
+import { close } from "ionicons/icons";
 import { db, PaymentMethod, Account } from "../db";
 
 interface AddPaymentMethodModalProps {
@@ -83,6 +86,11 @@ export const AddPaymentMethodModal: React.FC<AddPaymentMethodModalProps> = ({
       <IonHeader>
         <IonToolbar>
           <IonTitle>Add Payment Method</IonTitle>
+          <IonButtons slot="end">
+            <IonButton onClick={handleClose}>
+              <IonIcon icon={close} />
+            </IonButton>
+          </IonButtons>
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
@@ -133,11 +141,6 @@ export const AddPaymentMethodModal: React.FC<AddPaymentMethodModalProps> = ({
             <IonCol>
               <IonButton expand="block" onClick={handleSave}>
                 Add Payment Method
-              </IonButton>
-            </IonCol>
-            <IonCol>
-              <IonButton expand="block" color="medium" onClick={handleClose}>
-                Cancel
               </IonButton>
             </IonCol>
           </IonRow>

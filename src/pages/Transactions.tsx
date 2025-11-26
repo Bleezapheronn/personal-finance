@@ -23,6 +23,7 @@ import {
   IonLabel,
   IonCard,
   IonCardContent,
+  IonAlert,
 } from "@ionic/react";
 
 import { useHistory } from "react-router-dom";
@@ -54,6 +55,12 @@ const Transactions: React.FC = () => {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [transactionToDelete, setTransactionToDelete] = useState<
+    number | undefined
+  >(undefined);
+  const [isTransferDelete, setIsTransferDelete] = useState(false);
   const history = useHistory();
 
   const fetchTransactions = async () => {
@@ -135,15 +142,55 @@ const Transactions: React.FC = () => {
     }
   };
 
-  // Handler to delete a transaction and refresh list
-  const handleDelete = async (id?: number) => {
+  // Handler to delete a transaction with confirmation
+  const handleDeleteClick = async (id?: number) => {
     if (id === undefined) return;
+    const isTransfer = await isTransferTransaction(id);
+    setIsTransferDelete(isTransfer);
+    setTransactionToDelete(id);
+    setShowDeleteConfirm(true);
+  };
+
+  // Add this helper to check if transaction is a transfer
+  const isTransferTransaction = async (id: number): Promise<boolean> => {
     try {
-      await db.transactions.delete(id);
+      const txn = await db.transactions.get(id);
+      return txn?.isTransfer ?? false;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (transactionToDelete === undefined) return;
+    try {
+      // Get the transaction to check if it's a transfer
+      const txnToDelete = await db.transactions.get(transactionToDelete);
+
+      if (txnToDelete?.isTransfer && txnToDelete?.transferPairId) {
+        // Delete both transactions in the pair
+        await db.transactions.delete(transactionToDelete);
+        await db.transactions.delete(txnToDelete.transferPairId);
+
+        setSuccessMsg(
+          "Transfer transaction deleted successfully! Both paired transactions were removed."
+        );
+      } else {
+        // Delete single transaction
+        await db.transactions.delete(transactionToDelete);
+        setSuccessMsg("Transaction deleted successfully!");
+      }
+
       fetchTransactions(); // refresh after delete
+      setShowDeleteConfirm(false);
+      setTransactionToDelete(undefined);
+
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccessMsg(""), 3000);
     } catch (err) {
       console.error("Error deleting transaction:", err);
       setError("Error deleting transaction.");
+      setShowDeleteConfirm(false);
     }
   };
 
@@ -241,6 +288,49 @@ const Transactions: React.FC = () => {
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
+        {/* Delete Confirmation Alert */}
+        <IonAlert
+          isOpen={showDeleteConfirm}
+          onDidDismiss={() => setShowDeleteConfirm(false)}
+          header="Confirm Delete"
+          message={
+            isTransferDelete
+              ? "Are you sure you want to delete this transfer transaction? This will remove both the outgoing and incoming transactions. This action cannot be undone."
+              : "Are you sure you want to delete this transaction? This action cannot be undone."
+          }
+          buttons={[
+            {
+              text: "Cancel",
+              role: "cancel",
+              handler: () => {
+                setShowDeleteConfirm(false);
+                setTransactionToDelete(undefined);
+                setIsTransferDelete(false);
+              },
+            },
+            {
+              text: "Delete",
+              role: "destructive",
+              handler: handleConfirmDelete,
+            },
+          ]}
+        />
+
+        {successMsg && (
+          <IonText color="success">
+            <p
+              style={{
+                padding: "12px",
+                backgroundColor: "var(--ion-color-success-tint)",
+                borderRadius: "4px",
+                marginBottom: "16px",
+              }}
+            >
+              {successMsg}
+            </p>
+          </IonText>
+        )}
+
         {loading && <IonSpinner name="crescent" />}
         {error && <IonText color="danger">{error}</IonText>}
 
@@ -482,7 +572,7 @@ const Transactions: React.FC = () => {
                           <IonButton
                             fill="clear"
                             color="danger"
-                            onClick={() => handleDelete(txn.id)}
+                            onClick={() => handleDeleteClick(txn.id)}
                           >
                             <IonIcon slot="icon-only" icon={trashOutline} />
                           </IonButton>
