@@ -15,6 +15,8 @@ export interface Transaction {
   transactionReference?: string;
   transactionCost?: number;
   description?: string;
+  transferPairId?: number; // Links the two transactions in a transfer
+  isTransfer?: boolean; // Flag to identify transfer transactions
 }
 
 export interface Bucket {
@@ -78,17 +80,15 @@ export interface SmsImportTemplate {
   id?: number;
   name: string;
   description?: string;
-  paymentMethodId?: number; // Link to specific payment method
-  // Regex patterns for parsing
+  paymentMethodId?: number;
   referencePattern?: string;
   amountPattern?: string;
   recipientNamePattern?: string;
   recipientPhonePattern?: string;
   dateTimePattern?: string;
   costPattern?: string;
-  // Pattern to detect transaction type (income/expense)
-  incomePattern?: string; // e.g., "You have received"
-  expensePattern?: string; // e.g., "sent to"
+  incomePattern?: string;
+  expensePattern?: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -108,9 +108,9 @@ export class FinanceDB extends Dexie {
   constructor() {
     super("FinanceDB");
 
-    this.version(6).stores({
+    this.version(7).stores({
       transactions:
-        "++id, categoryId, paymentChannelId, recipientId, date, amount, originalAmount, originalCurrency, exchangeRate, transactionReference, description",
+        "++id, categoryId, paymentChannelId, recipientId, date, amount, originalAmount, originalCurrency, exchangeRate, transactionReference, description, transferPairId, isTransfer",
       buckets:
         "++id, name, description, minPercentage, maxPercentage, minFixedAmount, isActive, createdAt, updatedAt",
       categories:

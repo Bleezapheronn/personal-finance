@@ -22,7 +22,6 @@ import {
   IonItem,
   IonIcon,
   IonModal,
-  IonAlert,
   useIonViewWillEnter,
 } from "@ionic/react";
 import {
@@ -38,6 +37,16 @@ import {
 import { closeCircleOutline } from "ionicons/icons";
 import { addOutline } from "ionicons/icons";
 import { documentTextOutline } from "ionicons/icons";
+import { useSmsParser } from "../hooks/useSmsParser";
+import {
+  validateTransactionForm,
+  validateDateTime,
+  validateAmount,
+  ValidationErrors,
+} from "../utils/transactionValidation";
+import { AddRecipientModal } from "../components/AddRecipientModal";
+import { AddCategoryModal } from "../components/AddCategoryModal";
+import { AddPaymentMethodModal } from "../components/AddPaymentMethodModal";
 
 const AddTransaction: React.FC = () => {
   const history = useHistory();
@@ -49,7 +58,9 @@ const AddTransaction: React.FC = () => {
   const [selectedTime, setSelectedTime] = useState<string>("");
 
   // transaction type: true = expense, false = income
-  const [isExpense, setIsExpense] = useState<boolean>(true);
+  const [transactionType, setTransactionType] = useState<
+    "expense" | "income" | "transfer"
+  >("expense");
 
   const [amount, setAmount] = useState("");
   const [transactionCost, setTransactionCost] = useState("");
@@ -65,6 +76,13 @@ const AddTransaction: React.FC = () => {
   const [recipientId, setRecipientId] = useState<number | undefined>(undefined);
   const [description, setDescription] = useState("");
 
+  // Transfer-specific state
+  const [transferToPaymentMethodId, setTransferToPaymentMethodId] = useState<
+    number | undefined
+  >(undefined);
+  const [editingTransaction, setEditingTransaction] =
+    useState<Transaction | null>(null);
+
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [sortedCategories, setSortedCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -76,38 +94,10 @@ const AddTransaction: React.FC = () => {
   const [showRecipientModal, setShowRecipientModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
-  const [modalCategoryName, setModalCategoryName] = useState("");
-  const [modalCategoryDescription, setModalCategoryDescription] = useState("");
-  const [modalCategoryBucketId, setModalCategoryBucketId] = useState<
-    number | undefined
-  >(undefined);
-  const [modalCategoryIsActive, setModalCategoryIsActive] = useState(true);
-  const [modalCategoryAlertMessage, setModalCategoryAlertMessage] =
-    useState("");
-  const [modalName, setModalName] = useState("");
-  const [modalEmail, setModalEmail] = useState("");
-  const [modalPhone, setModalPhone] = useState("");
-  const [modalTill, setModalTill] = useState("");
-  const [modalPaybill, setModalPaybill] = useState("");
-  const [modalAccountNumber, setModalAccountNumber] = useState("");
-  const [modalAlertMessage, setModalAlertMessage] = useState("");
-
-  const [modalPaymentMethodName, setModalPaymentMethodName] = useState("");
-  const [modalPaymentMethodAccountId, setModalPaymentMethodAccountId] =
-    useState<number | undefined>(undefined);
-  const [modalPaymentMethodAlertMessage, setModalPaymentMethodAlertMessage] =
-    useState("");
 
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<{
-    date?: boolean;
-    time?: boolean;
-    amount?: boolean;
-    category?: boolean;
-    paymentMethod?: boolean;
-    recipient?: boolean;
-  }>({});
+  const [fieldErrors, setFieldErrors] = useState<ValidationErrors>({});
 
   // Description autocomplete state
   const [descriptionSuggestions, setDescriptionSuggestions] = useState<
@@ -121,21 +111,15 @@ const AddTransaction: React.FC = () => {
   // SMS Import state
   const [showSmsImportModal, setShowSmsImportModal] = useState(false);
   const [smsText, setSmsText] = useState("");
-  const [smsParseError, setSmsParseError] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<
     number | undefined
   >(undefined);
-  const [parsedPreview, setParsedPreview] = useState<{
-    reference?: string;
-    amount?: string;
-    recipientName?: string;
-    recipientPhone?: string;
-    date?: string;
-    time?: string;
-    cost?: string;
-    isIncome?: boolean;
-  } | null>(null);
-
+  const {
+    parsedPreview,
+    parseError: smsParseError,
+    previewParse,
+    clearParsedData,
+  } = useSmsParser(smsTemplates, paymentMethodId);
   // derive list of currencies available from accounts
   const currencies = Array.from(
     new Set(
@@ -252,6 +236,27 @@ const AddTransaction: React.FC = () => {
           const txn = await db.transactions.get(Number(id));
 
           if (txn) {
+            setEditingTransaction(txn);
+
+            // Check if this is a transfer transaction
+            if (txn.isTransfer && txn.transferPairId) {
+              setTransactionType("transfer");
+              const pairedTxn = await db.transactions.get(txn.transferPairId);
+
+              // Determine which is outgoing and which is incoming
+              if (txn.amount < 0) {
+                // This is the outgoing transaction
+                setPaymentMethodId(txn.paymentChannelId);
+                setTransferToPaymentMethodId(pairedTxn?.paymentChannelId);
+              } else {
+                // This is the incoming transaction
+                setPaymentMethodId(pairedTxn?.paymentChannelId);
+                setTransferToPaymentMethodId(txn.paymentChannelId);
+              }
+            } else {
+              setTransactionType(txn.amount < 0 ? "expense" : "income");
+            }
+
             // Format date as YYYY-MM-DD
             const txnDate = new Date(txn.date);
             const year = txnDate.getFullYear();
@@ -264,7 +269,6 @@ const AddTransaction: React.FC = () => {
             const minutes = String(txnDate.getMinutes()).padStart(2, "0");
             setSelectedTime(`${hours}:${minutes}`);
 
-            setIsExpense(txn.amount < 0);
             setAmount(Math.abs(txn.amount).toString());
             setTransactionCost(
               txn.transactionCost
@@ -278,9 +282,13 @@ const AddTransaction: React.FC = () => {
             setOriginalCurrency(txn.originalCurrency || "");
             setExchangeRate(txn.exchangeRate?.toString() || "");
             setExchangeRateOverride(!!txn.exchangeRate);
-            setCategoryId(txn.categoryId);
-            setPaymentMethodId(txn.paymentChannelId);
-            setRecipientId(txn.recipientId);
+
+            // Only set these for non-transfer transactions
+            if (!txn.isTransfer) {
+              setCategoryId(txn.categoryId);
+              setPaymentMethodId(txn.paymentChannelId);
+              setRecipientId(txn.recipientId);
+            }
             setDescription(txn.description || "");
           }
         } catch (err) {
@@ -294,7 +302,7 @@ const AddTransaction: React.FC = () => {
       // ADD MODE: Clear form
       setSelectedDate("");
       setSelectedTime("");
-      setIsExpense(true);
+      setTransactionType("expense");
       setAmount("");
       setTransactionCost("");
       setTransactionReference("");
@@ -305,7 +313,9 @@ const AddTransaction: React.FC = () => {
       setCategoryId(undefined);
       setPaymentMethodId(undefined);
       setRecipientId(undefined);
+      setTransferToPaymentMethodId(undefined);
       setDescription("");
+      setEditingTransaction(null);
     }
   }, [id, isEditMode]); // dateTime intentionally excluded to avoid infinite loop
 
@@ -458,39 +468,52 @@ const AddTransaction: React.FC = () => {
     setSuccessMsg("");
     setFieldErrors({});
 
-    const errors: typeof fieldErrors = {};
-    if (!selectedDate) errors.date = true;
-    if (!selectedTime) errors.time = true;
-    if (!amount) errors.amount = true;
-    if (categoryId == null) errors.category = true;
-    if (paymentMethodId == null) errors.paymentMethod = true;
-    if (recipientId == null) errors.recipient = true;
+    // Validate form using utility function
+    const formValidation = validateTransactionForm({
+      selectedDate,
+      selectedTime,
+      amount,
+      description,
+      categoryId,
+      paymentMethodId,
+      recipientId,
+      transferToPaymentMethodId,
+      transactionType,
+    });
 
-    if (Object.keys(errors).length > 0) {
-      setFieldErrors(errors);
-      setErrorMsg("Please fill in all required fields.");
+    if (!formValidation.isValid) {
+      setFieldErrors(formValidation.errors);
+      setErrorMsg(
+        formValidation.errorMessage || "Please fill in all required fields."
+      );
       return;
     }
 
-    // Combine date and time
+    // Validate date/time
     const dateTimeString = `${selectedDate}T${selectedTime}`;
-    const selectedDateTime = new Date(dateTimeString);
-    const now = new Date();
+    const dateTimeValidation = validateDateTime(dateTimeString);
 
-    if (selectedDateTime > now) {
-      setErrorMsg("Date and time cannot be in the future.");
+    if (!dateTimeValidation.isValid) {
+      setErrorMsg(dateTimeValidation.errorMessage || "Invalid date/time.");
+      return;
+    }
+
+    const selectedDateTime = new Date(dateTimeString);
+
+    // Validate amount
+    const amountValidation = validateAmount(amount);
+
+    if (!amountValidation.isValid) {
+      setErrorMsg(amountValidation.errorMessage || "Invalid amount.");
       return;
     }
 
     const numericAmountRaw = parseFloat(amount);
-    if (isNaN(numericAmountRaw) || numericAmountRaw <= 0) {
-      setErrorMsg("Amount must be a positive number.");
-      return;
-    }
     // save negative values for expenses
-    const numericAmount = isExpense
-      ? -Math.abs(numericAmountRaw)
-      : Math.abs(numericAmountRaw);
+    const numericAmount =
+      transactionType === "expense"
+        ? -Math.abs(numericAmountRaw)
+        : Math.abs(numericAmountRaw);
 
     const parsedCost = transactionCost ? parseFloat(transactionCost) : NaN;
     const numericCost = !isNaN(parsedCost)
@@ -503,7 +526,7 @@ const AddTransaction: React.FC = () => {
     const numericOriginalAmount =
       numericOriginalAmountRaw == null
         ? undefined
-        : isExpense
+        : transactionType === "expense"
         ? -Math.abs(numericOriginalAmountRaw)
         : Math.abs(numericOriginalAmountRaw);
 
@@ -526,6 +549,8 @@ const AddTransaction: React.FC = () => {
       paymentChannelId: paymentMethodId!,
       recipientId: recipientId!,
       description: description || undefined,
+      isTransfer: false, // Add this field
+      transferPairId: undefined, // Add this field
     };
 
     try {
@@ -584,429 +609,130 @@ const AddTransaction: React.FC = () => {
       // only populate if the destination fields are currently empty
       if (recipientId == null && latest.recipientId != null) {
         setRecipientId(latest.recipientId);
+        setFieldErrors((prev) => ({ ...prev, recipient: false }));
       }
       if (categoryId == null && latest.categoryId != null) {
         setCategoryId(latest.categoryId);
+        setFieldErrors((prev) => ({ ...prev, category: false }));
       }
       if (paymentMethodId == null && latest.paymentChannelId != null) {
         setPaymentMethodId(latest.paymentChannelId);
+        setFieldErrors((prev) => ({ ...prev, paymentMethod: false }));
       }
     } catch (err) {
       console.error("Failed to load last transaction for description:", err);
     }
   };
 
-  // add helper to reset modal form
-  const resetRecipientModalForm = () => {
-    setModalName("");
-    setModalEmail("");
-    setModalPhone("");
-    setModalTill("");
-    setModalPaybill("");
-    setModalAccountNumber("");
-    setModalAlertMessage("");
-  };
-
-  const handleSaveRecipientFromModal = async () => {
-    if (!modalName.trim()) {
-      setModalAlertMessage("Recipient name is required");
-      return;
-    }
-    if (modalAccountNumber.trim() && !modalPaybill.trim()) {
-      setModalAlertMessage(
-        "Enter a Paybill number before providing an Account Number"
-      );
-      return;
-    }
-    try {
-      const now = new Date();
-      const newRec = {
-        name: modalName.trim(),
-        email: modalEmail.trim() || undefined,
-        phone: modalPhone.trim() || undefined,
-        tillNumber: modalTill.trim() || undefined,
-        paybill: modalPaybill.trim() || undefined,
-        accountNumber: modalAccountNumber.trim() || undefined,
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      } as Omit<Recipient, "id">;
-
-      const id = await db.recipients.add(newRec);
-      const saved = await db.recipients.get(id);
-      if (saved) {
-        // Add new recipient to the top (no transactions yet)
-        setSortedRecipients((prev) => [saved, ...prev]);
-      }
-      setRecipientId(id);
-      resetRecipientModalForm();
-      setShowRecipientModal(false);
-    } catch (err) {
-      console.error(err);
-      setModalAlertMessage("Failed to add recipient");
-    }
-  };
-
-  // add helper to reset category modal form
-  const resetCategoryModalForm = () => {
-    setModalCategoryName("");
-    setModalCategoryDescription("");
-    setModalCategoryBucketId(undefined);
-    setModalCategoryIsActive(true);
-    setModalCategoryAlertMessage("");
-  };
-
-  const handleSaveCategoryFromModal = async () => {
-    if (!modalCategoryName.trim()) {
-      setModalCategoryAlertMessage("Category name is required");
-      return;
-    }
-    if (modalCategoryBucketId == null) {
-      setModalCategoryAlertMessage("Bucket is required");
-      return;
-    }
-    try {
-      const now = new Date();
-      const newCat = {
-        name: modalCategoryName.trim(),
-        bucketId: modalCategoryBucketId,
-        description: modalCategoryDescription.trim() || undefined,
-        isActive: modalCategoryIsActive,
-        createdAt: now,
-        updatedAt: now,
-      } as Omit<Category, "id">;
-
-      const id = await db.categories.add(newCat);
-      const saved = await db.categories.get(id);
-      if (saved) {
-        // Add new category to the top (no transactions yet)
-        setSortedCategories((prev) => [saved, ...prev]);
-      }
-      setCategoryId(id);
-      resetCategoryModalForm();
-      setShowCategoryModal(false);
-    } catch (err) {
-      console.error(err);
-      setModalCategoryAlertMessage("Failed to add category");
-    }
-  };
-
-  // add helper to reset payment method modal form
-  const resetPaymentMethodModalForm = () => {
-    setModalPaymentMethodName("");
-    setModalPaymentMethodAccountId(undefined);
-    setModalPaymentMethodAlertMessage("");
-  };
-
-  const handleSavePaymentMethodFromModal = async () => {
-    if (!modalPaymentMethodName.trim()) {
-      setModalPaymentMethodAlertMessage("Payment method name is required");
-      return;
-    }
-    if (!modalPaymentMethodAccountId) {
-      setModalPaymentMethodAlertMessage("Please select an account");
-      return;
-    }
-    try {
-      const now = new Date();
-      const newPM = {
-        accountId: modalPaymentMethodAccountId,
-        name: modalPaymentMethodName.trim(),
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      } as Omit<PaymentMethod, "id">;
-
-      const id = await db.paymentMethods.add(newPM);
-      const saved = await db.paymentMethods.get(id);
-      if (saved) {
-        // Add new payment method to the top (no transactions yet)
-        setSortedPaymentMethods((prev) => [saved, ...prev]);
-      }
-      setPaymentMethodId(id);
-      resetPaymentMethodModalForm();
-      setShowPaymentMethodModal(false);
-    } catch (err) {
-      console.error(err);
-      setModalPaymentMethodAlertMessage("Failed to add payment method");
-    }
-  };
-
-  // Helper function to apply a regex pattern from template
-  const applyPattern = (
-    sms: string,
-    pattern?: string,
-    captureGroup: number = 1
-  ): string | undefined => {
-    if (!pattern) return undefined;
-    try {
-      const regex = new RegExp(pattern, "i");
-      const match = sms.match(regex);
-      return match?.[captureGroup];
-    } catch (err) {
-      console.error(`Invalid regex pattern: ${pattern}`, err);
-      return undefined;
-    }
-  };
-
-  // Helper function to convert text to title case
-  const toTitleCase = (text: string): string => {
-    return text
-      .trim()
-      .toLowerCase()
-      .split(" ")
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(" ");
-  };
-
-  // Try to parse SMS with a specific template
-  const tryParseWithTemplate = (
-    sms: string,
-    template: SmsImportTemplate
-  ): {
-    reference?: string;
-    amount?: string;
-    recipientName?: string;
-    recipientPhone?: string;
-    date?: string;
-    time?: string;
-    cost?: string;
-    isIncome?: boolean;
-  } | null => {
-    try {
-      const result: {
-        reference?: string;
-        amount?: string;
-        recipientName?: string;
-        recipientPhone?: string;
-        date?: string;
-        time?: string;
-        cost?: string;
-        isIncome?: boolean;
-      } = {};
-
-      // Determine transaction type
-      if (
-        template.incomePattern &&
-        sms.match(new RegExp(template.incomePattern, "i"))
-      ) {
-        result.isIncome = true;
-      } else if (
-        template.expensePattern &&
-        sms.match(new RegExp(template.expensePattern, "i"))
-      ) {
-        result.isIncome = false;
-      }
-
-      // Extract reference
-      const reference = applyPattern(sms, template.referencePattern);
-      if (reference) result.reference = reference;
-
-      // Extract amount (remove commas)
-      const amount = applyPattern(sms, template.amountPattern);
-      if (amount) result.amount = amount.replace(/,/g, "");
-
-      // Extract recipient/sender name (convert to title case)
-      const recipientName = applyPattern(sms, template.recipientNamePattern);
-      if (recipientName) result.recipientName = toTitleCase(recipientName);
-
-      // Extract phone number
-      const recipientPhone = applyPattern(sms, template.recipientPhonePattern);
-      if (recipientPhone) result.recipientPhone = recipientPhone;
-
-      // Extract cost (remove commas)
-      const cost = applyPattern(sms, template.costPattern);
-      if (cost) result.cost = cost.replace(/,/g, "");
-
-      // Extract date and time
-      if (template.dateTimePattern) {
-        const dateTimeMatch = sms.match(
-          new RegExp(template.dateTimePattern, "i")
-        );
-        if (dateTimeMatch && dateTimeMatch.length >= 7) {
-          const day = dateTimeMatch[1].padStart(2, "0");
-          const month = dateTimeMatch[2].padStart(2, "0");
-          const year = "20" + dateTimeMatch[3];
-          result.date = `${year}-${month}-${day}`;
-
-          let hours = parseInt(dateTimeMatch[4]);
-          const minutes = dateTimeMatch[5];
-          const period = dateTimeMatch[6].toUpperCase();
-
-          if (period === "PM" && hours !== 12) hours += 12;
-          if (period === "AM" && hours === 12) hours = 0;
-
-          result.time = `${hours.toString().padStart(2, "0")}:${minutes}`;
-        }
-      }
-
-      // Only return if we extracted at least some data
-      return Object.keys(result).length > 0 ? result : null;
-    } catch (err) {
-      console.error("Error parsing with template:", template.name, err);
-      return null;
-    }
-  };
-
-  // Parse SMS using database templates
-  const parseMpesaSms = async (
-    sms: string
-  ): Promise<{
-    reference?: string;
-    amount?: string;
-    recipientName?: string;
-    recipientPhone?: string;
-    date?: string;
-    time?: string;
-    cost?: string;
-    isIncome?: boolean;
-  } | null> => {
-    try {
-      // If we have a selected payment method, try its template first
-      if (paymentMethodId) {
-        const pmTemplate = smsTemplates.find(
-          (t) => t.paymentMethodId === paymentMethodId
-        );
-        if (pmTemplate) {
-          const result = tryParseWithTemplate(sms, pmTemplate);
-          if (result) return result;
-        }
-      }
-
-      // Try all active templates
-      for (const template of smsTemplates) {
-        // Skip if this is a payment-method-specific template and doesn't match
-        if (
-          template.paymentMethodId &&
-          template.paymentMethodId !== paymentMethodId
-        ) {
-          continue;
-        }
-
-        const result = tryParseWithTemplate(sms, template);
-        if (result) return result;
-      }
-
-      // No template matched
-      return null;
-    } catch (err) {
-      console.error("Error parsing SMS:", err);
-      return null;
-    }
-  };
-
-  // Preview SMS parsing with selected template
-  const handlePreviewParse = async () => {
-    setSmsParseError("");
-    setParsedPreview(null);
-
-    if (!smsText.trim()) {
-      setSmsParseError("Please paste an SMS message");
-      return;
-    }
-
-    let result = null;
-
-    // If a template is selected, use only that template
-    if (selectedTemplateId) {
-      const template = smsTemplates.find((t) => t.id === selectedTemplateId);
-      if (template) {
-        result = tryParseWithTemplate(smsText, template);
-      }
-    } else {
-      // Try all templates (existing behavior)
-      result = await parseMpesaSms(smsText);
-    }
-
-    if (result) {
-      setParsedPreview(result);
-    } else {
-      setSmsParseError(
-        selectedTemplateId
-          ? "Selected template could not parse this SMS."
-          : "Could not parse SMS with any available template."
-      );
-    }
-  };
-
   // Handle SMS import
   const handleSmsImport = async () => {
-    setSmsParseError("");
-
-    if (!smsText.trim()) {
-      setSmsParseError("Please paste an SMS message");
+    if (!parsedPreview) {
+      setErrorMsg("Please preview parse the SMS first");
       return;
     }
 
-    // Use preview data if available, otherwise parse fresh
-    const parsed = parsedPreview || (await parseMpesaSms(smsText));
-
-    if (!parsed) {
-      setSmsParseError(
-        "Could not parse SMS. Please check the format or add/update SMS import templates."
-      );
-      return;
+    // Populate fields from parsed data
+    if (parsedPreview.date) {
+      setSelectedDate(parsedPreview.date);
     }
-
-    // Populate form fields
-    if (parsed.reference) setTransactionReference(parsed.reference);
-    if (parsed.amount) setAmount(parsed.amount);
-    if (parsed.date) setSelectedDate(parsed.date);
-    if (parsed.time) setSelectedTime(parsed.time);
-    if (parsed.cost) setTransactionCost(parsed.cost);
+    if (parsedPreview.time) {
+      setSelectedTime(parsedPreview.time);
+    }
+    if (parsedPreview.amount) {
+      setAmount(parsedPreview.amount);
+    }
+    if (parsedPreview.reference) {
+      setTransactionReference(parsedPreview.reference);
+    }
+    if (parsedPreview.cost) {
+      setTransactionCost(parsedPreview.cost);
+    }
 
     // Set transaction type based on parsed data
-    if (parsed.isIncome !== undefined) {
-      setIsExpense(!parsed.isIncome);
+    if (parsedPreview.isIncome !== undefined) {
+      setTransactionType(parsedPreview.isIncome ? "income" : "expense");
+    }
+
+    // Auto-populate payment method from the template that was used
+    const usedTemplateId = selectedTemplateId || parsedPreview.templateId;
+    if (usedTemplateId) {
+      const template = smsTemplates.find((t) => t.id === usedTemplateId);
+      if (template?.paymentMethodId) {
+        setPaymentMethodId(template.paymentMethodId);
+      }
     }
 
     // Handle recipient
-    if (parsed.recipientName && parsed.recipientPhone) {
-      // Search for existing recipient by phone
-      const existingRecipient = sortedRecipients.find(
-        (r) => r.phone === parsed.recipientPhone
+    if (parsedPreview.recipientName) {
+      let recipient = sortedRecipients.find(
+        (r) =>
+          r.name?.toLowerCase() === parsedPreview.recipientName?.toLowerCase()
       );
 
-      if (existingRecipient) {
-        setRecipientId(existingRecipient.id);
-        setSmsText("");
-        setSelectedTemplateId(undefined);
-        setParsedPreview(null);
-        setShowSmsImportModal(false);
-      } else {
-        // Prompt to create new recipient
-        setModalName(parsed.recipientName);
-        setModalPhone(parsed.recipientPhone);
-        setSmsText("");
-        setSelectedTemplateId(undefined);
-        setParsedPreview(null);
-        setShowSmsImportModal(false);
-        setShowRecipientModal(true);
+      if (!recipient && parsedPreview.recipientName) {
+        try {
+          const now = new Date();
+          const recId = await db.recipients.add({
+            name: parsedPreview.recipientName,
+            phone: parsedPreview.recipientPhone,
+            isActive: true,
+            createdAt: now,
+            updatedAt: now,
+          });
+          recipient = await db.recipients.get(recId);
+          if (recipient) {
+            setSortedRecipients((prev) => [recipient!, ...prev]);
+          }
+        } catch (err) {
+          console.error("Failed to create recipient:", err);
+        }
       }
-    } else if (parsed.recipientName) {
-      // No phone number (e.g., received from ZIIDI), search by name
-      const existingRecipient = sortedRecipients.find(
-        (r) => r.name.toLowerCase() === parsed.recipientName!.toLowerCase()
-      );
 
-      if (existingRecipient) {
-        setRecipientId(existingRecipient.id);
-      } else {
-        // Prompt to create new recipient without phone
-        setModalName(parsed.recipientName);
-        setShowRecipientModal(true);
+      if (recipient) {
+        setRecipientId(recipient.id);
       }
-      setSmsText("");
-      setSelectedTemplateId(undefined);
-      setParsedPreview(null);
-      setShowSmsImportModal(false);
-    } else {
-      setSmsText("");
-      setSelectedTemplateId(undefined);
-      setParsedPreview(null);
-      setShowSmsImportModal(false);
     }
+
+    // Close modal and clear SMS text
+    setShowSmsImportModal(false);
+    setSmsText("");
+    clearParsedData();
   };
+
+  // Clear error message when all required fields are filled
+  useEffect(() => {
+    if (errorMsg && errorMsg === "Please fill in all required fields.") {
+      // Re-validate to check if all fields are now filled
+      const formValidation = validateTransactionForm({
+        selectedDate,
+        selectedTime,
+        amount,
+        description,
+        categoryId,
+        paymentMethodId,
+        recipientId,
+        transferToPaymentMethodId,
+        transactionType,
+      });
+
+      // Only clear the error if validation passes
+      if (formValidation.isValid) {
+        setErrorMsg("");
+        setFieldErrors({});
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedDate,
+    selectedTime,
+    amount,
+    description,
+    categoryId,
+    paymentMethodId,
+    recipientId,
+    transferToPaymentMethodId,
+    transactionType,
+  ]);
 
   return (
     <IonPage>
@@ -1027,22 +753,43 @@ const AddTransaction: React.FC = () => {
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
+        {isEditMode && editingTransaction?.isTransfer && (
+          <IonText color="warning">
+            <p
+              style={{
+                padding: "12px",
+                backgroundColor: "var(--ion-color-warning-tint)",
+                borderRadius: "4px",
+                marginBottom: "16px",
+              }}
+            >
+              <strong>Note:</strong> This is a transfer transaction. Editing
+              will update both the outgoing and incoming transactions.
+            </p>
+          </IonText>
+        )}
         <form onSubmit={handleSubmit}>
           <IonGrid>
             <IonRow>
               <IonCol>
                 <IonItem lines="none">
                   <IonSegment
-                    value={isExpense ? "expense" : "income"}
+                    value={transactionType}
                     onIonChange={(e) =>
-                      setIsExpense((e.detail.value as string) === "expense")
+                      setTransactionType(
+                        e.detail.value as "expense" | "income" | "transfer"
+                      )
                     }
+                    disabled={isEditMode && editingTransaction?.isTransfer}
                   >
                     <IonSegmentButton value="income">
                       <IonLabel>Income</IonLabel>
                     </IonSegmentButton>
                     <IonSegmentButton value="expense">
                       <IonLabel>Expense</IonLabel>
+                    </IonSegmentButton>
+                    <IonSegmentButton value="transfer">
+                      <IonLabel>Transfer</IonLabel>
                     </IonSegmentButton>
                   </IonSegment>
                 </IonItem>
@@ -1056,11 +803,6 @@ const AddTransaction: React.FC = () => {
             </IonRow>
             <IonRow>
               <IonCol size="2">
-                {fieldErrors.date && (
-                  <IonText color="danger" style={{ fontSize: "0.85rem" }}>
-                    Required field
-                  </IonText>
-                )}
                 <IonInput
                   label="Date"
                   labelPlacement="stacked"
@@ -1073,13 +815,20 @@ const AddTransaction: React.FC = () => {
                     setFieldErrors((prev) => ({ ...prev, date: false }));
                   }}
                 />
-              </IonCol>
-              <IonCol size="2">
-                {fieldErrors.time && (
-                  <IonText color="danger" style={{ fontSize: "0.85rem" }}>
+                {fieldErrors.date && (
+                  <IonText
+                    color="danger"
+                    style={{
+                      fontSize: "0.75rem",
+                      display: "block",
+                      marginTop: "4px",
+                    }}
+                  >
                     Required field
                   </IonText>
                 )}
+              </IonCol>
+              <IonCol size="2">
                 <IonInput
                   label="Time"
                   labelPlacement="stacked"
@@ -1092,6 +841,18 @@ const AddTransaction: React.FC = () => {
                     setFieldErrors((prev) => ({ ...prev, time: false }));
                   }}
                 />
+                {fieldErrors.time && (
+                  <IonText
+                    color="danger"
+                    style={{
+                      fontSize: "0.75rem",
+                      display: "block",
+                      marginTop: "4px",
+                    }}
+                  >
+                    Required field
+                  </IonText>
+                )}
               </IonCol>
             </IonRow>
             <IonRow>
@@ -1101,11 +862,13 @@ const AddTransaction: React.FC = () => {
                   label="Description"
                   labelPlacement="stacked"
                   fill="outline"
+                  color={fieldErrors.description ? "danger" : undefined}
                   type="text"
                   placeholder="e.g. Grocery shopping"
                   value={description}
                   onIonInput={(e) => {
                     handleDescriptionChange(e.detail.value!);
+                    setFieldErrors((prev) => ({ ...prev, description: false }));
                   }}
                   onIonFocus={() => setShowDescriptionSuggestions(true)}
                   onKeyDown={handleDescriptionKeyDown}
@@ -1193,275 +956,502 @@ const AddTransaction: React.FC = () => {
                 />
               </IonCol>
             </IonRow>
-            <IonRow>
-              <IonCol size="10">
-                {fieldErrors.recipient && (
-                  <IonText color="danger" style={{ fontSize: "0.85rem" }}>
-                    Required field
-                  </IonText>
-                )}
-                <IonSelect
-                  label={isExpense ? "Recipient" : "Payer"}
-                  fill="outline"
-                  color={fieldErrors.recipient ? "danger" : undefined}
-                  labelPlacement="stacked"
-                  interface="popover"
-                  placeholder={isExpense ? "Select recipient" : "Select payer"}
-                  value={recipientId}
-                  onIonChange={(e) => {
-                    const v = e.detail.value as string | number | undefined;
-                    // const id = v == null ? undefined : Number(v);
-                    const id =
-                      v == null
-                        ? undefined
-                        : typeof v === "number"
-                        ? v
-                        : Number(v);
-                    setRecipientId(id);
-                    setFieldErrors((prev) => ({ ...prev, recipient: false }));
-                  }}
-                >
-                  {sortedRecipients.map((r) => (
-                    <IonSelectOption key={r.id} value={r.id}>
-                      {r.name}
-                    </IonSelectOption>
-                  ))}
-                  <IonButton
-                    slot="end"
-                    fill="clear"
-                    size="small"
-                    color="medium"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRecipientId(undefined);
-                    }}
-                    aria-label="Clear recipient"
-                    title="Clear recipient"
-                  >
-                    <IonIcon icon={closeCircleOutline} />
-                  </IonButton>
-                </IonSelect>
-              </IonCol>
-              <IonCol size="2">
-                <IonButton
-                  color="primary"
-                  expand="block"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    resetRecipientModalForm();
-                    setShowRecipientModal(true);
-                  }}
-                  aria-label={isExpense ? "Add recipient" : "Add payer"}
-                  title={isExpense ? "Add recipient" : "Add payer"}
-                >
-                  <IonIcon icon={addOutline} />
-                  {isExpense ? "Add recipient" : "Add payer"}
-                </IonButton>
-              </IonCol>
-            </IonRow>
 
-            <IonRow>
-              <IonCol size="10">
-                {fieldErrors.category && (
-                  <IonText color="danger" style={{ fontSize: "0.85rem" }}>
-                    Required field
-                  </IonText>
-                )}
-                <IonSelect
-                  label="Category"
-                  fill="outline"
-                  color={fieldErrors.category ? "danger" : undefined}
-                  labelPlacement="stacked"
-                  interface="popover"
-                  placeholder="Select category"
-                  value={categoryId}
-                  onIonChange={(e) => {
-                    const v = e.detail.value as string | number | undefined;
-                    setCategoryId(v == null ? undefined : Number(v));
-                    setFieldErrors((prev) => ({ ...prev, category: false }));
-                  }}
-                >
-                  {buckets.map((b) => {
-                    const cats = sortedCategories.filter(
-                      (c) => c.bucketId === b.id
-                    );
-                    if (cats.length === 0) return null;
-                    return (
-                      <React.Fragment key={b.id}>
-                        <IonSelectOption
-                          value={-1}
-                          disabled
-                          style={{ fontWeight: 900, opacity: 0.9 }}
-                        >
-                          {b.name}
-                        </IonSelectOption>
-                        {cats.map((c) => (
-                          <IonSelectOption key={c.id} value={c.id}>
-                            {c.name}
-                          </IonSelectOption>
-                        ))}
-                      </React.Fragment>
-                    );
-                  })}
-
-                  {sortedCategories.filter((c) => !c.bucketId).length > 0 && (
-                    <>
-                      <IonSelectOption
-                        value={-1}
-                        disabled
-                        style={{ fontWeight: 700, opacity: 0.9 }}
+            {transactionType === "transfer" ? (
+              <>
+                {/* FROM Payment Method */}
+                <IonRow>
+                  <IonCol size="10">
+                    {fieldErrors.paymentMethod && (
+                      <IonText
+                        color="danger"
+                        style={{
+                          fontSize: "0.75rem",
+                          display: "block",
+                          marginTop: "4px",
+                        }}
                       >
-                        Unbucketed
-                      </IonSelectOption>
-                      {sortedCategories
-                        .filter((c) => !c.bucketId)
-                        .map((c) => (
-                          <IonSelectOption key={c.id} value={c.id}>
-                            {c.name}
-                          </IonSelectOption>
-                        ))}
-                    </>
-                  )}
-                  <IonButton
-                    slot="end"
-                    fill="clear"
-                    size="small"
-                    color="medium"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCategoryId(undefined);
-                    }}
-                    aria-label="Clear category"
-                    title="Clear category"
-                  >
-                    <IonIcon icon={closeCircleOutline} />
-                  </IonButton>
-                </IonSelect>
-              </IonCol>
-              <IonCol size="2">
-                <IonButton
-                  color="primary"
-                  expand="block"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    resetCategoryModalForm();
-                    setShowCategoryModal(true);
-                  }}
-                  aria-label="Add category"
-                  title="Add category"
-                >
-                  <IonIcon icon={addOutline} />
-                  Add category
-                </IonButton>
-              </IonCol>
-            </IonRow>
+                        Required field
+                      </IonText>
+                    )}
+                    <IonSelect
+                      label="From Payment Method"
+                      labelPlacement="stacked"
+                      fill="outline"
+                      interface="popover"
+                      placeholder="Select source payment method"
+                      value={paymentMethodId}
+                      onIonChange={(e) => {
+                        const v = e.detail.value as string | number | undefined;
+                        setPaymentMethodId(v == null ? undefined : Number(v));
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          paymentMethod: false,
+                        }));
+                      }}
+                    >
+                      {accounts.map((a) => {
+                        const methods = sortedPaymentMethods.filter(
+                          (pm) => pm.accountId === a.id
+                        );
+                        if (methods.length === 0) return null;
+                        return (
+                          <React.Fragment key={a.id}>
+                            <IonSelectOption
+                              value={-1}
+                              disabled
+                              style={{ fontWeight: 700, opacity: 0.9 }}
+                            >
+                              {a.name}
+                            </IonSelectOption>
+                            {methods.map((pm) => (
+                              <IonSelectOption key={pm.id} value={pm.id}>
+                                {pm.name}
+                              </IonSelectOption>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
 
-            <IonRow>
-              <IonCol size="10">
-                {fieldErrors.paymentMethod && (
-                  <IonText color="danger" style={{ fontSize: "0.85rem" }}>
-                    Required field
-                  </IonText>
-                )}
-                <IonSelect
-                  label="Payment Method"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  interface="popover"
-                  placeholder="Select payment method"
-                  value={paymentMethodId}
-                  onIonChange={(e) => {
-                    const v = e.detail.value as string | number | undefined;
-                    setPaymentMethodId(v == null ? undefined : Number(v));
-                    setFieldErrors((prev) => ({
-                      ...prev,
-                      paymentMethod: false,
-                    }));
-                  }}
-                >
-                  {accounts.map((a) => {
-                    const methods = sortedPaymentMethods.filter(
-                      (pm) => pm.accountId === a.id
-                    );
-                    if (methods.length === 0) return null;
-                    return (
-                      <React.Fragment key={a.id}>
-                        <IonSelectOption
-                          value={-1}
-                          disabled
-                          style={{ fontWeight: 700, opacity: 0.9 }}
-                        >
-                          {a.name}
-                        </IonSelectOption>
-                        {methods.map((pm) => (
-                          <IonSelectOption key={pm.id} value={pm.id}>
-                            {pm.name}
+                      {sortedPaymentMethods.filter((pm) => pm.accountId == null)
+                        .length > 0 && (
+                        <>
+                          <IonSelectOption
+                            value={-1}
+                            disabled
+                            style={{ fontWeight: 700, opacity: 0.9 }}
+                          >
+                            Unlinked
                           </IonSelectOption>
-                        ))}
-                      </React.Fragment>
-                    );
-                  })}
+                          {sortedPaymentMethods
+                            .filter((pm) => pm.accountId == null)
+                            .map((pm) => (
+                              <IonSelectOption key={pm.id} value={pm.id}>
+                                {pm.name}
+                              </IonSelectOption>
+                            ))}
+                        </>
+                      )}
+                    </IonSelect>
+                  </IonCol>
+                  <IonCol size="2">
+                    <IonButton
+                      color="primary"
+                      expand="block"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowPaymentMethodModal(true);
+                      }}
+                    >
+                      <IonIcon icon={addOutline} />
+                      Add
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
 
-                  {sortedPaymentMethods.filter((pm) => pm.accountId == null)
-                    .length > 0 && (
-                    <>
-                      <IonSelectOption
-                        value={-1}
-                        disabled
-                        style={{ fontWeight: 700, opacity: 0.9 }}
+                {/* TO Payment Method */}
+                <IonRow>
+                  <IonCol size="10">
+                    {fieldErrors.recipient && (
+                      <IonText
+                        color="danger"
+                        style={{
+                          fontSize: "0.75rem",
+                          display: "block",
+                          marginTop: "4px",
+                        }}
                       >
-                        Unlinked
-                      </IonSelectOption>
-                      {sortedPaymentMethods
-                        .filter((pm) => pm.accountId == null)
-                        .map((pm) => (
-                          <IonSelectOption key={pm.id} value={pm.id}>
-                            {pm.name}
+                        Required field
+                      </IonText>
+                    )}
+                    <IonSelect
+                      label="To Payment Method"
+                      labelPlacement="stacked"
+                      fill="outline"
+                      interface="popover"
+                      placeholder="Select destination payment method"
+                      value={transferToPaymentMethodId}
+                      onIonChange={(e) => {
+                        const v = e.detail.value as string | number | undefined;
+                        setTransferToPaymentMethodId(
+                          v == null ? undefined : Number(v)
+                        );
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          recipient: false,
+                        }));
+                      }}
+                    >
+                      {accounts.map((a) => {
+                        const methods = sortedPaymentMethods.filter(
+                          (pm) => pm.accountId === a.id
+                        );
+                        if (methods.length === 0) return null;
+                        return (
+                          <React.Fragment key={a.id}>
+                            <IonSelectOption
+                              value={-1}
+                              disabled
+                              style={{ fontWeight: 700, opacity: 0.9 }}
+                            >
+                              {a.name}
+                            </IonSelectOption>
+                            {methods.map((pm) => (
+                              <IonSelectOption key={pm.id} value={pm.id}>
+                                {pm.name}
+                              </IonSelectOption>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+
+                      {sortedPaymentMethods.filter((pm) => pm.accountId == null)
+                        .length > 0 && (
+                        <>
+                          <IonSelectOption
+                            value={-1}
+                            disabled
+                            style={{ fontWeight: 700, opacity: 0.9 }}
+                          >
+                            Unlinked
                           </IonSelectOption>
-                        ))}
-                    </>
-                  )}
-                  <IonButton
-                    slot="end"
-                    fill="clear"
-                    size="small"
-                    color="medium"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPaymentMethodId(undefined);
-                    }}
-                    aria-label="Clear payment method"
-                    title="Clear payment method"
-                  >
-                    <IonIcon icon={closeCircleOutline} />
-                  </IonButton>
-                </IonSelect>
-              </IonCol>
-              <IonCol size="2">
-                <IonButton
-                  color="primary"
-                  expand="block"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    resetPaymentMethodModalForm();
-                    setShowPaymentMethodModal(true);
-                  }}
-                  aria-label="Add payment method"
-                  title="Add payment method"
-                >
-                  <IonIcon icon={addOutline} />
-                  Add payment method
-                </IonButton>
-              </IonCol>
-            </IonRow>
+                          {sortedPaymentMethods
+                            .filter((pm) => pm.accountId == null)
+                            .map((pm) => (
+                              <IonSelectOption key={pm.id} value={pm.id}>
+                                {pm.name}
+                              </IonSelectOption>
+                            ))}
+                        </>
+                      )}
+                    </IonSelect>
+                  </IonCol>
+                  <IonCol size="2">
+                    <IonButton
+                      color="primary"
+                      expand="block"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowPaymentMethodModal(true);
+                      }}
+                    >
+                      <IonIcon icon={addOutline} />
+                      Add
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
+              </>
+            ) : (
+              <>
+                {/* Existing Recipient field */}
+                <IonRow>
+                  <IonCol size="10">
+                    {fieldErrors.recipient && (
+                      <IonText
+                        color="danger"
+                        style={{
+                          fontSize: "0.75rem",
+                          display: "block",
+                          marginTop: "4px",
+                        }}
+                      >
+                        Required field
+                      </IonText>
+                    )}
+                    <IonSelect
+                      label={
+                        transactionType === "expense" ? "Recipient" : "Payer"
+                      }
+                      fill="outline"
+                      color={fieldErrors.recipient ? "danger" : undefined}
+                      labelPlacement="stacked"
+                      interface="popover"
+                      placeholder={
+                        transactionType === "expense"
+                          ? "Select recipient"
+                          : "Select payer"
+                      }
+                      value={recipientId}
+                      onIonChange={(e) => {
+                        const v = e.detail.value as string | number | undefined;
+                        const id =
+                          v == null
+                            ? undefined
+                            : typeof v === "number"
+                            ? v
+                            : Number(v);
+                        setRecipientId(id);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          recipient: false,
+                        }));
+                      }}
+                    >
+                      {sortedRecipients.map((r) => (
+                        <IonSelectOption key={r.id} value={r.id}>
+                          {r.name}
+                        </IonSelectOption>
+                      ))}
+                      <IonButton
+                        slot="end"
+                        fill="clear"
+                        size="small"
+                        color="medium"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRecipientId(undefined);
+                        }}
+                        aria-label="Clear recipient"
+                        title="Clear recipient"
+                      >
+                        <IonIcon icon={closeCircleOutline} />
+                      </IonButton>
+                    </IonSelect>
+                  </IonCol>
+                  <IonCol size="2">
+                    <IonButton
+                      color="primary"
+                      expand="block"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowRecipientModal(true);
+                      }}
+                      aria-label={
+                        transactionType === "expense"
+                          ? "Add recipient"
+                          : "Add payer"
+                      }
+                      title={
+                        transactionType === "expense"
+                          ? "Add recipient"
+                          : "Add payer"
+                      }
+                    >
+                      <IonIcon icon={addOutline} />
+                      {transactionType === "expense"
+                        ? "Add recipient"
+                        : "Add payer"}
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
+
+                {/* Existing Category field */}
+                <IonRow>
+                  <IonCol size="10">
+                    {fieldErrors.category && (
+                      <IonText
+                        color="danger"
+                        style={{
+                          fontSize: "0.75rem",
+                          display: "block",
+                          marginTop: "4px",
+                        }}
+                      >
+                        Required field
+                      </IonText>
+                    )}
+                    <IonSelect
+                      label="Category"
+                      fill="outline"
+                      color={fieldErrors.category ? "danger" : undefined}
+                      labelPlacement="stacked"
+                      interface="popover"
+                      placeholder="Select category"
+                      value={categoryId}
+                      onIonChange={(e) => {
+                        const v = e.detail.value as string | number | undefined;
+                        setCategoryId(v == null ? undefined : Number(v));
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          category: false,
+                        }));
+                      }}
+                    >
+                      {buckets.map((b) => {
+                        const cats = sortedCategories.filter(
+                          (c) => c.bucketId === b.id
+                        );
+                        if (cats.length === 0) return null;
+                        return (
+                          <React.Fragment key={b.id}>
+                            <IonSelectOption
+                              value={-1}
+                              disabled
+                              style={{ fontWeight: 900, opacity: 0.9 }}
+                            >
+                              {b.name}
+                            </IonSelectOption>
+                            {cats.map((c) => (
+                              <IonSelectOption key={c.id} value={c.id}>
+                                {c.name}
+                              </IonSelectOption>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+
+                      {sortedCategories.filter((c) => !c.bucketId).length >
+                        0 && (
+                        <>
+                          <IonSelectOption
+                            value={-1}
+                            disabled
+                            style={{ fontWeight: 700, opacity: 0.9 }}
+                          >
+                            Unbucketed
+                          </IonSelectOption>
+                          {sortedCategories
+                            .filter((c) => !c.bucketId)
+                            .map((c) => (
+                              <IonSelectOption key={c.id} value={c.id}>
+                                {c.name}
+                              </IonSelectOption>
+                            ))}
+                        </>
+                      )}
+                      <IonButton
+                        slot="end"
+                        fill="clear"
+                        size="small"
+                        color="medium"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCategoryId(undefined);
+                        }}
+                        aria-label="Clear category"
+                        title="Clear category"
+                      >
+                        <IonIcon icon={closeCircleOutline} />
+                      </IonButton>
+                    </IonSelect>
+                  </IonCol>
+                  <IonCol size="2">
+                    <IonButton
+                      color="primary"
+                      expand="block"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowCategoryModal(true);
+                      }}
+                      aria-label="Add category"
+                      title="Add category"
+                    >
+                      <IonIcon icon={addOutline} />
+                      Add category
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
+
+                {/* Existing Payment Method field */}
+                <IonRow>
+                  <IonCol size="10">
+                    {fieldErrors.paymentMethod && (
+                      <IonText
+                        color="danger"
+                        style={{
+                          fontSize: "0.75rem",
+                          display: "block",
+                          marginTop: "4px",
+                        }}
+                      >
+                        Required field
+                      </IonText>
+                    )}
+                    <IonSelect
+                      label="Payment Method"
+                      labelPlacement="stacked"
+                      fill="outline"
+                      interface="popover"
+                      placeholder="Select payment method"
+                      value={paymentMethodId}
+                      onIonChange={(e) => {
+                        const v = e.detail.value as string | number | undefined;
+                        setPaymentMethodId(v == null ? undefined : Number(v));
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          paymentMethod: false,
+                        }));
+                      }}
+                    >
+                      {accounts.map((a) => {
+                        const methods = sortedPaymentMethods.filter(
+                          (pm) => pm.accountId === a.id
+                        );
+                        if (methods.length === 0) return null;
+                        return (
+                          <React.Fragment key={a.id}>
+                            <IonSelectOption
+                              value={-1}
+                              disabled
+                              style={{ fontWeight: 700, opacity: 0.9 }}
+                            >
+                              {a.name}
+                            </IonSelectOption>
+                            {methods.map((pm) => (
+                              <IonSelectOption key={pm.id} value={pm.id}>
+                                {pm.name}
+                              </IonSelectOption>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+
+                      {sortedPaymentMethods.filter((pm) => pm.accountId == null)
+                        .length > 0 && (
+                        <>
+                          <IonSelectOption
+                            value={-1}
+                            disabled
+                            style={{ fontWeight: 700, opacity: 0.9 }}
+                          >
+                            Unlinked
+                          </IonSelectOption>
+                          {sortedPaymentMethods
+                            .filter((pm) => pm.accountId == null)
+                            .map((pm) => (
+                              <IonSelectOption key={pm.id} value={pm.id}>
+                                {pm.name}
+                              </IonSelectOption>
+                            ))}
+                        </>
+                      )}
+                      <IonButton
+                        slot="end"
+                        fill="clear"
+                        size="small"
+                        color="medium"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPaymentMethodId(undefined);
+                        }}
+                        aria-label="Clear payment method"
+                        title="Clear payment method"
+                      >
+                        <IonIcon icon={closeCircleOutline} />
+                      </IonButton>
+                    </IonSelect>
+                  </IonCol>
+                  <IonCol size="2">
+                    <IonButton
+                      color="primary"
+                      expand="block"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowPaymentMethodModal(true);
+                      }}
+                      aria-label="Add payment method"
+                      title="Add payment method"
+                    >
+                      <IonIcon icon={addOutline} />
+                      Add payment method
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
+              </>
+            )}
 
             <IonRow>
               <IonCol size="7">
-                {fieldErrors.amount && (
-                  <IonText color="danger" style={{ fontSize: "0.85rem" }}>
-                    Required field
-                  </IonText>
-                )}
                 <IonInput
                   label="Amount"
                   placeholder="e.g. 1,000"
@@ -1477,6 +1467,18 @@ const AddTransaction: React.FC = () => {
                   }}
                   inputMode="decimal"
                 />
+                {fieldErrors.amount && (
+                  <IonText
+                    color="danger"
+                    style={{
+                      fontSize: "0.75rem",
+                      display: "block",
+                      marginTop: "4px",
+                    }}
+                  >
+                    Required field
+                  </IonText>
+                )}
               </IonCol>
 
               <IonCol size="3">
@@ -1565,288 +1567,38 @@ const AddTransaction: React.FC = () => {
       </IonContent>
 
       {/* Modal: Add Recipient */}
-      <IonModal
+      <AddRecipientModal
         isOpen={showRecipientModal}
-        onDidDismiss={() => setShowRecipientModal(false)}
-      >
-        <IonHeader>
-          <IonToolbar>
-            <IonTitle>Add Recipient</IonTitle>
-          </IonToolbar>
-        </IonHeader>
-        <IonContent className="ion-padding">
-          {modalAlertMessage && (
-            <IonAlert
-              isOpen={!!modalAlertMessage}
-              onDidDismiss={() => setModalAlertMessage("")}
-              header={"Alert"}
-              message={modalAlertMessage}
-              buttons={["OK"]}
-            />
-          )}
-          <IonGrid>
-            <IonRow>
-              <IonCol>
-                <IonInput
-                  label="Recipient Name"
-                  labelPlacement="stacked"
-                  placeholder="e.g., John Doe"
-                  value={modalName}
-                  onIonChange={(e) => setModalName(e.detail.value ?? "")}
-                />
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonInput
-                  label="Phone (optional)"
-                  labelPlacement="stacked"
-                  type="tel"
-                  placeholder="e.g., 0712345678"
-                  value={modalPhone}
-                  onIonChange={(e) => setModalPhone(e.detail.value ?? "")}
-                />
-              </IonCol>
-              <IonCol>
-                <IonInput
-                  label="Email (optional)"
-                  labelPlacement="stacked"
-                  type="email"
-                  placeholder="e.g., john@example.com"
-                  value={modalEmail}
-                  onIonChange={(e) => setModalEmail(e.detail.value ?? "")}
-                />
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonInput
-                  label="Till Number (optional)"
-                  labelPlacement="stacked"
-                  placeholder="e.g., 123456"
-                  value={modalTill}
-                  onIonChange={(e) => setModalTill(e.detail.value ?? "")}
-                />
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonInput
-                  label="Paybill (optional)"
-                  labelPlacement="stacked"
-                  placeholder="e.g., 400200"
-                  value={modalPaybill}
-                  onIonChange={(e) => setModalPaybill(e.detail.value ?? "")}
-                />
-              </IonCol>
-              <IonCol>
-                <IonInput
-                  label="Account Number (optional)"
-                  labelPlacement="stacked"
-                  placeholder="e.g., 1234567890"
-                  value={modalAccountNumber}
-                  onIonChange={(e) =>
-                    setModalAccountNumber(e.detail.value ?? "")
-                  }
-                  disabled={!modalPaybill.trim()}
-                />
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonButton
-                  expand="block"
-                  onClick={handleSaveRecipientFromModal}
-                >
-                  Add Recipient
-                </IonButton>
-              </IonCol>
-              <IonCol>
-                <IonButton
-                  expand="block"
-                  color="medium"
-                  onClick={() => setShowRecipientModal(false)}
-                >
-                  Cancel
-                </IonButton>
-              </IonCol>
-            </IonRow>
-          </IonGrid>
-        </IonContent>
-      </IonModal>
+        onClose={() => setShowRecipientModal(false)}
+        onRecipientAdded={(recipient) => {
+          setSortedRecipients((prev) => [recipient, ...prev]);
+          setRecipientId(recipient.id);
+        }}
+        initialName=""
+        initialPhone=""
+      />
 
       {/* Modal: Add Category */}
-      <IonModal
+      <AddCategoryModal
         isOpen={showCategoryModal}
-        onDidDismiss={() => setShowCategoryModal(false)}
-      >
-        <IonHeader>
-          <IonToolbar>
-            <IonTitle>Add Category</IonTitle>
-          </IonToolbar>
-        </IonHeader>
-        <IonContent className="ion-padding">
-          {modalCategoryAlertMessage && (
-            <IonAlert
-              isOpen={!!modalCategoryAlertMessage}
-              onDidDismiss={() => setModalCategoryAlertMessage("")}
-              header={"Alert"}
-              message={modalCategoryAlertMessage}
-              buttons={["OK"]}
-            />
-          )}
-          <IonGrid>
-            <IonRow>
-              <IonCol>
-                <IonInput
-                  label="Category Name"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  placeholder="e.g., Groceries"
-                  value={modalCategoryName}
-                  onIonChange={(e) =>
-                    setModalCategoryName(e.detail.value ?? "")
-                  }
-                />
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonInput
-                  label="Description (optional)"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  placeholder="Category description"
-                  value={modalCategoryDescription}
-                  onIonChange={(e) =>
-                    setModalCategoryDescription(e.detail.value ?? "")
-                  }
-                />
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonSelect
-                  label="Bucket"
-                  placeholder="Select bucket"
-                  interface="popover"
-                  value={modalCategoryBucketId}
-                  onIonChange={(e) =>
-                    setModalCategoryBucketId(
-                      e.detail.value as number | undefined
-                    )
-                  }
-                  labelPlacement="stacked"
-                  fill="outline"
-                >
-                  {buckets.map((b) => (
-                    <IonSelectOption key={b.id} value={b.id}>
-                      {b.name}
-                    </IonSelectOption>
-                  ))}
-                </IonSelect>
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonButton expand="block" onClick={handleSaveCategoryFromModal}>
-                  Add Category
-                </IonButton>
-              </IonCol>
-              <IonCol>
-                <IonButton
-                  expand="block"
-                  color="medium"
-                  onClick={() => setShowCategoryModal(false)}
-                >
-                  Cancel
-                </IonButton>
-              </IonCol>
-            </IonRow>
-          </IonGrid>
-        </IonContent>
-      </IonModal>
+        onClose={() => setShowCategoryModal(false)}
+        onCategoryAdded={(category) => {
+          setSortedCategories((prev) => [category, ...prev]);
+          setCategoryId(category.id);
+        }}
+        buckets={buckets}
+      />
 
       {/* Modal: Add Payment Method */}
-      <IonModal
+      <AddPaymentMethodModal
         isOpen={showPaymentMethodModal}
-        onDidDismiss={() => setShowPaymentMethodModal(false)}
-      >
-        <IonHeader>
-          <IonToolbar>
-            <IonTitle>Add Payment Method</IonTitle>
-          </IonToolbar>
-        </IonHeader>
-        <IonContent className="ion-padding">
-          {modalPaymentMethodAlertMessage && (
-            <IonAlert
-              isOpen={!!modalPaymentMethodAlertMessage}
-              onDidDismiss={() => setModalPaymentMethodAlertMessage("")}
-              header={"Alert"}
-              message={modalPaymentMethodAlertMessage}
-              buttons={["OK"]}
-            />
-          )}
-          <IonGrid>
-            <IonRow>
-              <IonCol>
-                <IonSelect
-                  label="Account"
-                  placeholder="Select account"
-                  interface="popover"
-                  value={modalPaymentMethodAccountId}
-                  onIonChange={(e) =>
-                    setModalPaymentMethodAccountId(
-                      e.detail.value as number | undefined
-                    )
-                  }
-                  labelPlacement="stacked"
-                  fill="outline"
-                >
-                  {accounts.map((a) => (
-                    <IonSelectOption key={a.id} value={a.id}>
-                      {a.name}
-                    </IonSelectOption>
-                  ))}
-                </IonSelect>
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonInput
-                  label="Payment Method Name"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  placeholder="e.g., Visa, Mastercard"
-                  value={modalPaymentMethodName}
-                  onIonChange={(e) =>
-                    setModalPaymentMethodName(e.detail.value ?? "")
-                  }
-                />
-              </IonCol>
-            </IonRow>
-            <IonRow>
-              <IonCol>
-                <IonButton
-                  expand="block"
-                  onClick={handleSavePaymentMethodFromModal}
-                >
-                  Add Payment Method
-                </IonButton>
-              </IonCol>
-              <IonCol>
-                <IonButton
-                  expand="block"
-                  color="medium"
-                  onClick={() => setShowPaymentMethodModal(false)}
-                >
-                  Cancel
-                </IonButton>
-              </IonCol>
-            </IonRow>
-          </IonGrid>
-        </IonContent>
-      </IonModal>
+        onClose={() => setShowPaymentMethodModal(false)}
+        onPaymentMethodAdded={(paymentMethod) => {
+          setSortedPaymentMethods((prev) => [paymentMethod, ...prev]);
+          setPaymentMethodId(paymentMethod.id);
+        }}
+        accounts={accounts}
+      />
 
       {/* Modal: Import SMS */}
       <IonModal
@@ -1854,9 +1606,9 @@ const AddTransaction: React.FC = () => {
         onDidDismiss={() => {
           setShowSmsImportModal(false);
           setSmsText("");
-          setSmsParseError("");
+          clearParsedData();
           setSelectedTemplateId(undefined);
-          setParsedPreview(null);
+          clearParsedData();
         }}
       >
         <IonHeader>
@@ -1887,7 +1639,7 @@ const AddTransaction: React.FC = () => {
                   value={selectedTemplateId}
                   onIonChange={(e) => {
                     setSelectedTemplateId(e.detail.value);
-                    setParsedPreview(null); // Clear preview when template changes
+                    clearParsedData(); // Clear preview when template changes
                   }}
                 >
                   <IonSelectOption value={undefined}>
@@ -1931,7 +1683,7 @@ const AddTransaction: React.FC = () => {
                   value={smsText}
                   onChange={(e) => {
                     setSmsText(e.target.value);
-                    setParsedPreview(null); // Clear preview when text changes
+                    clearParsedData(); // Clear preview when text changes
                   }}
                 />
               </IonCol>
@@ -1941,7 +1693,7 @@ const AddTransaction: React.FC = () => {
                 <IonButton
                   expand="block"
                   fill="outline"
-                  onClick={handlePreviewParse}
+                  onClick={() => previewParse(smsText, selectedTemplateId)}
                   disabled={!smsText.trim()}
                 >
                   Preview Parse
