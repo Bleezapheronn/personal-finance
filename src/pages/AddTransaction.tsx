@@ -721,7 +721,14 @@ const AddTransaction: React.FC = () => {
   const handleSmsImport = async (parsedData: ParsedSmsData) => {
     // Populate fields from parsed data
     if (parsedData.date) {
-      setSelectedDate(parsedData.date);
+      // Convert MM-DD-YYYY to YYYY-MM-DD format for the date input
+      const dateParts = parsedData.date.split("-");
+      if (dateParts.length === 3) {
+        const formattedDate = `${dateParts[2]}-${dateParts[0]}-${dateParts[1]}`;
+        setSelectedDate(formattedDate);
+      } else {
+        setSelectedDate(parsedData.date);
+      }
     }
     if (parsedData.time) {
       setSelectedTime(parsedData.time);

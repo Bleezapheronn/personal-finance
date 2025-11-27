@@ -96,17 +96,35 @@ export const useSmsParser = (
           new RegExp(template.dateTimePattern, "i")
         );
         if (dateTimeMatch && dateTimeMatch.length >= 7) {
-          const day = dateTimeMatch[1].padStart(2, "0");
-          const month = dateTimeMatch[2].padStart(2, "0");
-          const year = "20" + dateTimeMatch[3];
-          result.date = `${year}-${month}-${day}`;
+          // Check if the first capture group is a 4-digit year (YYYY-MM-DD format)
+          // or a 1-2 digit day (DD/MM/YY format)
+          let day: string;
+          let month: string;
+          let year: string;
+
+          if (dateTimeMatch[1].length === 4) {
+            // Format: YYYY-MM-DD HH:MM:SS
+            year = dateTimeMatch[1];
+            month = dateTimeMatch[2].padStart(2, "0");
+            day = dateTimeMatch[3].padStart(2, "0");
+          } else {
+            // Format: DD/MM/YY HH:MM:SS
+            day = dateTimeMatch[1].padStart(2, "0");
+            month = dateTimeMatch[2].padStart(2, "0");
+            year = "20" + dateTimeMatch[3];
+          }
+
+          result.date = `${month}-${day}-${year}`;
 
           let hours = parseInt(dateTimeMatch[4]);
           const minutes = dateTimeMatch[5];
-          const period = dateTimeMatch[6].toUpperCase();
+          const period = dateTimeMatch[6]?.toUpperCase();
 
-          if (period === "PM" && hours !== 12) hours += 12;
-          if (period === "AM" && hours === 12) hours = 0;
+          // Handle 12-hour to 24-hour conversion
+          if (period) {
+            if (period === "PM" && hours !== 12) hours += 12;
+            if (period === "AM" && hours === 12) hours = 0;
+          }
 
           result.time = `${hours.toString().padStart(2, "0")}:${minutes}`;
         }
