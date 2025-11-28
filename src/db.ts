@@ -27,6 +27,8 @@ export interface Bucket {
   maxPercentage: number;
   minFixedAmount?: number;
   isActive: boolean;
+  displayOrder: number; // NEW: controls sort order (1, 2, 3, etc.)
+  excludeFromReports: boolean; // NEW: hide from reports view
   createdAt: Date;
   updatedAt: Date;
 }
@@ -108,11 +110,11 @@ export class FinanceDB extends Dexie {
   constructor() {
     super("FinanceDB");
 
-    this.version(7).stores({
+    this.version(8).stores({
       transactions:
         "++id, categoryId, paymentChannelId, recipientId, date, amount, originalAmount, originalCurrency, exchangeRate, transactionReference, description, transferPairId, isTransfer",
       buckets:
-        "++id, name, description, minPercentage, maxPercentage, minFixedAmount, isActive, createdAt, updatedAt",
+        "++id, name, description, minPercentage, maxPercentage, minFixedAmount, isActive, displayOrder, excludeFromReports, createdAt, updatedAt",
       categories:
         "++id, name, bucketId, description, isActive, createdAt, updatedAt",
       accounts:

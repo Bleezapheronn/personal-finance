@@ -1,0 +1,24 @@
+ion-icon {
+  font-size: 1.5rem;
+}
+
+.bucket-header-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+ion-button[color="light"] ion-icon {
+  color: #999;
+}
+
+ion-button[color="light"]:hover ion-icon {
+  color: #ccc;
+}
+
+ion-button[color="danger"] ion-icon {
+  color: #eb445c;
+}
+
+ion-button[color="danger"]:hover ion-icon {
+  color: #ff6b7a;
+}

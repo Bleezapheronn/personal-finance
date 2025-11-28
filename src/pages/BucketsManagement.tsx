@@ -1,3 +1,4 @@
+import "./BucketsManagement.css";
 import React, { useEffect, useState } from "react";
 import {
   IonButton,
@@ -18,20 +19,26 @@ import {
   IonGrid,
   IonRow,
   IonCol,
-  IonCard,
-  IonCardHeader,
-  IonCardContent,
-  IonCardTitle,
   IonAlert,
   IonIcon,
   IonAccordion,
   IonAccordionGroup,
+  IonModal,
+  IonFab,
+  IonFabButton,
+  IonToast,
+  IonReorder,
+  IonReorderGroup,
+  ItemReorderEventDetail,
 } from "@ionic/react";
 import {
+  add,
   createOutline,
   trashOutline,
   checkmarkCircleOutline,
   closeCircleOutline,
+  close,
+  reorderThree,
 } from "ionicons/icons";
 import { db, Bucket, Category } from "../db";
 
@@ -61,6 +68,8 @@ const BucketsManagement: React.FC = () => {
     undefined
   );
   const [isActive, setIsActive] = useState<boolean>(true);
+  const [displayOrder, setDisplayOrder] = useState<number>(0); // NEW
+  const [excludeFromReports, setExcludeFromReports] = useState<boolean>(false); // NEW
 
   // categories state + form
   const [categories, setCategories] = useState<Category[]>([]);
@@ -74,6 +83,12 @@ const BucketsManagement: React.FC = () => {
   const [alertMessage, setAlertMessage] = useState("");
   const [deleteBucketId, setDeleteBucketId] = useState<number | null>(null);
   const [deleteCategoryId, setDeleteCategoryId] = useState<number | null>(null);
+  const [toastMessage, setToastMessage] = useState("");
+  const [showToast, setShowToast] = useState(false);
+
+  // modal states
+  const [showBucketModal, setShowBucketModal] = useState(false);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
 
   useEffect(() => {
     fetchBuckets();
@@ -83,6 +98,8 @@ const BucketsManagement: React.FC = () => {
   const fetchBuckets = async () => {
     try {
       const all = await db.buckets.toArray();
+      // Sort by displayOrder
+      all.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
       setBuckets(all);
     } catch (err) {
       console.error(err);
@@ -110,6 +127,8 @@ const BucketsManagement: React.FC = () => {
     setMaxPercentage(undefined);
     setMinFixedAmount(undefined);
     setIsActive(true);
+    setDisplayOrder(0); // NEW
+    setExcludeFromReports(false); // NEW
   };
 
   const validatePercent = (v?: number) =>
@@ -117,13 +136,13 @@ const BucketsManagement: React.FC = () => {
 
   const saveBucket = async () => {
     if (!name.trim()) {
-      setAlertMessage("Bucket name is required");
-      setShowAlert(true);
+      setToastMessage("Bucket name is required");
+      setShowToast(true);
       return;
     }
     if (!validatePercent(minPercentage) || !validatePercent(maxPercentage)) {
-      setAlertMessage("Percentages must be between 0 and 100");
-      setShowAlert(true);
+      setToastMessage("Percentages must be between 0 and 100");
+      setShowToast(true);
       return;
     }
     if (
@@ -131,8 +150,8 @@ const BucketsManagement: React.FC = () => {
       typeof maxPercentage === "number" &&
       minPercentage > maxPercentage
     ) {
-      setAlertMessage("minPercentage cannot be greater than maxPercentage");
-      setShowAlert(true);
+      setToastMessage("minPercentage cannot be greater than maxPercentage");
+      setShowToast(true);
       return;
     }
 
@@ -147,9 +166,11 @@ const BucketsManagement: React.FC = () => {
           maxPercentage: maxPercentage ?? 100,
           minFixedAmount: minFixedAmount ?? undefined,
           isActive,
+          displayOrder,
+          excludeFromReports,
           updatedAt: now,
         } as Partial<Bucket>);
-        setAlertMessage("Bucket updated");
+        setToastMessage("Bucket updated");
       } else {
         // add new
         const newBucket: Omit<Bucket, "id"> = {
@@ -159,19 +180,21 @@ const BucketsManagement: React.FC = () => {
           maxPercentage: maxPercentage ?? 100,
           minFixedAmount: minFixedAmount ?? undefined,
           isActive,
+          displayOrder,
+          excludeFromReports,
           createdAt: now,
           updatedAt: now,
         };
         await db.buckets.add(newBucket);
-        setAlertMessage("Bucket created");
+        setToastMessage("Bucket created");
       }
       resetForm();
       await fetchBuckets();
-      setShowAlert(true);
+      setShowToast(true);
     } catch (err) {
       console.error(err);
-      setAlertMessage("Failed to save bucket");
-      setShowAlert(true);
+      setToastMessage("Failed to save bucket");
+      setShowToast(true);
     }
   };
 
@@ -183,30 +206,11 @@ const BucketsManagement: React.FC = () => {
     setMaxPercentage(b.maxPercentage);
     setMinFixedAmount(b.minFixedAmount);
     setIsActive(Boolean(b.isActive));
+    setDisplayOrder(b.displayOrder ?? 0); // NEW
+    setExcludeFromReports(Boolean(b.excludeFromReports)); // NEW
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const deleteBucket = async (id?: number) => {
-    if (!id) return;
-    try {
-      // delete categories belonging to the bucket first
-      await db.transaction("rw", db.categories, db.buckets, async () => {
-        await db.categories.where("bucketId").equals(id).delete();
-        await db.buckets.delete(id);
-      });
-      await fetchBuckets();
-      await fetchCategories();
-      setAlertMessage("Bucket and its categories deleted");
-      setShowAlert(true);
-      setDeleteBucketId(null);
-    } catch (err) {
-      console.error(err);
-      setAlertMessage("Failed to delete bucket");
-      setShowAlert(true);
-    }
-  };
-
-  // new: toggle bucket active state
   const toggleBucketActive = async (b: Bucket) => {
     if (b.id == null) return;
     try {
@@ -216,10 +220,12 @@ const BucketsManagement: React.FC = () => {
         updatedAt: now,
       } as Partial<Bucket>);
       await fetchBuckets();
+      setToastMessage(`Bucket ${b.isActive ? "deactivated" : "activated"}`);
+      setShowToast(true);
     } catch (err) {
       console.error(err);
-      setAlertMessage("Failed to update bucket");
-      setShowAlert(true);
+      setToastMessage("Failed to update bucket");
+      setShowToast(true);
     }
   };
 
@@ -233,32 +239,15 @@ const BucketsManagement: React.FC = () => {
     setCategoryIsActive(true);
   };
 
-  // new: toggle category active state
-  const toggleCategoryActive = async (c: Category) => {
-    if (c.id == null) return;
-    try {
-      const now = new Date();
-      await db.categories.update(c.id, {
-        isActive: !c.isActive,
-        updatedAt: now,
-      } as Partial<Category>);
-      await fetchCategories();
-    } catch (err) {
-      console.error(err);
-      setAlertMessage("Failed to update category");
-      setShowAlert(true);
-    }
-  };
-
   const handleAddOrUpdateCategory = async () => {
     if (!categoryName.trim()) {
-      setAlertMessage("Category name is required");
-      setShowAlert(true);
+      setToastMessage("Category name is required");
+      setShowToast(true);
       return;
     }
     if (categoryBucketId == null) {
-      setAlertMessage("Select a bucket for this category");
-      setShowAlert(true);
+      setToastMessage("Select a bucket for this category");
+      setShowToast(true);
       return;
     }
 
@@ -271,7 +260,7 @@ const BucketsManagement: React.FC = () => {
           isActive: categoryIsActive,
           updatedAt: now,
         } as Partial<Category>);
-        setAlertMessage("Category updated");
+        setToastMessage("Category updated");
       } else {
         const newCategory: Omit<Category, "id"> = {
           name: categoryName.trim(),
@@ -282,15 +271,15 @@ const BucketsManagement: React.FC = () => {
           updatedAt: now,
         };
         await db.categories.add(newCategory);
-        setAlertMessage("Category created");
+        setToastMessage("Category created");
       }
       resetCategoryForm();
       await fetchCategories();
-      setShowAlert(true);
+      setShowToast(true);
     } catch (err) {
       console.error(err);
-      setAlertMessage("Failed to save category");
-      setShowAlert(true);
+      setToastMessage("Failed to save category");
+      setShowToast(true);
     }
   };
 
@@ -303,23 +292,124 @@ const BucketsManagement: React.FC = () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const toggleCategoryActive = async (c: Category) => {
+    if (c.id == null) return;
+    try {
+      const now = new Date();
+      await db.categories.update(c.id, {
+        isActive: !c.isActive,
+        updatedAt: now,
+      } as Partial<Category>);
+      await fetchCategories();
+      setToastMessage(`Category ${c.isActive ? "deactivated" : "activated"}`);
+      setShowToast(true);
+    } catch (err) {
+      console.error(err);
+      setToastMessage("Failed to update category");
+      setShowToast(true);
+    }
+  };
+
+  const deleteBucket = async (id?: number) => {
+    if (!id) return;
+    try {
+      await db.transaction("rw", db.categories, db.buckets, async () => {
+        await db.categories.where("bucketId").equals(id).delete();
+        await db.buckets.delete(id);
+      });
+      await fetchBuckets();
+      await fetchCategories();
+      setToastMessage("Bucket and its categories deleted");
+      setShowToast(true);
+      setDeleteBucketId(null);
+    } catch (err) {
+      console.error(err);
+      setToastMessage("Failed to delete bucket");
+      setShowToast(true);
+    }
+  };
+
   const deleteCategory = async (id?: number) => {
     if (!id) return;
     try {
       await db.categories.delete(id);
       await fetchCategories();
-      setAlertMessage("Category deleted");
-      setShowAlert(true);
+      setToastMessage("Category deleted");
+      setShowToast(true);
       setDeleteCategoryId(null);
     } catch (err) {
       console.error(err);
-      setAlertMessage("Failed to delete category");
-      setShowAlert(true);
+      setToastMessage("Failed to delete category");
+      setShowToast(true);
     }
   };
 
   const getCategoriesForBucket = (bId?: number) =>
     categories.filter((c) => c.bucketId === bId);
+
+  const handleOpenBucketModal = () => {
+    resetForm();
+    setShowBucketModal(true);
+  };
+
+  const handleCloseBucketModal = () => {
+    resetForm();
+    setShowBucketModal(false);
+  };
+
+  const handleCloseCategoryModal = () => {
+    resetCategoryForm();
+    setShowCategoryModal(false);
+  };
+
+  const handleSaveBucket = async () => {
+    await saveBucket();
+    if (bucketId === null) {
+      // Only close if we were adding, not editing
+      handleCloseBucketModal();
+    }
+  };
+
+  const handleSaveCategory = async () => {
+    await handleAddOrUpdateCategory();
+    if (categoryId === null) {
+      // Only close if we were adding, not editing
+      handleCloseCategoryModal();
+    }
+  };
+
+  const handleReorderBuckets = async (
+    event: CustomEvent<ItemReorderEventDetail>
+  ) => {
+    const { from, to } = event.detail;
+
+    // Create a new array with reordered items
+    const reorderedBuckets = [...buckets];
+    const [movedBucket] = reorderedBuckets.splice(from, 1);
+    reorderedBuckets.splice(to, 0, movedBucket);
+
+    // Update displayOrder for all buckets based on new position
+    try {
+      for (let i = 0; i < reorderedBuckets.length; i++) {
+        const bucket = reorderedBuckets[i];
+        if (bucket.id) {
+          await db.buckets.update(bucket.id, {
+            displayOrder: i,
+            updatedAt: new Date(),
+          } as Partial<Bucket>);
+        }
+      }
+      // Update local state
+      setBuckets(reorderedBuckets);
+      setToastMessage("Bucket order updated");
+      setShowToast(true);
+    } catch (err) {
+      console.error(err);
+      setToastMessage("Failed to update bucket order");
+      setShowToast(true);
+      await fetchBuckets(); // Reload to revert changes
+    }
+  };
 
   // ========== Render ==========
   return (
@@ -334,95 +424,331 @@ const BucketsManagement: React.FC = () => {
       </IonHeader>
 
       <IonContent className="ion-padding">
-        {/* Bucket form */}
-        <IonCard>
-          <IonCardHeader>
-            <IonCardTitle>
-              {bucketId ? "Edit Bucket" : "Add Bucket"}
-            </IonCardTitle>
-          </IonCardHeader>
-          <IonCardContent>
+        {/* FAB button for adding buckets */}
+        <IonFab vertical="bottom" horizontal="end" slot="fixed">
+          <IonFabButton onClick={handleOpenBucketModal}>
+            <IonIcon icon={add} />
+          </IonFabButton>
+        </IonFab>
+
+        {/* Buckets list with categories nested as accordions */}
+        <IonAccordionGroup>
+          <IonReorderGroup
+            disabled={false}
+            onIonItemReorder={handleReorderBuckets}
+          >
+            {buckets.map((b) => {
+              const bucketCategories = getCategoriesForBucket(b.id);
+              return (
+                <IonAccordion key={b.id} value={`bucket-${b.id}`}>
+                  <IonItem slot="header">
+                    <IonReorder slot="start">
+                      <IonIcon icon={reorderThree} style={{ cursor: "grab" }} />
+                    </IonReorder>
+
+                    <IonGrid
+                      className="ion-no-padding"
+                      style={{ width: "100%" }}
+                    >
+                      <IonRow style={{ alignItems: "center" }}>
+                        {/* Bucket info in center/expand */}
+                        <IonCol>
+                          <IonLabel style={{ lineHeight: 1 }}>
+                            <strong>{b.name}</strong>
+                            <p
+                              style={{
+                                fontSize: "0.85rem",
+                                color: "#666",
+                                margin: "4px 0 0",
+                              }}
+                            >
+                              {bucketCategories.length}{" "}
+                              {bucketCategories.length === 1
+                                ? "category"
+                                : "categories"}
+                            </p>
+                          </IonLabel>
+                        </IonCol>
+
+                        {/* Buttons on the right */}
+                        <IonCol size="auto">
+                          <IonButton
+                            fill="clear"
+                            size="small"
+                            color="light"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              resetCategoryForm();
+                              setCategoryBucketId(b.id ?? null);
+                              setShowCategoryModal(true);
+                            }}
+                            aria-label={`Add category to ${b.name}`}
+                            title="Add Category"
+                          >
+                            <IonIcon icon={add} />
+                          </IonButton>
+
+                          <IonButton
+                            fill="clear"
+                            size="small"
+                            color="light"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              editBucket(b);
+                              setShowBucketModal(true);
+                            }}
+                            aria-label={`Edit ${b.name}`}
+                            title="Edit"
+                          >
+                            <IonIcon icon={createOutline} />
+                          </IonButton>
+
+                          <IonButton
+                            fill="clear"
+                            size="small"
+                            color="light"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleBucketActive(b);
+                            }}
+                            aria-label={
+                              b.isActive
+                                ? `Deactivate ${b.name}`
+                                : `Activate ${b.name}`
+                            }
+                            title={
+                              b.isActive
+                                ? "Active (click to deactivate)"
+                                : "Inactive (click to activate)"
+                            }
+                          >
+                            <IonIcon
+                              icon={
+                                b.isActive
+                                  ? checkmarkCircleOutline
+                                  : closeCircleOutline
+                              }
+                            />
+                          </IonButton>
+
+                          <IonButton
+                            fill="clear"
+                            size="small"
+                            color="danger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteBucketId(b.id ?? null);
+                            }}
+                            aria-label={`Delete ${b.name}`}
+                            title="Delete"
+                          >
+                            <IonIcon icon={trashOutline} />
+                          </IonButton>
+                        </IonCol>
+                      </IonRow>
+                    </IonGrid>
+                  </IonItem>
+
+                  <div slot="content">
+                    {getCategoriesForBucket(b.id).length === 0 ? (
+                      <div style={{ padding: 16, color: "#666" }}>
+                        No categories for this bucket.
+                      </div>
+                    ) : (
+                      <IonList>
+                        {getCategoriesForBucket(b.id).map((c) => (
+                          <IonItem key={c.id}>
+                            <IonLabel>
+                              {c.name}
+                              {c.description && (
+                                <div style={{ fontSize: 12, color: "#666" }}>
+                                  {c.description}
+                                </div>
+                              )}
+                            </IonLabel>
+
+                            <IonButton
+                              slot="end"
+                              color="light"
+                              fill="clear"
+                              onClick={() => {
+                                editCategory(c);
+                                setShowCategoryModal(true);
+                              }}
+                              aria-label={`Edit category ${c.name}`}
+                              title="Edit"
+                            >
+                              <IonIcon icon={createOutline} />
+                            </IonButton>
+                            <IonButton
+                              slot="end"
+                              color="light"
+                              fill="clear"
+                              onClick={() => toggleCategoryActive(c)}
+                              aria-label={
+                                c.isActive
+                                  ? `Deactivate ${c.name}`
+                                  : `Activate ${c.name}`
+                              }
+                              title={
+                                c.isActive
+                                  ? "Active (click to deactivate)"
+                                  : "Inactive (click to activate)"
+                              }
+                            >
+                              <IonIcon
+                                icon={
+                                  c.isActive
+                                    ? checkmarkCircleOutline
+                                    : closeCircleOutline
+                                }
+                              />
+                            </IonButton>
+                            <IonButton
+                              slot="end"
+                              color="danger"
+                              fill="clear"
+                              onClick={() => setDeleteCategoryId(c.id ?? null)}
+                              aria-label={`Delete category ${c.name}`}
+                              title="Delete"
+                            >
+                              <IonIcon icon={trashOutline} />
+                            </IonButton>
+                          </IonItem>
+                        ))}
+                      </IonList>
+                    )}
+                  </div>
+                </IonAccordion>
+              );
+            })}
+          </IonReorderGroup>
+        </IonAccordionGroup>
+
+        {/* Bucket Modal */}
+        <IonModal
+          isOpen={showBucketModal}
+          onDidDismiss={handleCloseBucketModal}
+        >
+          <IonHeader>
+            <IonToolbar>
+              <IonButtons slot="end">
+                <IonButton onClick={handleCloseBucketModal}>
+                  <IonIcon icon={close} />
+                </IonButton>
+              </IonButtons>
+              <IonTitle>{bucketId ? "Edit Bucket" : "Add Bucket"}</IonTitle>
+            </IonToolbar>
+          </IonHeader>
+          <IonContent className="ion-padding">
             <IonGrid>
               <IonRow>
                 <IonCol>
-                  <IonItem>
-                    <IonLabel position="stacked">Name</IonLabel>
-                    <IonInput
-                      value={name}
-                      onIonChange={(e) => setName(e.detail.value ?? "")}
-                      placeholder="e.g., Essentials"
-                    />
-                  </IonItem>
+                  <IonInput
+                    label="Name"
+                    labelPlacement="stacked"
+                    fill="outline"
+                    value={name}
+                    onIonChange={(e) => setName(e.detail.value ?? "")}
+                    placeholder="e.g., Essentials"
+                  />
                 </IonCol>
               </IonRow>
 
               <IonRow>
                 <IonCol>
-                  <IonItem>
-                    <IonLabel position="stacked">
-                      Description (optional)
-                    </IonLabel>
-                    <IonInput
-                      value={description}
-                      onIonChange={(e) => setDescription(e.detail.value ?? "")}
-                    />
-                  </IonItem>
+                  <IonInput
+                    label="Description (optional)"
+                    labelPlacement="stacked"
+                    fill="outline"
+                    value={description}
+                    onIonChange={(e) => setDescription(e.detail.value ?? "")}
+                  />
                 </IonCol>
               </IonRow>
 
               <IonRow>
                 <IonCol size="6">
-                  <IonItem>
-                    <IonLabel position="stacked">Min Percentage</IonLabel>
-                    <IonInput
-                      type="number"
-                      value={minPercentage ?? ""}
-                      onIonChange={(e) =>
-                        setMinPercentage(
-                          e.detail.value ? Number(e.detail.value) : undefined
-                        )
-                      }
-                      placeholder="0"
-                      min={0}
-                      max={100}
-                    />
-                  </IonItem>
+                  <IonInput
+                    label="Min Percentage"
+                    labelPlacement="stacked"
+                    fill="outline"
+                    type="number"
+                    value={minPercentage ?? ""}
+                    onIonChange={(e) =>
+                      setMinPercentage(
+                        e.detail.value ? Number(e.detail.value) : undefined
+                      )
+                    }
+                    placeholder="0"
+                    min={0}
+                    max={100}
+                  />
                 </IonCol>
                 <IonCol size="6">
-                  <IonItem>
-                    <IonLabel position="stacked">Max Percentage</IonLabel>
-                    <IonInput
-                      type="number"
-                      value={maxPercentage ?? ""}
-                      onIonChange={(e) =>
-                        setMaxPercentage(
-                          e.detail.value ? Number(e.detail.value) : undefined
-                        )
-                      }
-                      placeholder="100"
-                      min={0}
-                      max={100}
-                    />
-                  </IonItem>
+                  <IonInput
+                    label="Max Percentage"
+                    labelPlacement="stacked"
+                    fill="outline"
+                    type="number"
+                    value={maxPercentage ?? ""}
+                    onIonChange={(e) =>
+                      setMaxPercentage(
+                        e.detail.value ? Number(e.detail.value) : undefined
+                      )
+                    }
+                    placeholder="100"
+                    min={0}
+                    max={100}
+                  />
                 </IonCol>
               </IonRow>
 
               <IonRow>
-                <IonCol>
-                  <IonItem>
-                    <IonLabel position="stacked">
-                      Min Fixed Amount (optional)
-                    </IonLabel>
-                    <IonInput
-                      type="number"
-                      value={minFixedAmount ?? ""}
+                <IonCol sizeMd="6">
+                  <IonInput
+                    label="Min Fixed Amount (optional)"
+                    labelPlacement="stacked"
+                    fill="outline"
+                    type="number"
+                    value={minFixedAmount ?? ""}
+                    onIonChange={(e) =>
+                      setMinFixedAmount(
+                        e.detail.value ? Number(e.detail.value) : undefined
+                      )
+                    }
+                    placeholder="e.g., 20,000"
+                    min={0}
+                  />
+                </IonCol>
+              </IonRow>
+
+              <IonRow>
+                <IonCol size="6">
+                  <IonInput
+                    label="Display Order"
+                    labelPlacement="stacked"
+                    fill="outline"
+                    type="number"
+                    value={displayOrder}
+                    onIonChange={(e) =>
+                      setDisplayOrder(
+                        e.detail.value ? Number(e.detail.value) : 0
+                      )
+                    }
+                    placeholder="0"
+                    min={0}
+                    helperText="Lower numbers appear first"
+                  />
+                </IonCol>
+                <IonCol size="6">
+                  <IonItem lines="none">
+                    <IonLabel>Exclude from Reports</IonLabel>
+                    <IonCheckbox
+                      checked={excludeFromReports}
                       onIonChange={(e) =>
-                        setMinFixedAmount(
-                          e.detail.value ? Number(e.detail.value) : undefined
-                        )
+                        setExcludeFromReports(Boolean(e.detail.checked))
                       }
-                      placeholder="e.g., 20,000"
-                      min={0}
                     />
                   </IonItem>
                 </IonCol>
@@ -444,84 +770,79 @@ const BucketsManagement: React.FC = () => {
 
               <IonRow>
                 <IonCol>
-                  <IonButton expand="block" onClick={saveBucket}>
+                  <IonButton expand="block" onClick={handleSaveBucket}>
                     {bucketId ? "Update Bucket" : "Add Bucket"}
                   </IonButton>
                 </IonCol>
-                {bucketId && (
-                  <IonCol>
-                    <IonButton
-                      expand="block"
-                      color="medium"
-                      onClick={resetForm}
-                    >
-                      Cancel
-                    </IonButton>
-                  </IonCol>
-                )}
               </IonRow>
             </IonGrid>
-          </IonCardContent>
-        </IonCard>
+          </IonContent>
+        </IonModal>
 
-        {/* Category form */}
-        <IonCard>
-          <IonCardHeader>
-            <IonCardTitle>
-              {categoryId ? "Edit Category" : "Add Category"}
-            </IonCardTitle>
-          </IonCardHeader>
-          <IonCardContent>
+        {/* Category Modal */}
+        <IonModal
+          isOpen={showCategoryModal}
+          onDidDismiss={handleCloseCategoryModal}
+        >
+          <IonHeader>
+            <IonToolbar>
+              <IonButtons slot="end">
+                <IonButton onClick={handleCloseCategoryModal}>
+                  <IonIcon icon={close} />
+                </IonButton>
+              </IonButtons>
+              <IonTitle>
+                {categoryId ? "Edit Category" : "Add Category"}
+              </IonTitle>
+            </IonToolbar>
+          </IonHeader>
+          <IonContent className="ion-padding">
             <IonGrid>
               <IonRow>
                 <IonCol>
-                  <IonItem>
-                    <IonLabel position="stacked">Bucket</IonLabel>
-                    <IonSelect
-                      value={categoryBucketId ?? undefined}
-                      onIonChange={(e) =>
-                        setCategoryBucketId(e.detail.value ?? null)
-                      }
-                    >
-                      <IonSelectOption value={null}>
-                        -- select --
+                  <IonSelect
+                    label="Bucket"
+                    labelPlacement="stacked"
+                    fill="outline"
+                    value={categoryBucketId ?? undefined}
+                    onIonChange={(e) =>
+                      setCategoryBucketId(e.detail.value ?? null)
+                    }
+                  >
+                    <IonSelectOption value={null}>-- select --</IonSelectOption>
+                    {buckets.map((b) => (
+                      <IonSelectOption key={b.id} value={b.id}>
+                        {b.name}
                       </IonSelectOption>
-                      {buckets.map((b) => (
-                        <IonSelectOption key={b.id} value={b.id}>
-                          {b.name}
-                        </IonSelectOption>
-                      ))}
-                    </IonSelect>
-                  </IonItem>
+                    ))}
+                  </IonSelect>
                 </IonCol>
               </IonRow>
 
               <IonRow>
                 <IonCol>
-                  <IonItem>
-                    <IonLabel position="stacked">Name</IonLabel>
-                    <IonInput
-                      value={categoryName}
-                      onIonChange={(e) => setCategoryName(e.detail.value ?? "")}
-                      placeholder="e.g., Rent"
-                    />
-                  </IonItem>
+                  <IonInput
+                    label="Name"
+                    labelPlacement="stacked"
+                    fill="outline"
+                    value={categoryName}
+                    onIonChange={(e) => setCategoryName(e.detail.value ?? "")}
+                    placeholder="e.g., Rent"
+                  />
                 </IonCol>
               </IonRow>
 
               <IonRow>
                 <IonCol>
-                  <IonItem>
-                    <IonLabel position="stacked">
-                      Description (optional)
-                    </IonLabel>
-                    <IonInput
-                      value={categoryDescription}
-                      onIonChange={(e) =>
-                        setCategoryDescription(e.detail.value ?? "")
-                      }
-                    />
-                  </IonItem>
+                  <IonInput
+                    label="Description (optional)"
+                    labelPlacement="stacked"
+                    fill="outline"
+                    value={categoryDescription}
+                    onIonChange={(e) =>
+                      setCategoryDescription(e.detail.value ?? "")
+                    }
+                  />
                 </IonCol>
               </IonRow>
 
@@ -541,187 +862,22 @@ const BucketsManagement: React.FC = () => {
 
               <IonRow>
                 <IonCol>
-                  <IonButton expand="block" onClick={handleAddOrUpdateCategory}>
+                  <IonButton expand="block" onClick={handleSaveCategory}>
                     {categoryId ? "Update Category" : "Add Category"}
                   </IonButton>
                 </IonCol>
-                {categoryId && (
-                  <IonCol>
-                    <IonButton
-                      expand="block"
-                      color="medium"
-                      onClick={resetCategoryForm}
-                    >
-                      Cancel
-                    </IonButton>
-                  </IonCol>
-                )}
               </IonRow>
             </IonGrid>
-          </IonCardContent>
-        </IonCard>
+          </IonContent>
+        </IonModal>
 
-        {/* Buckets list with categories nested as accordions */}
-        <IonAccordionGroup>
-          {buckets.map((b) => {
-            const bucketCategories = getCategoriesForBucket(b.id);
-            return (
-              <IonAccordion key={b.id} value={`bucket-${b.id}`}>
-                <IonItem slot="header">
-                  <IonGrid className="ion-no-padding" style={{ width: "100%" }}>
-                    <IonRow style={{ alignItems: "center" }}>
-                      {/* Bucket info in center/expand */}
-                      <IonCol>
-                        <IonLabel style={{ lineHeight: 1 }}>
-                          <strong>{b.name}</strong>
-                          <p
-                            style={{
-                              fontSize: "0.85rem",
-                              color: "#666",
-                              margin: "4px 0 0",
-                            }}
-                          >
-                            {bucketCategories.length}{" "}
-                            {bucketCategories.length === 1
-                              ? "category"
-                              : "categories"}
-                          </p>
-                        </IonLabel>
-                      </IonCol>
-
-                      {/* Buttons on the left */}
-                      <IonCol size="auto">
-                        <IonButton
-                          fill="clear"
-                          size="small"
-                          color="light"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            editBucket(b);
-                          }}
-                          aria-label={`Edit ${b.name}`}
-                          title="Edit"
-                        >
-                          <IonIcon icon={createOutline} />
-                        </IonButton>
-
-                        <IonButton
-                          fill="clear"
-                          size="small"
-                          color="light"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleBucketActive(b);
-                          }}
-                          aria-label={
-                            b.isActive
-                              ? `Deactivate ${b.name}`
-                              : `Activate ${b.name}`
-                          }
-                          title={
-                            b.isActive
-                              ? "Active (click to deactivate)"
-                              : "Inactive (click to activate)"
-                          }
-                        >
-                          <IonIcon
-                            icon={
-                              b.isActive
-                                ? checkmarkCircleOutline
-                                : closeCircleOutline
-                            }
-                          />
-                        </IonButton>
-
-                        <IonButton
-                          fill="clear"
-                          size="small"
-                          color="danger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteBucketId(b.id ?? null);
-                          }}
-                          aria-label={`Delete ${b.name}`}
-                          title="Delete"
-                        >
-                          <IonIcon icon={trashOutline} />
-                        </IonButton>
-                      </IonCol>
-                    </IonRow>
-                  </IonGrid>
-                </IonItem>
-
-                <div slot="content">
-                  {getCategoriesForBucket(b.id).length === 0 ? (
-                    <div style={{ padding: 16, color: "#666" }}>
-                      No categories for this bucket.
-                    </div>
-                  ) : (
-                    <IonList>
-                      {getCategoriesForBucket(b.id).map((c) => (
-                        <IonItem key={c.id}>
-                          <IonLabel>
-                            {c.name}
-                            {c.description && (
-                              <div style={{ fontSize: 12, color: "#666" }}>
-                                {c.description}
-                              </div>
-                            )}
-                          </IonLabel>
-
-                          <IonButton
-                            slot="end"
-                            color="light"
-                            fill="clear"
-                            onClick={() => editCategory(c)}
-                            aria-label={`Edit category ${c.name}`}
-                            title="Edit"
-                          >
-                            <IonIcon icon={createOutline} />
-                          </IonButton>
-                          <IonButton
-                            slot="end"
-                            color="light"
-                            fill="clear"
-                            onClick={() => toggleCategoryActive(c)}
-                            aria-label={
-                              c.isActive
-                                ? `Deactivate ${c.name}`
-                                : `Activate ${c.name}`
-                            }
-                            title={
-                              c.isActive
-                                ? "Active (click to deactivate)"
-                                : "Inactive (click to activate)"
-                            }
-                          >
-                            <IonIcon
-                              icon={
-                                c.isActive
-                                  ? checkmarkCircleOutline
-                                  : closeCircleOutline
-                              }
-                            />
-                          </IonButton>
-                          <IonButton
-                            slot="end"
-                            color="danger"
-                            fill="clear"
-                            onClick={() => setDeleteCategoryId(c.id ?? null)}
-                            aria-label={`Delete category ${c.name}`}
-                            title="Delete"
-                          >
-                            <IonIcon icon={trashOutline} />
-                          </IonButton>
-                        </IonItem>
-                      ))}
-                    </IonList>
-                  )}
-                </div>
-              </IonAccordion>
-            );
-          })}
-        </IonAccordionGroup>
+        <IonToast
+          isOpen={showToast}
+          onDidDismiss={() => setShowToast(false)}
+          message={toastMessage}
+          duration={3000}
+          position="bottom"
+        />
 
         <IonAlert
           isOpen={showAlert}

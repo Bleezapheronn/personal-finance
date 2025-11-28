@@ -20,16 +20,16 @@ import {
   IonListHeader,
 } from "@ionic/react";
 import { IonReactRouter } from "@ionic/react-router";
-import { ellipse, square, triangle } from "ionicons/icons";
+import { list, add, barChart } from "ionicons/icons";
 
 import Transactions from "./pages/Transactions";
 import AddTransaction from "./pages/AddTransaction";
 import TransactionDetails from "./pages/TransactionDetails";
-import Tab3 from "./pages/Tab3";
 import BucketsManagement from "./pages/BucketsManagement";
 import AccountsManagement from "./pages/AccountsManagement";
 import RecipientsManagement from "./pages/RecipientsManagement";
 import SmsImportTemplatesManagement from "./pages/SmsImportTemplatesManagement";
+import Reports from "./pages/Reports";
 
 /* Core CSS required for Ionic components to work properly */
 import "@ionic/react/css/core.css";
@@ -117,8 +117,8 @@ const InnerApp: React.FC = () => {
             <Route path="/sms-import-templates">
               <SmsImportTemplatesManagement />
             </Route>
-            <Route path="/tab3">
-              <Tab3 />
+            <Route path="/reports">
+              <Reports />
             </Route>
             <Route exact path="/">
               <Redirect to="/transactions" />
@@ -126,16 +126,16 @@ const InnerApp: React.FC = () => {
           </IonRouterOutlet>
           <IonTabBar slot="bottom">
             <IonTabButton tab="transactions" href="/transactions">
-              <IonIcon aria-hidden="true" icon={triangle} />
+              <IonIcon aria-hidden="true" icon={list} />
               <IonLabel>Transactions</IonLabel>
             </IonTabButton>
             <IonTabButton tab="add" href="/add">
-              <IonIcon aria-hidden="true" icon={ellipse} />
+              <IonIcon aria-hidden="true" icon={add} />
               <IonLabel>Add Transaction</IonLabel>
             </IonTabButton>
-            <IonTabButton tab="tab3" href="/tab3">
-              <IonIcon aria-hidden="true" icon={square} />
-              <IonLabel>Tab 3</IonLabel>
+            <IonTabButton tab="reports" href="/reports">
+              <IonIcon aria-hidden="true" icon={barChart} />
+              <IonLabel>Reports</IonLabel>
             </IonTabButton>
           </IonTabBar>
         </IonTabs>

@@ -1,0 +1,183 @@
+.reports-segment {
+  padding: 1rem 0;
+  display: flex;
+  justify-content: center;
+}
+
+.period-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem;
+  gap: 1rem;
+}
+
+.period-label {
+  flex: 1;
+  text-align: center;
+}
+
+.period-label h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.today-button-container {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem 0 1rem 0;
+}
+
+.error-card {
+  margin: 1rem;
+}
+
+.loading-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 300px;
+}
+
+.summary-card {
+  margin: 1rem;
+  background: linear-gradient(135deg, var(--ion-color-primary), var(--ion-color-primary-shade));
+  color: white;
+}
+
+.summary-card ion-text {
+  color: white !important;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.summary-item.full-width {
+  padding: 1rem 0;
+}
+
+.summary-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.summary-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.summary-value.income {
+  color: #2dd36f;
+}
+
+.summary-value.expense {
+  color: #eb445c;
+}
+
+.section-title {
+  padding: 0 1rem 0.5rem 1rem;
+  font-weight: 600;
+}
+
+.section-title h4 {
+  margin: 0;
+}
+
+.buckets-container {
+  padding-bottom: 2rem;
+}
+
+.bucket-card {
+  margin: 0.5rem 1rem;
+}
+
+.bucket-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.bucket-name {
+  margin: 0 0 0.25rem 0;
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.bucket-range {
+  font-size: 0.85rem;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.4rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-on-target {
+  background-color: #2dd36f;
+  color: white;
+}
+
+.status-above-max {
+  background-color: #ffc409;
+  color: #000;
+}
+
+.status-below-min-fixed,
+.status-below-min-percentage {
+  background-color: #eb445c;
+  color: white;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.metric-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.metric-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.progress-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.progress-bar-wrapper {
+  width: 100%;
+  height: 24px;
+  background-color: var(--ion-color-light);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--ion-color-step-200);
+}
+
+.progress-bar-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.progress-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--ion-color-medium);
+  padding: 0 0.25rem;
+}

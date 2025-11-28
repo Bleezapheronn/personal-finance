@@ -74,6 +74,9 @@ const Transactions: React.FC = () => {
   const [selectedRecipientId, setSelectedRecipientId] = useState<
     number | undefined
   >(undefined);
+  const [selectedBucketId, setSelectedBucketId] = useState<number | undefined>(
+    undefined
+  );
   const [selectedCategoryId, setSelectedCategoryId] = useState<
     number | undefined
   >(undefined);
@@ -279,6 +282,12 @@ const Transactions: React.FC = () => {
         if (txn.recipientId !== selectedRecipientId) return false;
       }
 
+      // Bucket filter
+      if (selectedBucketId !== undefined) {
+        const category = categories.find((c) => c.id === txn.categoryId);
+        if (category?.bucketId !== selectedBucketId) return false;
+      }
+
       // Category filter
       if (selectedCategoryId !== undefined) {
         if (txn.categoryId !== selectedCategoryId) return false;
@@ -304,6 +313,7 @@ const Transactions: React.FC = () => {
     setSelectedAccountId(undefined);
     setSelectedPaymentMethodId(undefined);
     setSelectedRecipientId(undefined);
+    setSelectedBucketId(undefined);
     setSelectedCategoryId(undefined);
     setSelectedDateFrom("");
     setSelectedDateTo("");
@@ -314,6 +324,7 @@ const Transactions: React.FC = () => {
       selectedAccountId !== undefined ||
       selectedPaymentMethodId !== undefined ||
       selectedRecipientId !== undefined ||
+      selectedBucketId !== undefined ||
       selectedCategoryId !== undefined ||
       selectedDateFrom !== "" ||
       selectedDateTo !== ""
@@ -536,7 +547,7 @@ const Transactions: React.FC = () => {
                           style={{
                             fontSize: "1.4rem",
                             fontWeight: "bold",
-                            marginLeft: "18px",
+                            marginLeft: "2px",
                             textAlign: "left",
                             color: account.total < 0 ? "#D44619" : "#009688",
                           }}
@@ -550,7 +561,7 @@ const Transactions: React.FC = () => {
                     </IonCol>
                   ))}
                   <IonCol size="4">
-                    <div style={{ textAlign: "center" }}>
+                    <div style={{ textAlign: "right" }}>
                       <div
                         style={{
                           fontSize: "0.9rem",
@@ -648,23 +659,20 @@ const Transactions: React.FC = () => {
                   <IonRow>
                     <IonCol size="12" sizeMd="6">
                       <IonSelect
-                        label="Recipient"
+                        label="Bucket"
                         labelPlacement="stacked"
                         fill="outline"
-                        placeholder="All Recipients"
-                        value={selectedRecipientId}
+                        placeholder="All Buckets"
+                        value={selectedBucketId}
                         onIonChange={(e) =>
-                          setSelectedRecipientId(
+                          setSelectedBucketId(
                             e.detail.value as number | undefined
                           )
                         }
                       >
-                        {recipients.map((recipient) => (
-                          <IonSelectOption
-                            key={recipient.id}
-                            value={recipient.id}
-                          >
-                            {recipient.name}
+                        {buckets.map((bucket) => (
+                          <IonSelectOption key={bucket.id} value={bucket.id}>
+                            {bucket.name}
                           </IonSelectOption>
                         ))}
                       </IonSelect>
@@ -688,6 +696,31 @@ const Transactions: React.FC = () => {
                             value={category.id}
                           >
                             {category.name}
+                          </IonSelectOption>
+                        ))}
+                      </IonSelect>
+                    </IonCol>
+                  </IonRow>
+                  <IonRow>
+                    <IonCol size="12">
+                      <IonSelect
+                        label="Recipient"
+                        labelPlacement="stacked"
+                        fill="outline"
+                        placeholder="All Recipients"
+                        value={selectedRecipientId}
+                        onIonChange={(e) =>
+                          setSelectedRecipientId(
+                            e.detail.value as number | undefined
+                          )
+                        }
+                      >
+                        {recipients.map((recipient) => (
+                          <IonSelectOption
+                            key={recipient.id}
+                            value={recipient.id}
+                          >
+                            {recipient.name}
                           </IonSelectOption>
                         ))}
                       </IonSelect>
