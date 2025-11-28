@@ -26,8 +26,7 @@ import {
   IonAlert,
   IonAccordion,
   IonAccordionGroup,
-  IonSelect,
-  IonSelectOption,
+  IonSearchbar,
 } from "@ionic/react";
 
 import { useHistory } from "react-router-dom";
@@ -37,6 +36,8 @@ import {
   arrowUpCircle,
   arrowDownCircle,
   closeCircleOutline,
+  downloadOutline,
+  cloudUploadOutline,
 } from "ionicons/icons";
 import {
   db,
@@ -47,6 +48,10 @@ import {
   Bucket,
   Account,
 } from "../db";
+import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
+import { exportTransactionsToCSV, downloadCSV } from "../utils/csvExport";
+import { ImportModal } from "../components/ImportModal";
+import "./Transactions.css";
 
 const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
@@ -66,6 +71,7 @@ const Transactions: React.FC = () => {
     number | undefined
   >(undefined);
   const [isTransferDelete, setIsTransferDelete] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
 
   // Filter states
   const [selectedAccountId, setSelectedAccountId] = useState<
@@ -85,6 +91,7 @@ const Transactions: React.FC = () => {
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<
     number | undefined
   >(undefined);
+  const [selectedDescription, setSelectedDescription] = useState<string>("");
 
   const history = useHistory();
 
@@ -305,6 +312,17 @@ const Transactions: React.FC = () => {
         if (txnDate > selectedDateTo) return false;
       }
 
+      // Description filter
+      if (selectedDescription) {
+        if (
+          !txn.description
+            ?.toLowerCase()
+            .includes(selectedDescription.toLowerCase())
+        ) {
+          return false;
+        }
+      }
+
       return true;
     });
   };
@@ -317,6 +335,7 @@ const Transactions: React.FC = () => {
     setSelectedCategoryId(undefined);
     setSelectedDateFrom("");
     setSelectedDateTo("");
+    setSelectedDescription("");
   };
 
   const hasActiveFilters = () => {
@@ -327,7 +346,8 @@ const Transactions: React.FC = () => {
       selectedBucketId !== undefined ||
       selectedCategoryId !== undefined ||
       selectedDateFrom !== "" ||
-      selectedDateTo !== ""
+      selectedDateTo !== "" ||
+      selectedDescription !== ""
     );
   };
 
@@ -374,9 +394,6 @@ const Transactions: React.FC = () => {
 
     return { accountTotals, overallTotal };
   };
-
-  const filteredTransactions = getFilteredTransactions();
-  const { accountTotals, overallTotal } = calculateAccountTotals();
 
   // Add this helper function before the return statement
   const getTimeGroup = (dateString: string): string => {
@@ -456,6 +473,62 @@ const Transactions: React.FC = () => {
     return sortedGroups;
   };
 
+  const { accountTotals, overallTotal } = calculateAccountTotals();
+  const filteredTransactions = getFilteredTransactions();
+
+  // Add this helper function before the return statement (after calculateAccountTotals)
+  const getRecipientTransactionCount = (recipientId: number): number => {
+    return filteredTransactions.filter((txn) => txn.recipientId === recipientId)
+      .length;
+  };
+
+  // Add these helper functions before the return statement (after getRecipientTransactionCount):
+  const getAccountsInTransactions = (): number[] => {
+    const accountIds = new Set<number>();
+    transactions?.forEach((txn) => {
+      const pm = paymentMethods.find((p) => p.id === txn.paymentChannelId);
+      if (pm?.accountId) {
+        accountIds.add(pm.accountId);
+      }
+    });
+    return Array.from(accountIds);
+  };
+
+  const getPaymentMethodsInTransactions = (): number[] => {
+    const pmIds = new Set<number>();
+    transactions?.forEach((txn) => {
+      pmIds.add(txn.paymentChannelId);
+    });
+    return Array.from(pmIds);
+  };
+
+  const getBucketsInTransactions = (): number[] => {
+    const bucketIds = new Set<number>();
+    transactions?.forEach((txn) => {
+      const category = categories.find((c) => c.id === txn.categoryId);
+      if (category?.bucketId) {
+        bucketIds.add(category.bucketId);
+      }
+    });
+    return Array.from(bucketIds);
+  };
+
+  const getCategoriesInTransactions = (): number[] => {
+    const catIds = new Set<number>();
+    transactions?.forEach((txn) => {
+      catIds.add(txn.categoryId);
+    });
+    return Array.from(catIds);
+  };
+
+  const getRecipientsInTransactions = (): number[] => {
+    const recIds = new Set<number>();
+    transactions?.forEach((txn) => {
+      recIds.add(txn.recipientId);
+    });
+    return Array.from(recIds);
+  };
+
   return (
     <IonPage>
       <IonHeader>
@@ -464,6 +537,31 @@ const Transactions: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Transactions</IonTitle>
+          <IonButtons slot="end">
+            <IonButton
+              onClick={async () => {
+                try {
+                  const csv = await exportTransactionsToCSV();
+                  const filename = `transactions-${
+                    new Date().toISOString().split("T")[0]
+                  }.csv`;
+                  downloadCSV(csv, filename);
+                } catch (err) {
+                  console.error("Export failed:", err);
+                  // Show error toast
+                }
+              }}
+              title="Export Transactions to CSV"
+            >
+              <IonIcon icon={downloadOutline} />
+            </IonButton>
+            <IonButton
+              onClick={() => setShowImportModal(true)}
+              title="Import transactions from CSV"
+            >
+              <IonIcon icon={cloudUploadOutline} />
+            </IonButton>
+          </IonButtons>
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
@@ -522,6 +620,12 @@ const Transactions: React.FC = () => {
                     <IonCol
                       key={account.accountId}
                       size={accountTotals.length > 3 ? "2" : "3"}
+                      onClick={() => setSelectedAccountId(account.accountId)}
+                      style={{
+                        cursor: "pointer",
+                        opacity:
+                          selectedAccountId === account.accountId ? 1 : 0.6,
+                      }}
                     >
                       <div style={{ textAlign: "center" }}>
                         <div
@@ -560,7 +664,15 @@ const Transactions: React.FC = () => {
                       </div>
                     </IonCol>
                   ))}
-                  <IonCol size="4">
+                  <IonCol
+                    size="4"
+                    onClick={() =>
+                      selectedAccountId && setSelectedAccountId(undefined)
+                    }
+                    style={{
+                      cursor: selectedAccountId ? "pointer" : "default",
+                    }}
+                  >
                     <div style={{ textAlign: "right" }}>
                       <div
                         style={{
@@ -571,7 +683,7 @@ const Transactions: React.FC = () => {
                         }}
                       >
                         {hasActiveFilters()
-                          ? "Filtered Net Total"
+                          ? "Net Total (Filtered)"
                           : "Net Total"}
                       </div>
                       <div
@@ -615,115 +727,138 @@ const Transactions: React.FC = () => {
               <div slot="content" style={{ padding: "16px" }}>
                 <IonGrid>
                   <IonRow>
-                    <IonCol size="12" sizeMd="6">
-                      <IonSelect
-                        label="Account"
-                        labelPlacement="stacked"
-                        fill="outline"
-                        placeholder="All Accounts"
-                        value={selectedAccountId}
-                        onIonChange={(e) =>
-                          setSelectedAccountId(
-                            e.detail.value as number | undefined
-                          )
+                    <IonCol size="12">
+                      <IonSearchbar
+                        value={selectedDescription}
+                        onIonInput={(e) =>
+                          setSelectedDescription(e.detail.value || "")
                         }
-                      >
-                        {accounts.map((account) => (
-                          <IonSelectOption key={account.id} value={account.id}>
-                            {account.name}
-                          </IonSelectOption>
-                        ))}
-                      </IonSelect>
-                    </IonCol>
-                    <IonCol size="12" sizeMd="6">
-                      <IonSelect
-                        label="Payment Method"
-                        labelPlacement="stacked"
-                        fill="outline"
-                        placeholder="All Payment Methods"
-                        value={selectedPaymentMethodId}
-                        onIonChange={(e) =>
-                          setSelectedPaymentMethodId(
-                            e.detail.value as number | undefined
-                          )
-                        }
-                      >
-                        {paymentMethods.map((pm) => (
-                          <IonSelectOption key={pm.id} value={pm.id}>
-                            {pm.name}
-                          </IonSelectOption>
-                        ))}
-                      </IonSelect>
+                        placeholder="Search description..."
+                        animated
+                      />
                     </IonCol>
                   </IonRow>
                   <IonRow>
                     <IonCol size="12" sizeMd="6">
-                      <IonSelect
-                        label="Bucket"
-                        labelPlacement="stacked"
-                        fill="outline"
-                        placeholder="All Buckets"
-                        value={selectedBucketId}
-                        onIonChange={(e) =>
-                          setSelectedBucketId(
-                            e.detail.value as number | undefined
-                          )
-                        }
-                      >
-                        {buckets.map((bucket) => (
-                          <IonSelectOption key={bucket.id} value={bucket.id}>
-                            {bucket.name}
-                          </IonSelectOption>
-                        ))}
-                      </IonSelect>
+                      <SearchableFilterSelect
+                        label="Account"
+                        placeholder="All Accounts"
+                        value={selectedAccountId}
+                        options={accounts
+                          .filter((a) => {
+                            const accountsWithTxns =
+                              getAccountsInTransactions();
+                            return (
+                              a.name && accountsWithTxns.includes(a.id || 0)
+                            );
+                          })
+                          .map((a) => ({
+                            id: a.id,
+                            name: a.name as string,
+                          }))}
+                        onIonChange={setSelectedAccountId}
+                      />
                     </IonCol>
                     <IonCol size="12" sizeMd="6">
-                      <IonSelect
+                      <SearchableFilterSelect
+                        label="Payment Method"
+                        placeholder="All Payment Methods"
+                        value={selectedPaymentMethodId}
+                        options={paymentMethods
+                          .filter((pm) => {
+                            const pmsWithTxns =
+                              getPaymentMethodsInTransactions();
+                            const account = accounts.find(
+                              (a) => a.id === pm.accountId
+                            );
+                            return (
+                              pmsWithTxns.includes(pm.id || 0) && account?.name
+                            );
+                          })
+                          .map((pm) => {
+                            const account = accounts.find(
+                              (a) => a.id === pm.accountId
+                            );
+                            return {
+                              id: pm.id,
+                              name: `${account?.name || "Unknown"} - ${
+                                pm.name
+                              }`,
+                            };
+                          })}
+                        onIonChange={setSelectedPaymentMethodId}
+                      />
+                    </IonCol>
+                  </IonRow>
+                  <IonRow>
+                    <IonCol size="12" sizeMd="6">
+                      <SearchableFilterSelect
+                        label="Bucket"
+                        placeholder="All Buckets"
+                        value={selectedBucketId}
+                        options={buckets
+                          .filter((b) => {
+                            const bucketsWithTxns = getBucketsInTransactions();
+                            return (
+                              b.name && bucketsWithTxns.includes(b.id || 0)
+                            );
+                          })
+                          .map((b) => ({
+                            id: b.id,
+                            name: b.name as string,
+                          }))}
+                        onIonChange={setSelectedBucketId}
+                      />
+                    </IonCol>
+                    <IonCol size="12" sizeMd="6">
+                      <SearchableFilterSelect
                         label="Category"
-                        labelPlacement="stacked"
-                        fill="outline"
                         placeholder="All Categories"
                         value={selectedCategoryId}
-                        onIonChange={(e) =>
-                          setSelectedCategoryId(
-                            e.detail.value as number | undefined
-                          )
-                        }
-                      >
-                        {categories.map((category) => (
-                          <IonSelectOption
-                            key={category.id}
-                            value={category.id}
-                          >
-                            {category.name}
-                          </IonSelectOption>
-                        ))}
-                      </IonSelect>
+                        options={categories
+                          .filter((c) => {
+                            const catsWithTxns = getCategoriesInTransactions();
+                            return c.name && catsWithTxns.includes(c.id || 0);
+                          })
+                          .map((c) => {
+                            const bucket = buckets.find(
+                              (b) => b.id === c.bucketId
+                            );
+                            return {
+                              id: c.id,
+                              name: `${c.name} - ${bucket?.name || "Unknown"}`,
+                            };
+                          })}
+                        onIonChange={setSelectedCategoryId}
+                      />{" "}
                     </IonCol>
                   </IonRow>
                   <IonRow>
                     <IonCol size="12">
-                      <IonSelect
+                      <SearchableFilterSelect
                         label="Recipient"
-                        labelPlacement="stacked"
-                        fill="outline"
                         placeholder="All Recipients"
                         value={selectedRecipientId}
-                        onIonChange={(e) =>
-                          setSelectedRecipientId(
-                            e.detail.value as number | undefined
-                          )
-                        }
-                      >
-                        {recipients.map((recipient) => (
-                          <IonSelectOption
-                            key={recipient.id}
-                            value={recipient.id}
-                          >
-                            {recipient.name}
-                          </IonSelectOption>
-                        ))}
-                      </IonSelect>
+                        options={recipients
+                          .filter((r) => {
+                            const recsWithTxns = getRecipientsInTransactions();
+                            return r.name && recsWithTxns.includes(r.id || 0);
+                          })
+                          .map((r) => ({
+                            id: r.id,
+                            name: r.name,
+                          }))
+                          .sort((a, b) => {
+                            const countA = getRecipientTransactionCount(
+                              a.id || 0
+                            );
+                            const countB = getRecipientTransactionCount(
+                              b.id || 0
+                            );
+                            return countB - countA; // Most used first
+                          })}
+                        onIonChange={setSelectedRecipientId}
+                      />
                     </IonCol>
                   </IonRow>
                   <IonRow>
@@ -1036,6 +1171,16 @@ const Transactions: React.FC = () => {
               ))}
             </>
           )}
+
+        <ImportModal
+          isOpen={showImportModal}
+          onDidDismiss={() => setShowImportModal(false)}
+          onImportComplete={() => {
+            setShowImportModal(false);
+            // Reload transactions
+            window.location.reload();
+          }}
+        />
       </IonContent>
     </IonPage>
   );

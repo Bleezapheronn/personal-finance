@@ -1,0 +1,19 @@
+ion-accordion-group {
+  overflow: visible !important;
+}
+
+ion-accordion {
+  overflow: visible !important;
+}
+
+ion-accordion::part(content) {
+  overflow: visible !important;
+}
+
+[slot="content"] {
+  overflow: visible !important;
+}
+
+.searchable-filter-searchbar {
+  --background: transparent;
+}

@@ -33,7 +33,6 @@ import {
   Recipient,
   SmsImportTemplate,
 } from "../db";
-import { closeCircleOutline } from "ionicons/icons";
 import { addOutline } from "ionicons/icons";
 import { documentTextOutline } from "ionicons/icons";
 import {
@@ -47,7 +46,7 @@ import { AddCategoryModal } from "../components/AddCategoryModal";
 import { AddPaymentMethodModal } from "../components/AddPaymentMethodModal";
 import { SmsImportModal } from "../components/SmsImportModal";
 import { ParsedSmsData } from "../hooks/useSmsParser";
-import { PaymentMethodSelect } from "../components/PaymentMethodSelect";
+import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 
 const AddTransaction: React.FC = () => {
   const history = useHistory();
@@ -162,24 +161,44 @@ const AddTransaction: React.FC = () => {
 
         if (!isMounted) return;
 
-        setBuckets(b);
-        setAccounts(a);
-        // Filter to only active templates
+        const activeAccounts = a.filter((acc) => acc.isActive !== false); // Show if isActive is true OR undefined
+        const activeBuckets = b.filter((bkt) => bkt.isActive);
+        const activeCategories = c.filter((cat) => cat.isActive);
+
+        // Debug: log all payment methods
+        console.log("All payment methods from DB:", pm);
+        console.log("Active accounts:", activeAccounts);
+
+        // Filter payment methods: active AND account exists
+        const activePaymentMethods = pm.filter((pmeth) => {
+          const accountExists = activeAccounts.some(
+            (acc) => acc.id === pmeth.accountId
+          );
+          console.log(
+            `PM: ${pmeth.name}, isActive: ${pmeth.isActive}, accountId: ${pmeth.accountId}, accountExists: ${accountExists}`
+          );
+          return pmeth.isActive && accountExists;
+        });
+
+        console.log("Filtered payment methods:", activePaymentMethods);
+
+        const activeRecipients = r.filter((rec) => rec.isActive);
+
+        setBuckets(activeBuckets);
+        setAccounts(activeAccounts);
         setSmsTemplates(allTemplates.filter((t) => t.isActive));
 
-        // Count transactions per recipient
         const transactions = await db.transactions.toArray();
 
         if (!isMounted) return;
 
         // Count transactions per recipient
         const recipientCounts = new Map<number, number>();
-
         transactions.forEach((txn) => {
           const count = recipientCounts.get(txn.recipientId) || 0;
           recipientCounts.set(txn.recipientId, count + 1);
         });
-        const sortedRecips = [...r].sort((a, b) => {
+        const sortedRecips = [...activeRecipients].sort((a, b) => {
           const countA = recipientCounts.get(a.id!) || 0;
           const countB = recipientCounts.get(b.id!) || 0;
           return countB - countA; // Most transactions first
@@ -192,7 +211,7 @@ const AddTransaction: React.FC = () => {
           const count = categoryCounts.get(txn.categoryId) || 0;
           categoryCounts.set(txn.categoryId, count + 1);
         });
-        const sortedCats = [...c].sort((a, b) => {
+        const sortedCats = [...activeCategories].sort((a, b) => {
           const countA = categoryCounts.get(a.id!) || 0;
           const countB = categoryCounts.get(b.id!) || 0;
           return countB - countA; // Most transactions first
@@ -205,7 +224,7 @@ const AddTransaction: React.FC = () => {
           const count = paymentMethodCounts.get(txn.paymentChannelId) || 0;
           paymentMethodCounts.set(txn.paymentChannelId, count + 1);
         });
-        const sortedPMs = [...pm].sort((a, b) => {
+        const sortedPMs = [...activePaymentMethods].sort((a, b) => {
           const countA = paymentMethodCounts.get(a.id!) || 0;
           const countB = paymentMethodCounts.get(b.id!) || 0;
           return countB - countA; // Most transactions first
@@ -1051,54 +1070,27 @@ const AddTransaction: React.FC = () => {
 
             {transactionType === "transfer" ? (
               <>
-                {/* Payer (Source) - NEW FIELD */}
+                {/* Payer (Source) - Using SearchableFilterSelect */}
                 <IonRow>
                   <IonCol size="10">
-                    <IonSelect
+                    <SearchableFilterSelect
                       label="Payer"
-                      fill="outline"
-                      color={
-                        fieldErrors.transferRecipient ? "danger" : undefined
-                      }
-                      labelPlacement="stacked"
-                      interface="popover"
                       placeholder="Select the source of the transfer"
                       value={transferRecipientId}
-                      onIonChange={(e) => {
-                        const v = e.detail.value as string | number | undefined;
-                        const id =
-                          v == null
-                            ? undefined
-                            : typeof v === "number"
-                            ? v
-                            : Number(v);
-                        setTransferRecipientId(id);
+                      options={sortedRecipients
+                        .filter((r) => r.name)
+                        .map((r) => ({
+                          id: r.id,
+                          name: r.name as string,
+                        }))}
+                      onIonChange={(v) => {
+                        setTransferRecipientId(v);
                         setFieldErrors((prev) => ({
                           ...prev,
                           transferRecipient: false,
                         }));
                       }}
-                    >
-                      {sortedRecipients.map((r) => (
-                        <IonSelectOption key={r.id} value={r.id}>
-                          {r.name}
-                        </IonSelectOption>
-                      ))}
-                      <IonButton
-                        slot="end"
-                        fill="clear"
-                        size="small"
-                        color="medium"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setTransferRecipientId(undefined);
-                        }}
-                        aria-label="Clear payer"
-                        title="Clear payer"
-                      >
-                        <IonIcon icon={closeCircleOutline} />
-                      </IonButton>
-                    </IonSelect>
+                    />
                     {fieldErrors.transferRecipient && (
                       <IonText
                         color="danger"
@@ -1114,66 +1106,41 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
+                      style={{ marginTop: "23px" }}
                       color="primary"
-                      expand="block"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowRecipientModal(true);
                       }}
-                      aria-label="Add payer"
-                      title="Add payer"
+                      aria-label="Add Payer"
+                      title="Add Payer"
                     >
                       <IonIcon icon={addOutline} />
-                      Add payer
                     </IonButton>
                   </IonCol>
                 </IonRow>
-                {/* Recipient (Destination) */}
+
+                {/* Recipient (Destination) - Using SearchableFilterSelect */}
                 <IonRow>
                   <IonCol size="10">
-                    <IonSelect
+                    <SearchableFilterSelect
                       label="Recipient"
-                      fill="outline"
-                      color={fieldErrors.recipient ? "danger" : undefined}
-                      labelPlacement="stacked"
-                      interface="popover"
                       placeholder="Select destination of the transfer"
                       value={recipientId}
-                      onIonChange={(e) => {
-                        const v = e.detail.value as string | number | undefined;
-                        const id =
-                          v == null
-                            ? undefined
-                            : typeof v === "number"
-                            ? v
-                            : Number(v);
-                        setRecipientId(id);
+                      options={sortedRecipients
+                        .filter((r) => r.name)
+                        .map((r) => ({
+                          id: r.id,
+                          name: r.name as string,
+                        }))}
+                      onIonChange={(v) => {
+                        setRecipientId(v);
                         setFieldErrors((prev) => ({
                           ...prev,
                           recipient: false,
                         }));
                       }}
-                    >
-                      {sortedRecipients.map((r) => (
-                        <IonSelectOption key={r.id} value={r.id}>
-                          {r.name}
-                        </IonSelectOption>
-                      ))}
-                      <IonButton
-                        slot="end"
-                        fill="clear"
-                        size="small"
-                        color="medium"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRecipientId(undefined);
-                        }}
-                        aria-label="Clear recipient"
-                        title="Clear recipient"
-                      >
-                        <IonIcon icon={closeCircleOutline} />
-                      </IonButton>
-                    </IonSelect>
+                    />
                     {fieldErrors.recipient && (
                       <IonText
                         color="danger"
@@ -1189,98 +1156,46 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
+                      style={{ marginTop: "23px" }}
                       color="primary"
-                      expand="block"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowRecipientModal(true);
                       }}
-                      aria-label="Add recipient"
-                      title="Add recipient"
+                      aria-label="Add Recipient"
+                      title="Add Recipient"
                     >
                       <IonIcon icon={addOutline} />
-                      Add recipient
                     </IonButton>
                   </IonCol>
                 </IonRow>
 
-                {/* Category */}
+                {/* Category - Using SearchableFilterSelect */}
                 <IonRow>
                   <IonCol size="10">
-                    <IonSelect
+                    <SearchableFilterSelect
                       label="Category"
-                      fill="outline"
-                      color={fieldErrors.category ? "danger" : undefined}
-                      labelPlacement="stacked"
-                      interface="popover"
                       placeholder="Select category"
                       value={categoryId}
-                      onIonChange={(e) => {
-                        const v = e.detail.value as string | number | undefined;
-                        setCategoryId(v == null ? undefined : Number(v));
+                      options={sortedCategories
+                        .filter((c) => c.name)
+                        .map((c) => {
+                          const bucket = buckets.find(
+                            (b) => b.id === c.bucketId
+                          );
+                          return {
+                            id: c.id,
+                            name: `${c.name} - ${bucket?.name || "Unknown"}`,
+                          };
+                        })}
+                      onIonChange={(v) => {
+                        setCategoryId(v);
                         setFieldErrors((prev) => ({
                           ...prev,
                           category: false,
                         }));
                       }}
-                    >
-                      {buckets.map((b) => {
-                        const cats = sortedCategories.filter(
-                          (c) => c.bucketId === b.id
-                        );
-                        if (cats.length === 0) return null;
-                        return (
-                          <React.Fragment key={b.id}>
-                            <IonSelectOption
-                              value={-1}
-                              disabled
-                              style={{ fontWeight: 900, opacity: 0.9 }}
-                            >
-                              {b.name}
-                            </IonSelectOption>
-                            {cats.map((c) => (
-                              <IonSelectOption key={c.id} value={c.id}>
-                                {c.name}
-                              </IonSelectOption>
-                            ))}
-                          </React.Fragment>
-                        );
-                      })}
-
-                      {sortedCategories.filter((c) => !c.bucketId).length >
-                        0 && (
-                        <>
-                          <IonSelectOption
-                            value={-1}
-                            disabled
-                            style={{ fontWeight: 700, opacity: 0.9 }}
-                          >
-                            Unbucketed
-                          </IonSelectOption>
-                          {sortedCategories
-                            .filter((c) => !c.bucketId)
-                            .map((c) => (
-                              <IonSelectOption key={c.id} value={c.id}>
-                                {c.name}
-                              </IonSelectOption>
-                            ))}
-                        </>
-                      )}
-                      <IonButton
-                        slot="end"
-                        fill="clear"
-                        size="small"
-                        color="medium"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setCategoryId(undefined);
-                        }}
-                        aria-label="Clear category"
-                        title="Clear category"
-                      >
-                        <IonIcon icon={closeCircleOutline} />
-                      </IonButton>
-                    </IonSelect>
+                    />
                     {fieldErrors.category && (
                       <IonText
                         color="danger"
@@ -1296,39 +1211,47 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
+                      style={{ marginTop: "23px" }}
                       color="primary"
-                      expand="block"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowCategoryModal(true);
                       }}
-                      aria-label="Add category"
-                      title="Add category"
+                      aria-label="Add Category"
+                      title="Add Category"
                     >
                       <IonIcon icon={addOutline} />
-                      Add category
                     </IonButton>
                   </IonCol>
                 </IonRow>
 
-                {/* FROM Payment Method - using new component */}
+                {/* FROM Payment Method - Using SearchableFilterSelect */}
                 <IonRow>
                   <IonCol size="10">
-                    <PaymentMethodSelect
+                    <SearchableFilterSelect
                       label="From Payment Method"
                       placeholder="Select source payment method"
                       value={paymentMethodId}
-                      onChange={(v) => {
+                      options={sortedPaymentMethods
+                        .filter((pm) => pm.name)
+                        .map((pm) => {
+                          const account = accounts.find(
+                            (a) => a.id === pm.accountId
+                          );
+                          return {
+                            id: pm.id,
+                            name: `${account?.name || "Unknown"} - ${
+                              pm.name as string
+                            }`,
+                          };
+                        })}
+                      onIonChange={(v) => {
                         setPaymentMethodId(v);
                         setFieldErrors((prev) => ({
                           ...prev,
                           paymentMethod: false,
                         }));
                       }}
-                      onClear={() => setPaymentMethodId(undefined)}
-                      accounts={accounts}
-                      paymentMethods={sortedPaymentMethods}
-                      error={fieldErrors.paymentMethod}
                     />
                     {fieldErrors.paymentMethod && (
                       <IonText
@@ -1345,37 +1268,47 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
+                      style={{ marginTop: "23px" }}
                       color="primary"
-                      expand="block"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowPaymentMethodModal(true);
                       }}
+                      aria-label="Add Payment Method"
+                      title="Add Payment Method"
                     >
                       <IonIcon icon={addOutline} />
-                      Add Payment Method
                     </IonButton>
                   </IonCol>
                 </IonRow>
 
-                {/* TO Payment Method - using new component */}
+                {/* TO Payment Method - Using SearchableFilterSelect */}
                 <IonRow>
                   <IonCol size="10">
-                    <PaymentMethodSelect
+                    <SearchableFilterSelect
                       label="To Payment Method"
                       placeholder="Select destination payment method"
                       value={transferToPaymentMethodId}
-                      onChange={(v) => {
+                      options={sortedPaymentMethods
+                        .filter((pm) => pm.name)
+                        .map((pm) => {
+                          const account = accounts.find(
+                            (a) => a.id === pm.accountId
+                          );
+                          return {
+                            id: pm.id,
+                            name: `${account?.name || "Unknown"} - ${
+                              pm.name as string
+                            }`,
+                          };
+                        })}
+                      onIonChange={(v) => {
                         setTransferToPaymentMethodId(v);
                         setFieldErrors((prev) => ({
                           ...prev,
                           transferToPaymentMethod: false,
                         }));
                       }}
-                      onClear={() => setTransferToPaymentMethodId(undefined)}
-                      accounts={accounts}
-                      paymentMethods={sortedPaymentMethods}
-                      error={fieldErrors.transferToPaymentMethod}
                     />
                     {fieldErrors.transferToPaymentMethod && (
                       <IonText
@@ -1392,15 +1325,16 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
+                      style={{ marginTop: "23px" }}
                       color="primary"
-                      expand="block"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowPaymentMethodModal(true);
                       }}
+                      aria-label="Add Payment Method"
+                      title="Add Payment Method"
                     >
                       <IonIcon icon={addOutline} />
-                      Add Payment Method
                     </IonButton>
                   </IonCol>
                 </IonRow>
@@ -1410,6 +1344,30 @@ const AddTransaction: React.FC = () => {
                 {/* Existing Recipient field */}
                 <IonRow>
                   <IonCol size="10">
+                    <SearchableFilterSelect
+                      label={
+                        transactionType === "expense" ? "Recipient" : "Payer"
+                      }
+                      placeholder={
+                        transactionType === "expense"
+                          ? "Select recipient"
+                          : "Select payer"
+                      }
+                      value={recipientId}
+                      options={sortedRecipients
+                        .filter((r) => r.name)
+                        .map((r) => ({
+                          id: r.id,
+                          name: r.name as string,
+                        }))}
+                      onIonChange={(v) => {
+                        setRecipientId(v);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          recipient: false,
+                        }));
+                      }}
+                    />
                     {fieldErrors.recipient && (
                       <IonText
                         color="danger"
@@ -1422,79 +1380,27 @@ const AddTransaction: React.FC = () => {
                         Required field
                       </IonText>
                     )}
-                    <IonSelect
-                      label={
-                        transactionType === "expense" ? "Recipient" : "Payer"
-                      }
-                      fill="outline"
-                      color={fieldErrors.recipient ? "danger" : undefined}
-                      labelPlacement="stacked"
-                      interface="popover"
-                      placeholder={
-                        transactionType === "expense"
-                          ? "Select recipient"
-                          : "Select payer"
-                      }
-                      value={recipientId}
-                      onIonChange={(e) => {
-                        const v = e.detail.value as string | number | undefined;
-                        const id =
-                          v == null
-                            ? undefined
-                            : typeof v === "number"
-                            ? v
-                            : Number(v);
-                        setRecipientId(id);
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          recipient: false,
-                        }));
-                      }}
-                    >
-                      {sortedRecipients.map((r) => (
-                        <IonSelectOption key={r.id} value={r.id}>
-                          {r.name}
-                        </IonSelectOption>
-                      ))}
-                      <IonButton
-                        slot="end"
-                        fill="clear"
-                        size="small"
-                        color="medium"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRecipientId(undefined);
-                        }}
-                        aria-label="Clear recipient"
-                        title="Clear recipient"
-                      >
-                        <IonIcon icon={closeCircleOutline} />
-                      </IonButton>
-                    </IonSelect>
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
+                      style={{ marginTop: "23px" }}
                       color="primary"
-                      expand="block"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowRecipientModal(true);
                       }}
                       aria-label={
                         transactionType === "expense"
-                          ? "Add recipient"
-                          : "Add payer"
+                          ? "Add Recipient"
+                          : "Add Payer"
                       }
                       title={
                         transactionType === "expense"
-                          ? "Add recipient"
-                          : "Add payer"
+                          ? "Add Recipient"
+                          : "Add Payer"
                       }
                     >
                       <IonIcon icon={addOutline} />
-                      {transactionType === "expense"
-                        ? "Add recipient"
-                        : "Add payer"}
                     </IonButton>
                   </IonCol>
                 </IonRow>
@@ -1502,6 +1408,29 @@ const AddTransaction: React.FC = () => {
                 {/* Existing Category field */}
                 <IonRow>
                   <IonCol size="10">
+                    <SearchableFilterSelect
+                      label="Category"
+                      placeholder="Select category"
+                      value={categoryId}
+                      options={sortedCategories
+                        .filter((c) => c.name)
+                        .map((c) => {
+                          const bucket = buckets.find(
+                            (b) => b.id === c.bucketId
+                          );
+                          return {
+                            id: c.id,
+                            name: `${c.name} - ${bucket?.name || "Unknown"}`,
+                          };
+                        })}
+                      onIonChange={(v) => {
+                        setCategoryId(v);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          category: false,
+                        }));
+                      }}
+                    />
                     {fieldErrors.category && (
                       <IonText
                         color="danger"
@@ -1514,116 +1443,49 @@ const AddTransaction: React.FC = () => {
                         Required field
                       </IonText>
                     )}
-                    <IonSelect
-                      label="Category"
-                      fill="outline"
-                      color={fieldErrors.category ? "danger" : undefined}
-                      labelPlacement="stacked"
-                      interface="popover"
-                      placeholder="Select category"
-                      value={categoryId}
-                      onIonChange={(e) => {
-                        const v = e.detail.value as string | number | undefined;
-                        setCategoryId(v == null ? undefined : Number(v));
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          category: false,
-                        }));
-                      }}
-                    >
-                      {buckets.map((b) => {
-                        const cats = sortedCategories.filter(
-                          (c) => c.bucketId === b.id
-                        );
-                        if (cats.length === 0) return null;
-                        return (
-                          <React.Fragment key={b.id}>
-                            <IonSelectOption
-                              value={-1}
-                              disabled
-                              style={{ fontWeight: 900, opacity: 0.9 }}
-                            >
-                              {b.name}
-                            </IonSelectOption>
-                            {cats.map((c) => (
-                              <IonSelectOption key={c.id} value={c.id}>
-                                {c.name}
-                              </IonSelectOption>
-                            ))}
-                          </React.Fragment>
-                        );
-                      })}
-
-                      {sortedCategories.filter((c) => !c.bucketId).length >
-                        0 && (
-                        <>
-                          <IonSelectOption
-                            value={-1}
-                            disabled
-                            style={{ fontWeight: 700, opacity: 0.9 }}
-                          >
-                            Unbucketed
-                          </IonSelectOption>
-                          {sortedCategories
-                            .filter((c) => !c.bucketId)
-                            .map((c) => (
-                              <IonSelectOption key={c.id} value={c.id}>
-                                {c.name}
-                              </IonSelectOption>
-                            ))}
-                        </>
-                      )}
-                      <IonButton
-                        slot="end"
-                        fill="clear"
-                        size="small"
-                        color="medium"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setCategoryId(undefined);
-                        }}
-                        aria-label="Clear category"
-                        title="Clear category"
-                      >
-                        <IonIcon icon={closeCircleOutline} />
-                      </IonButton>
-                    </IonSelect>
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
+                      style={{ marginTop: "23px" }}
                       color="primary"
-                      expand="block"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowCategoryModal(true);
                       }}
-                      aria-label="Add category"
-                      title="Add category"
+                      aria-label="Add Category"
+                      title="Add Category"
                     >
                       <IonIcon icon={addOutline} />
-                      Add category
                     </IonButton>
                   </IonCol>
                 </IonRow>
-
                 {/* Existing Payment Method field - using new component */}
                 <IonRow>
                   <IonCol size="10">
-                    <PaymentMethodSelect
+                    <SearchableFilterSelect
                       label="Payment Method"
                       placeholder="Select payment method"
                       value={paymentMethodId}
-                      onChange={(v) => {
+                      options={sortedPaymentMethods
+                        .filter((pm) => pm.name)
+                        .map((pm) => {
+                          const account = accounts.find(
+                            (a) => a.id === pm.accountId
+                          );
+                          return {
+                            id: pm.id,
+                            name: `${account?.name || "Unknown"} - ${
+                              pm.name as string
+                            }`,
+                          };
+                        })}
+                      onIonChange={(v) => {
                         setPaymentMethodId(v);
                         setFieldErrors((prev) => ({
                           ...prev,
                           paymentMethod: false,
                         }));
                       }}
-                      onClear={() => setPaymentMethodId(undefined)}
-                      accounts={accounts}
-                      paymentMethods={sortedPaymentMethods}
-                      error={fieldErrors.paymentMethod}
                     />
                     {fieldErrors.paymentMethod && (
                       <IonText
@@ -1640,17 +1502,16 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                   <IonCol size="2">
                     <IonButton
+                      style={{ marginTop: "23px" }}
                       color="primary"
-                      expand="block"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowPaymentMethodModal(true);
                       }}
-                      aria-label="Add payment method"
-                      title="Add payment method"
+                      aria-label="Add Payment Method"
+                      title="Add Payment Method"
                     >
                       <IonIcon icon={addOutline} />
-                      Add payment method
                     </IonButton>
                   </IonCol>
                 </IonRow>

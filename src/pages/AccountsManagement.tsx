@@ -345,9 +345,10 @@ const AccountsManagement: React.FC = () => {
   };
 
   // NEW: payment methods that have no accountId (null / undefined)
-  const unlinkedPaymentMethods = paymentMethods.filter(
-    (pm) => pm.accountId == null
-  );
+  const unlinkedPaymentMethods = paymentMethods.filter((pm) => {
+    const accountExists = accounts.some((a) => a.id === pm.accountId);
+    return !accountExists; // Show payment methods with no matching account
+  });
 
   return (
     <IonPage>
