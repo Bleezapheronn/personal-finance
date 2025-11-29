@@ -1,0 +1,85 @@
+/* ===== FORM LABELS ===== */
+.form-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  opacity: 0.7;
+  display: block;
+  margin-bottom: 8px;
+  text-transform: capitalize;
+}
+
+/* ===== INPUT WRAPPERS ===== */
+.form-input-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ===== BASE INPUT STYLING - Match SearchableFilterSelect ===== */
+ion-input.form-input,
+ion-select.form-input,
+ion-textarea.form-input {
+  --padding-start: 12px;
+  --padding-end: 12px;
+  --padding-top: 12px;
+  --padding-bottom: 12px;
+  --background: var(--ion-background-color);
+  --border-radius: 4px;
+  border: 1px solid var(--ion-color-medium);
+  border-radius: 4px;
+}
+
+/* Focused state */
+ion-input.form-input:focus,
+ion-select.form-input:focus,
+ion-textarea.form-input:focus {
+  border-color: var(--ion-color-primary);
+  --highlight-color-focused: var(--ion-color-primary);
+}
+
+/* ===== ERROR STATES ===== */
+.error-message {
+  font-size: 0.75rem;
+  color: var(--ion-color-danger);
+  display: block;
+  margin-top: 4px;
+}
+
+ion-input.input-error,
+ion-select.input-error,
+ion-textarea.input-error {
+  border-color: var(--ion-color-danger);
+  --highlight-color-invalid: var(--ion-color-danger);
+}
+
+/* ===== LAYOUT GRIDS ===== */
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.form-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+.form-row-with-button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+@media (max-width: 576px) {
+  .form-grid-2,
+  .form-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== BUTTON ALIGNMENT ===== */
+.form-button-spacer {
+  margin-top: 23px;
+}

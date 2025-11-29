@@ -73,6 +73,7 @@ export interface Recipient {
   tillNumber?: string;
   paybill?: string;
   accountNumber?: string;
+  description?: string; // NEW: optional description field
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;

@@ -77,121 +77,107 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      <label
-        style={{
-          fontSize: "0.75rem",
-          fontWeight: "500",
-          opacity: 0.7,
-          display: "block",
-          marginBottom: "8px",
-          textTransform: "capitalize",
-        }}
-      >
-        {label}
-      </label>
-      <div ref={containerRef} style={{ position: "relative" }}>
-        {/* Closed State - Looks like a native select */}
-        {!isOpen && (
-          <div
-            onClick={handleOpen}
+    <div ref={containerRef} style={{ position: "relative" }}>
+      {/* Closed State - Looks like a native select */}
+      {!isOpen && (
+        <div
+          onClick={handleOpen}
+          style={{
+            padding: "12px",
+            border: "1px solid var(--ion-color-medium)",
+            borderRadius: "4px",
+            backgroundColor: "var(--ion-background-color)",
+            cursor: "pointer",
+            minHeight: "44px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: "0.95rem",
+            color: selectedOption ? "inherit" : "var(--ion-color-medium)",
+          }}
+        >
+          <span>{selectedOption ? selectedOption.name : placeholder}</span>
+          <IonIcon
+            icon={chevronDown}
             style={{
-              padding: "12px",
-              border: "1px solid var(--ion-color-medium)",
-              borderRadius: "4px",
-              backgroundColor: "var(--ion-background-color)",
-              cursor: "pointer",
-              minHeight: "44px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              fontSize: "0.95rem",
-              color: selectedOption ? "inherit" : "var(--ion-color-medium)",
+              fontSize: "1.2rem",
+              opacity: 0.7,
+              transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 0.2s",
             }}
-          >
-            <span>{selectedOption ? selectedOption.name : placeholder}</span>
-            <IonIcon
-              icon={chevronDown}
+          />
+        </div>
+      )}
+
+      {/* Open State - Shows search + filtered options */}
+      {isOpen && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            backgroundColor: "var(--ion-background-color)",
+            border: "1px solid var(--ion-color-medium)",
+            borderRadius: "4px",
+            minWidth: "100%",
+            zIndex: 1000,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            overflow: "hidden",
+          }}
+        >
+          {/* Searchbar at top */}
+          <div style={{ borderBottom: "1px solid var(--ion-color-medium)" }}>
+            <IonSearchbar
+              ref={searchbarRef}
+              value={searchText}
+              onIonInput={(e) => setSearchText(e.detail.value || "")}
+              placeholder={`Search ${label.toLowerCase()}...`}
+              animated
               style={{
-                fontSize: "1.2rem",
-                opacity: 0.7,
-                transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
-                transition: "transform 0.2s",
+                padding: "0",
               }}
+              className="searchable-filter-searchbar"
             />
           </div>
-        )}
 
-        {/* Open State - Shows search + filtered options */}
-        {isOpen && (
-          <div
+          {/* Filtered Options List */}
+          <IonList
             style={{
-              position: "absolute",
-              top: "100%",
-              left: 0,
-              right: 0,
-              backgroundColor: "var(--ion-background-color)",
-              border: "1px solid var(--ion-color-medium)",
-              borderRadius: "4px",
-              minWidth: "100%",
-              zIndex: 1000,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-              overflow: "hidden",
+              maxHeight: "300px",
+              overflowY: "auto",
+              padding: "0",
+              margin: "0",
             }}
           >
-            {/* Searchbar at top */}
-            <div style={{ borderBottom: "1px solid var(--ion-color-medium)" }}>
-              <IonSearchbar
-                ref={searchbarRef}
-                value={searchText}
-                onIonInput={(e) => setSearchText(e.detail.value || "")}
-                placeholder={`Search ${label.toLowerCase()}...`}
-                animated
-                style={{
-                  padding: "0",
-                }}
-                className="searchable-filter-searchbar"
-              />
-            </div>
-
-            {/* Filtered Options List */}
-            <IonList
-              style={{
-                maxHeight: "300px",
-                overflowY: "auto",
-                padding: "0",
-                margin: "0",
-              }}
-            >
-              {filteredOptions.length > 0 ? (
-                filteredOptions.map((option) => (
-                  <IonItem
-                    key={option.id}
-                    button
-                    onClick={() => handleSelect(option.id)}
-                    detail={false}
-                    style={{
-                      backgroundColor:
-                        value === option.id
-                          ? "var(--ion-color-primary-tint)"
-                          : "transparent",
-                      borderBottom: "1px solid var(--ion-color-light)",
-                    }}
-                  >
-                    <IonLabel>{option.name}</IonLabel>
-                  </IonItem>
-                ))
-              ) : (
-                <IonItem disabled>
-                  <IonLabel style={{ textAlign: "center", width: "100%" }}>
-                    No results found
-                  </IonLabel>
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((option) => (
+                <IonItem
+                  key={option.id}
+                  button
+                  onClick={() => handleSelect(option.id)}
+                  detail={false}
+                  style={{
+                    backgroundColor:
+                      value === option.id
+                        ? "var(--ion-color-primary-tint)"
+                        : "transparent",
+                    borderBottom: "1px solid var(--ion-color-light)",
+                  }}
+                >
+                  <IonLabel>{option.name}</IonLabel>
                 </IonItem>
-              )}
-            </IonList>
-          </div>
-        )}
-      </div>
+              ))
+            ) : (
+              <IonItem disabled>
+                <IonLabel style={{ textAlign: "center", width: "100%" }}>
+                  No results found
+                </IonLabel>
+              </IonItem>
+            )}
+          </IonList>
+        </div>
+      )}
     </div>
   );
 };

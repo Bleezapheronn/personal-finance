@@ -411,6 +411,118 @@ const BucketsManagement: React.FC = () => {
     }
   };
 
+  /**
+   * checkBucketUsage - Determines if bucket has been used in transactions
+   */
+  const checkBucketUsage = async (bucketId: number): Promise<boolean> => {
+    try {
+      // Get all categories for this bucket
+      const bucketCategories = categories.filter(
+        (c) => c.bucketId === bucketId
+      );
+
+      // Check if any of these categories are used in transactions
+      const transactions = await db.transactions.toArray();
+      return transactions.some((txn) =>
+        bucketCategories.some((cat) => cat.id === txn.categoryId)
+      );
+    } catch (error) {
+      console.error("Error checking bucket usage:", error);
+      return false;
+    }
+  };
+
+  /**
+   * initiateBucketDelete - Check bucket usage and show appropriate alert
+   */
+  const initiateBucketDelete = async (bucket: Bucket) => {
+    try {
+      const isUsed = await checkBucketUsage(bucket.id!);
+
+      if (isUsed) {
+        // Show deactivation modal
+        setDeleteBucketId(-bucket.id!); // Use negative ID to indicate deactivation mode
+      } else {
+        // Show simple delete confirmation
+        setDeleteBucketId(bucket.id!);
+      }
+    } catch (error) {
+      console.error("Error checking bucket usage:", error);
+    }
+  };
+
+  /**
+   * handleDeactivateBucket - Deactivates a bucket instead of deleting
+   */
+  const handleDeactivateBucket = async (bucketId: number) => {
+    try {
+      await db.buckets.update(bucketId, {
+        isActive: false,
+        updatedAt: new Date(),
+      } as Partial<Bucket>);
+      setDeleteBucketId(null);
+      setToastMessage("Bucket deactivated successfully!");
+      setShowToast(true);
+      await fetchBuckets();
+    } catch (error) {
+      console.error("Error deactivating bucket:", error);
+      setToastMessage("Failed to deactivate bucket");
+      setShowToast(true);
+    }
+  };
+
+  /**
+   * checkCategoryUsage - Determines if category has been used in transactions
+   */
+  const checkCategoryUsage = async (categoryId: number): Promise<boolean> => {
+    try {
+      const transactions = await db.transactions.toArray();
+      return transactions.some((txn) => txn.categoryId === categoryId);
+    } catch (error) {
+      console.error("Error checking category usage:", error);
+      return false;
+    }
+  };
+
+  /**
+   * initiateCategoryDelete - Check category usage and show appropriate alert
+   */
+  const initiateCategoryDelete = async (category: Category) => {
+    try {
+      const isUsed = await checkCategoryUsage(category.id!);
+
+      if (isUsed) {
+        // Show deactivation modal
+        setDeleteCategoryId(-category.id!); // Use negative ID to indicate deactivation mode
+      } else {
+        // Show simple delete confirmation
+        setDeleteCategoryId(category.id!);
+      }
+    } catch (error) {
+      console.error("Error checking category usage:", error);
+    }
+  };
+
+  /**
+   * handleDeactivateCategory - Deactivates a category instead of deleting
+   */
+  const handleDeactivateCategory = async (categoryId: number) => {
+    try {
+      await db.categories.update(categoryId, {
+        isActive: false,
+        updatedAt: new Date(),
+      } as Partial<Category>);
+      setDeleteCategoryId(null);
+      setToastMessage("Category deactivated successfully!");
+      setShowToast(true);
+      await fetchCategories();
+    } catch (error) {
+      console.error("Error deactivating category:", error);
+      setToastMessage("Failed to deactivate category");
+      setShowToast(true);
+    }
+  };
+
   // ========== Render ==========
   return (
     <IonPage>
@@ -439,6 +551,7 @@ const BucketsManagement: React.FC = () => {
           >
             {buckets.map((b) => {
               const bucketCategories = getCategoriesForBucket(b.id);
+              const isInactiveBucket = b.isActive === false;
               return (
                 <IonAccordion key={b.id} value={`bucket-${b.id}`}>
                   <IonItem slot="header">
@@ -454,7 +567,11 @@ const BucketsManagement: React.FC = () => {
                         {/* Bucket info in center/expand */}
                         <IonCol>
                           <IonLabel style={{ lineHeight: 1 }}>
-                            <strong>{b.name}</strong>
+                            <strong
+                              style={{ opacity: isInactiveBucket ? 0.6 : 1 }}
+                            >
+                              {b.name}
+                            </strong>
                             <p
                               style={{
                                 fontSize: "0.85rem",
@@ -475,7 +592,7 @@ const BucketsManagement: React.FC = () => {
                           <IonButton
                             fill="clear"
                             size="small"
-                            color="light"
+                            color="secondary"
                             onClick={(e) => {
                               e.stopPropagation();
                               resetCategoryForm();
@@ -491,7 +608,7 @@ const BucketsManagement: React.FC = () => {
                           <IonButton
                             fill="clear"
                             size="small"
-                            color="light"
+                            color="secondary"
                             onClick={(e) => {
                               e.stopPropagation();
                               editBucket(b);
@@ -506,7 +623,7 @@ const BucketsManagement: React.FC = () => {
                           <IonButton
                             fill="clear"
                             size="small"
-                            color="light"
+                            color={b.isActive ? "success" : "medium"}
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleBucketActive(b);
@@ -537,7 +654,7 @@ const BucketsManagement: React.FC = () => {
                             color="danger"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setDeleteBucketId(b.id ?? null);
+                              initiateBucketDelete(b);
                             }}
                             aria-label={`Delete ${b.name}`}
                             title="Delete"
@@ -556,66 +673,73 @@ const BucketsManagement: React.FC = () => {
                       </div>
                     ) : (
                       <IonList>
-                        {getCategoriesForBucket(b.id).map((c) => (
-                          <IonItem key={c.id}>
-                            <IonLabel>
-                              {c.name}
-                              {c.description && (
-                                <div style={{ fontSize: 12, color: "#666" }}>
-                                  {c.description}
-                                </div>
-                              )}
-                            </IonLabel>
+                        {getCategoriesForBucket(b.id).map((c) => {
+                          const isInactiveCategory = c.isActive === false;
+                          return (
+                            <IonItem key={c.id}>
+                              <IonLabel
+                                style={{
+                                  opacity: isInactiveCategory ? 0.6 : 1,
+                                }}
+                              >
+                                {c.name}
+                                {c.description && (
+                                  <div style={{ fontSize: 12, color: "#666" }}>
+                                    {c.description}
+                                  </div>
+                                )}
+                              </IonLabel>
 
-                            <IonButton
-                              slot="end"
-                              color="light"
-                              fill="clear"
-                              onClick={() => {
-                                editCategory(c);
-                                setShowCategoryModal(true);
-                              }}
-                              aria-label={`Edit category ${c.name}`}
-                              title="Edit"
-                            >
-                              <IonIcon icon={createOutline} />
-                            </IonButton>
-                            <IonButton
-                              slot="end"
-                              color="light"
-                              fill="clear"
-                              onClick={() => toggleCategoryActive(c)}
-                              aria-label={
-                                c.isActive
-                                  ? `Deactivate ${c.name}`
-                                  : `Activate ${c.name}`
-                              }
-                              title={
-                                c.isActive
-                                  ? "Active (click to deactivate)"
-                                  : "Inactive (click to activate)"
-                              }
-                            >
-                              <IonIcon
-                                icon={
+                              <IonButton
+                                slot="end"
+                                color="secondary"
+                                fill="clear"
+                                onClick={() => {
+                                  editCategory(c);
+                                  setShowCategoryModal(true);
+                                }}
+                                aria-label={`Edit category ${c.name}`}
+                                title="Edit"
+                              >
+                                <IonIcon icon={createOutline} />
+                              </IonButton>
+                              <IonButton
+                                slot="end"
+                                color={c.isActive ? "success" : "medium"}
+                                fill="clear"
+                                onClick={() => toggleCategoryActive(c)}
+                                aria-label={
                                   c.isActive
-                                    ? checkmarkCircleOutline
-                                    : closeCircleOutline
+                                    ? `Deactivate ${c.name}`
+                                    : `Activate ${c.name}`
                                 }
-                              />
-                            </IonButton>
-                            <IonButton
-                              slot="end"
-                              color="danger"
-                              fill="clear"
-                              onClick={() => setDeleteCategoryId(c.id ?? null)}
-                              aria-label={`Delete category ${c.name}`}
-                              title="Delete"
-                            >
-                              <IonIcon icon={trashOutline} />
-                            </IonButton>
-                          </IonItem>
-                        ))}
+                                title={
+                                  c.isActive
+                                    ? "Active (click to deactivate)"
+                                    : "Inactive (click to activate)"
+                                }
+                              >
+                                <IonIcon
+                                  icon={
+                                    c.isActive
+                                      ? checkmarkCircleOutline
+                                      : closeCircleOutline
+                                  }
+                                />
+                              </IonButton>
+                              <IonButton
+                                slot="end"
+                                color="danger"
+                                fill="clear"
+                                onClick={() => initiateCategoryDelete(c)}
+                                aria-label={`Delete category ${c.name}`}
+                                title="Delete"
+                              >
+                                <IonIcon icon={trashOutline} />
+                              </IonButton>
+                            </IonItem>
+                          );
+                        })}
                       </IonList>
                     )}
                   </div>
@@ -875,8 +999,9 @@ const BucketsManagement: React.FC = () => {
           isOpen={showToast}
           onDidDismiss={() => setShowToast(false)}
           message={toastMessage}
-          duration={3000}
-          position="bottom"
+          duration={2000}
+          position="top"
+          color="success"
         />
 
         <IonAlert
@@ -889,7 +1014,30 @@ const BucketsManagement: React.FC = () => {
 
         {/* Delete bucket confirmation */}
         <IonAlert
-          isOpen={deleteBucketId !== null}
+          isOpen={deleteBucketId !== null && deleteBucketId < 0}
+          onDidDismiss={() => setDeleteBucketId(null)}
+          header="Cannot Delete Used Bucket"
+          message={`This bucket has been used in transactions and cannot be deleted. Would you like to deactivate it instead? Deactivated buckets will no longer appear in dropdowns but will remain in your records.`}
+          buttons={[
+            {
+              text: "Cancel",
+              role: "cancel",
+            },
+            {
+              text: "Deactivate",
+              role: "destructive",
+              handler: () => {
+                if (deleteBucketId) {
+                  handleDeactivateBucket(Math.abs(deleteBucketId));
+                }
+              },
+            },
+          ]}
+        />
+
+        {/* ALERT: Delete unused bucket */}
+        <IonAlert
+          isOpen={deleteBucketId !== null && deleteBucketId > 0}
           onDidDismiss={() => setDeleteBucketId(null)}
           header="Confirm Delete"
           message="Are you sure you want to delete this bucket? All associated categories will also be deleted."
@@ -910,9 +1058,32 @@ const BucketsManagement: React.FC = () => {
           ]}
         />
 
-        {/* Delete category confirmation */}
+        {/* ALERT: Category has been used in transactions */}
         <IonAlert
-          isOpen={deleteCategoryId !== null}
+          isOpen={deleteCategoryId !== null && deleteCategoryId < 0}
+          onDidDismiss={() => setDeleteCategoryId(null)}
+          header="Cannot Delete Used Category"
+          message={`This category has been used in transactions and cannot be deleted. Would you like to deactivate it instead? Deactivated categories will no longer appear in dropdowns but will remain in your records.`}
+          buttons={[
+            {
+              text: "Cancel",
+              role: "cancel",
+            },
+            {
+              text: "Deactivate",
+              role: "destructive",
+              handler: () => {
+                if (deleteCategoryId) {
+                  handleDeactivateCategory(Math.abs(deleteCategoryId));
+                }
+              },
+            },
+          ]}
+        />
+
+        {/* ALERT: Delete unused category */}
+        <IonAlert
+          isOpen={deleteCategoryId !== null && deleteCategoryId > 0}
           onDidDismiss={() => setDeleteCategoryId(null)}
           header="Confirm Delete"
           message="Are you sure you want to delete this category?"

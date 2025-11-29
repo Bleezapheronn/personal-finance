@@ -16,9 +16,9 @@ export interface ValidationErrors {
   time?: boolean;
   amount?: boolean;
   description?: boolean;
+  recipient?: boolean;
   category?: boolean;
   paymentMethod?: boolean;
-  recipient?: boolean;
   transferRecipient?: boolean;
   transferToPaymentMethod?: boolean;
 }
@@ -32,127 +32,249 @@ export interface ValidationResult {
 /**
  * Validates the transaction form data
  */
-export const validateTransactionForm = (
-  formData: TransactionFormData
-): ValidationResult => {
+export const validateTransactionForm = (data: {
+  selectedDate: string;
+  selectedTime: string;
+  amount: string;
+  description: string;
+  categoryId: number | undefined;
+  paymentMethodId: number | undefined;
+  recipientId: number | undefined;
+  transferRecipientId?: number | undefined;
+  transferToPaymentMethodId?: number | undefined;
+  transactionType: "income" | "expense" | "transfer";
+}): ValidationResult => {
   const errors: ValidationErrors = {};
 
-  // Basic required fields
-  if (!formData.selectedDate) errors.date = true;
-  if (!formData.selectedTime) errors.time = true;
-  if (!formData.amount) errors.amount = true;
-  if (!formData.description || !formData.description.trim())
+  // Date validation
+  if (!data.selectedDate || data.selectedDate.trim() === "") {
+    errors.date = true;
+  }
+
+  // Time validation
+  if (!data.selectedTime || data.selectedTime.trim() === "") {
+    errors.time = true;
+  }
+
+  // Amount validation
+  if (!data.amount || data.amount.trim() === "") {
+    errors.amount = true;
+  } else {
+    const numAmount = parseFloat(data.amount);
+    if (isNaN(numAmount) || numAmount <= 0) {
+      errors.amount = true;
+    }
+  }
+
+  // Description validation
+  if (!data.description || data.description.trim() === "") {
     errors.description = true;
+  }
 
-  // Transfer-specific validation
-  if (formData.transactionType === "transfer") {
-    if (formData.categoryId == null) errors.category = true;
-    if (formData.recipientId == null) errors.recipient = true;
-    if (formData.transferRecipientId == null) errors.transferRecipient = true;
-    if (formData.paymentMethodId == null) errors.paymentMethod = true;
-    if (formData.transferToPaymentMethodId == null)
+  // Category validation
+  if (!data.categoryId) {
+    errors.category = true;
+  }
+
+  // Payment method validation
+  if (!data.paymentMethodId) {
+    errors.paymentMethod = true;
+  }
+
+  // Recipient validation
+  if (!data.recipientId) {
+    errors.recipient = true;
+  }
+
+  // Transfer-specific validations
+  if (data.transactionType === "transfer") {
+    if (!data.transferRecipientId) {
+      errors.transferRecipient = true;
+    }
+
+    if (!data.transferToPaymentMethodId) {
       errors.transferToPaymentMethod = true;
+    }
 
-    if (formData.paymentMethodId === formData.transferToPaymentMethodId) {
+    // Ensure different payment methods for transfer
+    if (
+      data.paymentMethodId &&
+      data.transferToPaymentMethodId &&
+      data.paymentMethodId === data.transferToPaymentMethodId
+    ) {
+      errors.transferToPaymentMethod = true;
       return {
         isValid: false,
         errors,
         errorMessage:
-          "Source and destination payment methods must be different.",
+          "Transfer must use different payment methods for source and destination.",
       };
     }
-  } else {
-    // Regular transaction validation (income/expense)
-    if (formData.categoryId == null) errors.category = true;
-    if (formData.paymentMethodId == null) errors.paymentMethod = true;
-    if (formData.recipientId == null) errors.recipient = true;
+
+    // Ensure different recipients for transfer
+    if (
+      data.recipientId &&
+      data.transferRecipientId &&
+      data.recipientId === data.transferRecipientId
+    ) {
+      errors.transferRecipient = true;
+      return {
+        isValid: false,
+        errors,
+        errorMessage: "Transfer payer and recipient must be different.",
+      };
+    }
   }
 
   const isValid = Object.keys(errors).length === 0;
+  const errorMessage = isValid
+    ? undefined
+    : "Please fill in all required fields correctly.";
 
-  return {
-    isValid,
-    errors,
-    errorMessage: isValid ? undefined : "Please fill in all required fields.",
-  };
+  return { isValid, errors, errorMessage };
 };
 
 /**
  * Validates that the date and time are not in the future
  */
-export const validateDateTime = (
-  dateTimeString: string
-): { isValid: boolean; errorMessage?: string } => {
-  const selectedDateTime = new Date(dateTimeString);
-  const now = new Date();
+export const validateDateTime = (dateTimeString: string): ValidationResult => {
+  try {
+    const date = new Date(dateTimeString);
 
-  if (isNaN(selectedDateTime.getTime())) {
+    if (isNaN(date.getTime())) {
+      return {
+        isValid: false,
+        errors: { date: true, time: true },
+        errorMessage: "Invalid date or time format.",
+      };
+    }
+
+    // Optional: Check if date is not in the future
+    const now = new Date();
+    if (date > now) {
+      return {
+        isValid: false,
+        errors: { date: true, time: true },
+        errorMessage: "Transaction date cannot be in the future.",
+      };
+    }
+
+    return { isValid: true, errors: {} };
+  } catch {
     return {
       isValid: false,
-      errorMessage: "Invalid date or time format.",
+      errors: { date: true, time: true },
+      errorMessage: "Invalid date or time.",
     };
   }
-
-  if (selectedDateTime > now) {
-    return {
-      isValid: false,
-      errorMessage: "Date and time cannot be in the future.",
-    };
-  }
-
-  return { isValid: true };
 };
 
 /**
  * Validates that the amount is a positive number
  */
-export const validateAmount = (
-  amount: string
-): { isValid: boolean; errorMessage?: string } => {
-  const numericAmount = parseFloat(amount);
-
-  if (isNaN(numericAmount)) {
+export const validateAmount = (amount: string): ValidationResult => {
+  if (!amount || amount.trim() === "") {
     return {
       isValid: false,
+      errors: { amount: true },
+      errorMessage: "Amount is required.",
+    };
+  }
+
+  const numAmount = parseFloat(amount);
+
+  if (isNaN(numAmount)) {
+    return {
+      isValid: false,
+      errors: { amount: true },
       errorMessage: "Amount must be a valid number.",
     };
   }
 
-  if (numericAmount <= 0) {
+  if (numAmount <= 0) {
     return {
       isValid: false,
-      errorMessage: "Amount must be a positive number.",
+      errors: { amount: true },
+      errorMessage: "Amount must be greater than 0.",
     };
   }
 
-  return { isValid: true };
+  if (numAmount > 999999999.99) {
+    return {
+      isValid: false,
+      errors: { amount: true },
+      errorMessage: "Amount is too large.",
+    };
+  }
+
+  return { isValid: true, errors: {} };
 };
 
 /**
- * Validates exchange rate (if provided)
+ * Validates transaction cost (if provided)
  */
-export const validateExchangeRate = (
-  exchangeRate: string
-): { isValid: boolean; errorMessage?: string } => {
-  if (!exchangeRate || exchangeRate.trim() === "") {
-    return { isValid: true }; // Optional field
+export const validateTransactionCost = (cost: string): ValidationResult => {
+  if (!cost || cost.trim() === "") {
+    // Transaction cost is optional
+    return { isValid: true, errors: {} };
   }
 
-  const numericRate = parseFloat(exchangeRate);
+  const numCost = parseFloat(cost);
 
-  if (isNaN(numericRate)) {
+  if (isNaN(numCost)) {
     return {
       isValid: false,
-      errorMessage: "Exchange rate must be a valid number.",
+      errors: {},
+      errorMessage: "Transaction cost must be a valid number.",
     };
   }
 
-  if (numericRate <= 0) {
+  if (numCost < 0) {
     return {
       isValid: false,
-      errorMessage: "Exchange rate must be a positive number.",
+      errors: {},
+      errorMessage: "Transaction cost cannot be negative.",
     };
   }
 
-  return { isValid: true };
+  if (numCost > 999999.99) {
+    return {
+      isValid: false,
+      errors: {},
+      errorMessage: "Transaction cost is too large.",
+    };
+  }
+
+  return { isValid: true, errors: {} };
+};
+
+/**
+ * Validates description length and content
+ */
+export const validateDescription = (description: string): ValidationResult => {
+  if (!description || description.trim() === "") {
+    return {
+      isValid: false,
+      errors: { description: true },
+      errorMessage: "Description is required.",
+    };
+  }
+
+  if (description.trim().length < 2) {
+    return {
+      isValid: false,
+      errors: { description: true },
+      errorMessage: "Description must be at least 2 characters.",
+    };
+  }
+
+  if (description.length > 500) {
+    return {
+      isValid: false,
+      errors: { description: true },
+      errorMessage: "Description cannot exceed 500 characters.",
+    };
+  }
+
+  return { isValid: true, errors: {} };
 };

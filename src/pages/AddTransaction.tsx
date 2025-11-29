@@ -10,8 +10,6 @@ import {
   IonContent,
   IonLabel,
   IonInput,
-  IonSelect,
-  IonSelectOption,
   IonButton,
   IonText,
   IonGrid,
@@ -39,6 +37,8 @@ import {
   validateTransactionForm,
   validateDateTime,
   validateAmount,
+  validateDescription,
+  validateTransactionCost,
   ValidationErrors,
 } from "../utils/transactionValidation";
 import { AddRecipientModal } from "../components/AddRecipientModal";
@@ -161,32 +161,23 @@ const AddTransaction: React.FC = () => {
 
         if (!isMounted) return;
 
-        const activeAccounts = a.filter((acc) => acc.isActive !== false); // Show if isActive is true OR undefined
-        const activeBuckets = b.filter((bkt) => bkt.isActive);
-        const activeCategories = c.filter((cat) => cat.isActive);
-
-        // Debug: log all payment methods
-        console.log("All payment methods from DB:", pm);
-        console.log("Active accounts:", activeAccounts);
+        const activeAccounts = a.filter((acc) => acc.isActive !== false);
+        const activeBuckets = b.filter((bkt) => bkt.isActive !== false);
+        const activeCategories = c.filter((cat) => cat.isActive !== false);
 
         // Filter payment methods: active AND account exists
         const activePaymentMethods = pm.filter((pmeth) => {
           const accountExists = activeAccounts.some(
             (acc) => acc.id === pmeth.accountId
           );
-          console.log(
-            `PM: ${pmeth.name}, isActive: ${pmeth.isActive}, accountId: ${pmeth.accountId}, accountExists: ${accountExists}`
-          );
-          return pmeth.isActive && accountExists;
+          return pmeth.isActive !== false && accountExists;
         });
 
-        console.log("Filtered payment methods:", activePaymentMethods);
-
-        const activeRecipients = r.filter((rec) => rec.isActive);
+        const activeRecipients = r.filter((rec) => rec.isActive !== false);
 
         setBuckets(activeBuckets);
         setAccounts(activeAccounts);
-        setSmsTemplates(allTemplates.filter((t) => t.isActive));
+        setSmsTemplates(allTemplates.filter((t) => t.isActive !== false));
 
         const transactions = await db.transactions.toArray();
 
@@ -513,20 +504,40 @@ const AddTransaction: React.FC = () => {
     const dateTimeValidation = validateDateTime(dateTimeString);
 
     if (!dateTimeValidation.isValid) {
+      setFieldErrors(dateTimeValidation.errors);
       setErrorMsg(dateTimeValidation.errorMessage || "Invalid date/time.");
       return;
     }
-
-    const selectedDateTime = new Date(dateTimeString);
 
     // Validate amount
     const amountValidation = validateAmount(amount);
 
     if (!amountValidation.isValid) {
+      setFieldErrors(amountValidation.errors);
       setErrorMsg(amountValidation.errorMessage || "Invalid amount.");
       return;
     }
 
+    // Validate description
+    const descriptionValidation = validateDescription(description);
+
+    if (!descriptionValidation.isValid) {
+      setFieldErrors(descriptionValidation.errors);
+      setErrorMsg(descriptionValidation.errorMessage || "Invalid description.");
+      return;
+    }
+
+    // Validate transaction cost (if provided)
+    if (transactionCost) {
+      const costValidation = validateTransactionCost(transactionCost);
+      if (!costValidation.isValid) {
+        setErrorMsg(costValidation.errorMessage || "Invalid transaction cost.");
+        return;
+      }
+    }
+
+    // Rest of your submit logic continues...
+    const selectedDateTime = new Date(dateTimeString);
     const numericAmountRaw = parseFloat(amount);
 
     const parsedCost = transactionCost ? parseFloat(transactionCost) : NaN;
@@ -585,12 +596,6 @@ const AddTransaction: React.FC = () => {
           transferPairId: editingTransaction?.id || undefined,
         };
 
-        console.log("=== TRANSFER UPDATE/CREATE ===");
-        console.log("Is Edit Mode:", isEditMode);
-        console.log("Editing Transaction ID:", editingTransaction?.id);
-        console.log("Outgoing TX:", outgoingTx);
-        console.log("Incoming TX:", incomingTx);
-
         if (
           isEditMode &&
           editingTransaction?.id &&
@@ -606,9 +611,6 @@ const AddTransaction: React.FC = () => {
             editingTransaction.amount < 0
               ? editingTransaction.transferPairId
               : editingTransaction.id;
-
-          console.log("Updating Outgoing ID:", outgoingTxId);
-          console.log("Updating Incoming ID:", incomingTxId);
 
           await db.transactions.update(outgoingTxId, outgoingTx);
           await db.transactions.update(incomingTxId, incomingTx);
@@ -626,10 +628,6 @@ const AddTransaction: React.FC = () => {
           await db.transactions.update(incomingId, {
             transferPairId: outgoingId,
           });
-
-          console.log("=== TRANSFER PAIR CREATED ===");
-          console.log("Outgoing ID:", outgoingId);
-          console.log("Incoming ID:", incomingId);
 
           setSuccessMsg("Transfer transaction added successfully!");
         }
@@ -844,6 +842,37 @@ const AddTransaction: React.FC = () => {
     transactionType,
   ]);
 
+  // Real-time validation feedback
+  useEffect(() => {
+    if (fieldErrors.amount && amount) {
+      const validation = validateAmount(amount);
+      if (validation.isValid) {
+        setFieldErrors((prev) => ({ ...prev, amount: false }));
+      }
+    }
+  }, [amount, fieldErrors.amount]);
+
+  useEffect(() => {
+    if (fieldErrors.description && description) {
+      const validation = validateDescription(description);
+      if (validation.isValid) {
+        setFieldErrors((prev) => ({ ...prev, description: false }));
+      }
+    }
+  }, [description, fieldErrors.description]);
+
+  useEffect(() => {
+    if (fieldErrors.date && selectedDate) {
+      setFieldErrors((prev) => ({ ...prev, date: false }));
+    }
+  }, [selectedDate, fieldErrors.date]);
+
+  useEffect(() => {
+    if (fieldErrors.time && selectedTime) {
+      setFieldErrors((prev) => ({ ...prev, time: false }));
+    }
+  }, [selectedTime, fieldErrors.time]);
+
   return (
     <IonPage>
       <IonHeader>
@@ -913,158 +942,149 @@ const AddTransaction: React.FC = () => {
               </IonCol>
             </IonRow>
             <IonRow>
-              <IonCol size="2">
-                <IonInput
-                  label="Date"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  type="date"
-                  color={fieldErrors.date ? "danger" : undefined}
-                  value={selectedDate}
-                  onIonChange={(e) => {
-                    setSelectedDate(e.detail.value ?? "");
-                    setFieldErrors((prev) => ({ ...prev, date: false }));
-                  }}
-                />
-                {fieldErrors.date && (
-                  <IonText
-                    color="danger"
-                    style={{
-                      fontSize: "0.75rem",
-                      display: "block",
-                      marginTop: "4px",
+              <IonCol size="3">
+                <div className="form-input-wrapper">
+                  <label className="form-label">Date</label>
+                  <IonInput
+                    className="form-input"
+                    type="date"
+                    value={selectedDate}
+                    onIonChange={(e) => {
+                      setSelectedDate(e.detail.value ?? "");
+                      setFieldErrors((prev) => ({ ...prev, date: false }));
                     }}
-                  >
-                    Required field
-                  </IonText>
-                )}
+                  />
+                  {fieldErrors.date && (
+                    <span className="error-message">Required field</span>
+                  )}
+                </div>
               </IonCol>
               <IonCol size="2">
-                <IonInput
-                  label="Time"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  type="time"
-                  color={fieldErrors.time ? "danger" : undefined}
-                  value={selectedTime}
-                  onIonChange={(e) => {
-                    setSelectedTime(e.detail.value ?? "");
-                    setFieldErrors((prev) => ({ ...prev, time: false }));
-                  }}
-                />
-                {fieldErrors.time && (
-                  <IonText
-                    color="danger"
-                    style={{
-                      fontSize: "0.75rem",
-                      display: "block",
-                      marginTop: "4px",
+                <div className="form-input-wrapper">
+                  <label className="form-label">Time</label>
+                  <IonInput
+                    className="form-input"
+                    type="time"
+                    value={selectedTime}
+                    onIonChange={(e) => {
+                      setSelectedTime(e.detail.value ?? "");
+                      setFieldErrors((prev) => ({ ...prev, time: false }));
                     }}
-                  >
-                    Required field
-                  </IonText>
-                )}
+                  />
+                  {fieldErrors.time && (
+                    <span className="error-message">Required field</span>
+                  )}
+                </div>
+              </IonCol>
+              <IonCol size="6">
+                <div className="form-input-wrapper">
+                  <label className="form-label">
+                    Transaction Reference (optional)
+                  </label>
+                  <IonInput
+                    className="form-input"
+                    placeholder="e.g. ABCD123XYZ"
+                    type="text"
+                    value={transactionReference}
+                    onIonChange={(e) =>
+                      setTransactionReference(e.detail.value ?? "")
+                    }
+                  />
+                </div>
               </IonCol>
             </IonRow>
             <IonRow>
-              <IonCol size="7">
-                <IonInput
-                  ref={descriptionInputRef}
-                  label="Description"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  color={fieldErrors.description ? "danger" : undefined}
-                  type="text"
-                  placeholder="e.g. Grocery shopping"
-                  value={description}
-                  onIonInput={(e) => {
-                    handleDescriptionChange(e.detail.value!);
-                    setFieldErrors((prev) => ({ ...prev, description: false }));
-                  }}
-                  onIonFocus={() => setShowDescriptionSuggestions(true)}
-                  onKeyDown={handleDescriptionKeyDown}
-                />
-                {showDescriptionSuggestions &&
-                  filteredDescriptions.length > 0 &&
-                  description && (
-                    <div
-                      id="description-suggestions"
-                      style={{
-                        position: "absolute",
-                        backgroundColor: "var(--ion-background-color)",
-                        border: "1px solid var(--ion-color-medium)",
-                        borderRadius: "4px",
-                        marginTop: "4px",
-                        maxHeight: "200px",
-                        overflowY: "auto",
-                        zIndex: 1000,
-                        width: "100%",
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                      }}
-                    >
-                      {filteredDescriptions.map((item, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() => selectSuggestion(item.text)}
-                          style={{
-                            padding: "8px 12px",
-                            cursor: "pointer",
-                            backgroundColor:
-                              idx === selectedSuggestionIndex
-                                ? "var(--ion-color-primary)"
-                                : "transparent",
-                            color:
-                              idx === selectedSuggestionIndex
-                                ? "var(--ion-color-primary-contrast)"
-                                : "inherit",
-                            borderBottom:
-                              idx < filteredDescriptions.length - 1
-                                ? "1px solid var(--ion-color-light)"
-                                : "none",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                          }}
-                          onMouseEnter={(e) => {
-                            if (idx !== selectedSuggestionIndex) {
-                              e.currentTarget.style.backgroundColor =
-                                "var(--ion-color-light)";
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (idx !== selectedSuggestionIndex) {
-                              e.currentTarget.style.backgroundColor =
-                                "transparent";
-                            }
-                          }}
-                        >
-                          <span>{item.text}</span>
-                          <span
+              <IonCol size="11">
+                <div className="form-input-wrapper">
+                  <label className="form-label">Description</label>
+                  <IonInput
+                    ref={descriptionInputRef}
+                    className="form-input"
+                    type="text"
+                    placeholder="e.g. Grocery shopping"
+                    value={description}
+                    onIonInput={(e) => {
+                      handleDescriptionChange(e.detail.value!);
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        description: false,
+                      }));
+                    }}
+                    onIonFocus={() => setShowDescriptionSuggestions(true)}
+                    onKeyDown={handleDescriptionKeyDown}
+                  />
+                  {fieldErrors.description && (
+                    <span className="error-message">Required field</span>
+                  )}
+                  {showDescriptionSuggestions &&
+                    filteredDescriptions.length > 0 &&
+                    description && (
+                      <div
+                        id="description-suggestions"
+                        style={{
+                          position: "absolute",
+                          backgroundColor: "var(--ion-background-color)",
+                          border: "1px solid var(--ion-color-medium)",
+                          borderRadius: "4px",
+                          marginTop: "4px",
+                          maxHeight: "200px",
+                          overflowY: "auto",
+                          zIndex: 1000,
+                          width: "100%",
+                          boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                        }}
+                      >
+                        {filteredDescriptions.map((item, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => selectSuggestion(item.text)}
                             style={{
-                              fontSize: "0.75rem",
-                              opacity: 0.7,
-                              marginLeft: "8px",
+                              padding: "8px 12px",
+                              cursor: "pointer",
+                              backgroundColor:
+                                idx === selectedSuggestionIndex
+                                  ? "var(--ion-color-primary)"
+                                  : "transparent",
+                              color:
+                                idx === selectedSuggestionIndex
+                                  ? "var(--ion-color-primary-contrast)"
+                                  : "inherit",
+                              borderBottom:
+                                idx < filteredDescriptions.length - 1
+                                  ? "1px solid var(--ion-color-light)"
+                                  : "none",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                            }}
+                            onMouseEnter={(e) => {
+                              if (idx !== selectedSuggestionIndex) {
+                                e.currentTarget.style.backgroundColor =
+                                  "var(--ion-color-light)";
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (idx !== selectedSuggestionIndex) {
+                                e.currentTarget.style.backgroundColor =
+                                  "transparent";
+                              }
                             }}
                           >
-                            {item.count}x
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-              </IonCol>
-              <IonCol size="3">
-                <IonInput
-                  label="Transaction Reference (optional)"
-                  fill="outline"
-                  labelPlacement="stacked"
-                  placeholder="e.g. ABCD123XYZ"
-                  type="text"
-                  value={transactionReference}
-                  onIonChange={(e) =>
-                    setTransactionReference(e.detail.value ?? "")
-                  }
-                />
+                            <span>{item.text}</span>
+                            <span
+                              style={{
+                                fontSize: "0.75rem",
+                                opacity: 0.7,
+                                marginLeft: "8px",
+                              }}
+                            >
+                              {item.count}x
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                </div>
               </IonCol>
             </IonRow>
 
@@ -1072,39 +1092,42 @@ const AddTransaction: React.FC = () => {
               <>
                 {/* Payer (Source) - Using SearchableFilterSelect */}
                 <IonRow>
-                  <IonCol size="10">
-                    <SearchableFilterSelect
-                      label="Payer"
-                      placeholder="Select the source of the transfer"
-                      value={transferRecipientId}
-                      options={sortedRecipients
-                        .filter((r) => r.name)
-                        .map((r) => ({
-                          id: r.id,
-                          name: r.name as string,
-                        }))}
-                      onIonChange={(v) => {
-                        setTransferRecipientId(v);
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          transferRecipient: false,
-                        }));
-                      }}
-                    />
-                    {fieldErrors.transferRecipient && (
-                      <IonText
-                        color="danger"
-                        style={{
-                          fontSize: "0.75rem",
-                          display: "block",
-                          marginTop: "4px",
+                  <IonCol size="11">
+                    <div className="form-input-wrapper">
+                      <label className="form-label">Payer</label>
+                      <SearchableFilterSelect
+                        label=""
+                        placeholder="Select the source of the transfer"
+                        value={transferRecipientId}
+                        options={sortedRecipients
+                          .filter((r) => r.name)
+                          .map((r) => ({
+                            id: r.id,
+                            name: r.name as string,
+                          }))}
+                        onIonChange={(v) => {
+                          setTransferRecipientId(v);
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            transferRecipient: false,
+                          }));
                         }}
-                      >
-                        Required field
-                      </IonText>
-                    )}
+                      />
+                      {fieldErrors.transferRecipient && (
+                        <IonText
+                          color="danger"
+                          style={{
+                            fontSize: "0.75rem",
+                            display: "block",
+                            marginTop: "4px",
+                          }}
+                        >
+                          Required field
+                        </IonText>
+                      )}
+                    </div>
                   </IonCol>
-                  <IonCol size="2">
+                  <IonCol size="1">
                     <IonButton
                       style={{ marginTop: "23px" }}
                       color="primary"
@@ -1122,39 +1145,42 @@ const AddTransaction: React.FC = () => {
 
                 {/* Recipient (Destination) - Using SearchableFilterSelect */}
                 <IonRow>
-                  <IonCol size="10">
-                    <SearchableFilterSelect
-                      label="Recipient"
-                      placeholder="Select destination of the transfer"
-                      value={recipientId}
-                      options={sortedRecipients
-                        .filter((r) => r.name)
-                        .map((r) => ({
-                          id: r.id,
-                          name: r.name as string,
-                        }))}
-                      onIonChange={(v) => {
-                        setRecipientId(v);
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          recipient: false,
-                        }));
-                      }}
-                    />
-                    {fieldErrors.recipient && (
-                      <IonText
-                        color="danger"
-                        style={{
-                          fontSize: "0.75rem",
-                          display: "block",
-                          marginTop: "4px",
+                  <IonCol size="11">
+                    <div className="form-input-wrapper">
+                      <label className="form-label">Recipient</label>
+                      <SearchableFilterSelect
+                        label=""
+                        placeholder="Select destination of the transfer"
+                        value={recipientId}
+                        options={sortedRecipients
+                          .filter((r) => r.name)
+                          .map((r) => ({
+                            id: r.id,
+                            name: r.name as string,
+                          }))}
+                        onIonChange={(v) => {
+                          setRecipientId(v);
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            recipient: false,
+                          }));
                         }}
-                      >
-                        Required field
-                      </IonText>
-                    )}
+                      />
+                      {fieldErrors.recipient && (
+                        <IonText
+                          color="danger"
+                          style={{
+                            fontSize: "0.75rem",
+                            display: "block",
+                            marginTop: "4px",
+                          }}
+                        >
+                          Required field
+                        </IonText>
+                      )}
+                    </div>
                   </IonCol>
-                  <IonCol size="2">
+                  <IonCol size="1">
                     <IonButton
                       style={{ marginTop: "23px" }}
                       color="primary"
@@ -1172,44 +1198,47 @@ const AddTransaction: React.FC = () => {
 
                 {/* Category - Using SearchableFilterSelect */}
                 <IonRow>
-                  <IonCol size="10">
-                    <SearchableFilterSelect
-                      label="Category"
-                      placeholder="Select category"
-                      value={categoryId}
-                      options={sortedCategories
-                        .filter((c) => c.name)
-                        .map((c) => {
-                          const bucket = buckets.find(
-                            (b) => b.id === c.bucketId
-                          );
-                          return {
-                            id: c.id,
-                            name: `${c.name} - ${bucket?.name || "Unknown"}`,
-                          };
-                        })}
-                      onIonChange={(v) => {
-                        setCategoryId(v);
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          category: false,
-                        }));
-                      }}
-                    />
-                    {fieldErrors.category && (
-                      <IonText
-                        color="danger"
-                        style={{
-                          fontSize: "0.75rem",
-                          display: "block",
-                          marginTop: "4px",
+                  <IonCol size="11">
+                    <div className="form-input-wrapper">
+                      <label className="form-label">Category</label>
+                      <SearchableFilterSelect
+                        label=""
+                        placeholder="Select category"
+                        value={categoryId}
+                        options={sortedCategories
+                          .filter((c) => c.name)
+                          .map((c) => {
+                            const bucket = buckets.find(
+                              (b) => b.id === c.bucketId
+                            );
+                            return {
+                              id: c.id,
+                              name: `${c.name} - ${bucket?.name || "Unknown"}`,
+                            };
+                          })}
+                        onIonChange={(v) => {
+                          setCategoryId(v);
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            category: false,
+                          }));
                         }}
-                      >
-                        Required field
-                      </IonText>
-                    )}
+                      />
+                      {fieldErrors.category && (
+                        <IonText
+                          color="danger"
+                          style={{
+                            fontSize: "0.75rem",
+                            display: "block",
+                            marginTop: "4px",
+                          }}
+                        >
+                          Required field
+                        </IonText>
+                      )}
+                    </div>
                   </IonCol>
-                  <IonCol size="2">
+                  <IonCol size="1">
                     <IonButton
                       style={{ marginTop: "23px" }}
                       color="primary"
@@ -1227,46 +1256,49 @@ const AddTransaction: React.FC = () => {
 
                 {/* FROM Payment Method - Using SearchableFilterSelect */}
                 <IonRow>
-                  <IonCol size="10">
-                    <SearchableFilterSelect
-                      label="From Payment Method"
-                      placeholder="Select source payment method"
-                      value={paymentMethodId}
-                      options={sortedPaymentMethods
-                        .filter((pm) => pm.name)
-                        .map((pm) => {
-                          const account = accounts.find(
-                            (a) => a.id === pm.accountId
-                          );
-                          return {
-                            id: pm.id,
-                            name: `${account?.name || "Unknown"} - ${
-                              pm.name as string
-                            }`,
-                          };
-                        })}
-                      onIonChange={(v) => {
-                        setPaymentMethodId(v);
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          paymentMethod: false,
-                        }));
-                      }}
-                    />
-                    {fieldErrors.paymentMethod && (
-                      <IonText
-                        color="danger"
-                        style={{
-                          fontSize: "0.75rem",
-                          display: "block",
-                          marginTop: "4px",
+                  <IonCol size="11">
+                    <div className="form-input-wrapper">
+                      <label className="form-label">From Payment Method</label>
+                      <SearchableFilterSelect
+                        label=""
+                        placeholder="Select source payment method"
+                        value={paymentMethodId}
+                        options={sortedPaymentMethods
+                          .filter((pm) => pm.name)
+                          .map((pm) => {
+                            const account = accounts.find(
+                              (a) => a.id === pm.accountId
+                            );
+                            return {
+                              id: pm.id,
+                              name: `${account?.name || "Unknown"} - ${
+                                pm.name as string
+                              }`,
+                            };
+                          })}
+                        onIonChange={(v) => {
+                          setPaymentMethodId(v);
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            paymentMethod: false,
+                          }));
                         }}
-                      >
-                        Required field
-                      </IonText>
-                    )}
+                      />
+                      {fieldErrors.paymentMethod && (
+                        <IonText
+                          color="danger"
+                          style={{
+                            fontSize: "0.75rem",
+                            display: "block",
+                            marginTop: "4px",
+                          }}
+                        >
+                          Required field
+                        </IonText>
+                      )}
+                    </div>
                   </IonCol>
-                  <IonCol size="2">
+                  <IonCol size="1">
                     <IonButton
                       style={{ marginTop: "23px" }}
                       color="primary"
@@ -1284,46 +1316,49 @@ const AddTransaction: React.FC = () => {
 
                 {/* TO Payment Method - Using SearchableFilterSelect */}
                 <IonRow>
-                  <IonCol size="10">
-                    <SearchableFilterSelect
-                      label="To Payment Method"
-                      placeholder="Select destination payment method"
-                      value={transferToPaymentMethodId}
-                      options={sortedPaymentMethods
-                        .filter((pm) => pm.name)
-                        .map((pm) => {
-                          const account = accounts.find(
-                            (a) => a.id === pm.accountId
-                          );
-                          return {
-                            id: pm.id,
-                            name: `${account?.name || "Unknown"} - ${
-                              pm.name as string
-                            }`,
-                          };
-                        })}
-                      onIonChange={(v) => {
-                        setTransferToPaymentMethodId(v);
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          transferToPaymentMethod: false,
-                        }));
-                      }}
-                    />
-                    {fieldErrors.transferToPaymentMethod && (
-                      <IonText
-                        color="danger"
-                        style={{
-                          fontSize: "0.75rem",
-                          display: "block",
-                          marginTop: "4px",
+                  <IonCol size="11">
+                    <div className="form-input-wrapper">
+                      <label className="form-label">To Payment Method</label>
+                      <SearchableFilterSelect
+                        label=""
+                        placeholder="Select destination payment method"
+                        value={transferToPaymentMethodId}
+                        options={sortedPaymentMethods
+                          .filter((pm) => pm.name)
+                          .map((pm) => {
+                            const account = accounts.find(
+                              (a) => a.id === pm.accountId
+                            );
+                            return {
+                              id: pm.id,
+                              name: `${account?.name || "Unknown"} - ${
+                                pm.name as string
+                              }`,
+                            };
+                          })}
+                        onIonChange={(v) => {
+                          setTransferToPaymentMethodId(v);
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            transferToPaymentMethod: false,
+                          }));
                         }}
-                      >
-                        Required field
-                      </IonText>
-                    )}
+                      />
+                      {fieldErrors.transferToPaymentMethod && (
+                        <IonText
+                          color="danger"
+                          style={{
+                            fontSize: "0.75rem",
+                            display: "block",
+                            marginTop: "4px",
+                          }}
+                        >
+                          Required field
+                        </IonText>
+                      )}
+                    </div>
                   </IonCol>
-                  <IonCol size="2">
+                  <IonCol size="1">
                     <IonButton
                       style={{ marginTop: "23px" }}
                       color="primary"
@@ -1343,11 +1378,12 @@ const AddTransaction: React.FC = () => {
               <>
                 {/* Existing Recipient field */}
                 <IonRow>
-                  <IonCol size="10">
+                  <IonCol size="11">
+                    <label className="form-label">
+                      {transactionType === "expense" ? "Recipient" : "Payer"}
+                    </label>
                     <SearchableFilterSelect
-                      label={
-                        transactionType === "expense" ? "Recipient" : "Payer"
-                      }
+                      label=""
                       placeholder={
                         transactionType === "expense"
                           ? "Select recipient"
@@ -1381,7 +1417,7 @@ const AddTransaction: React.FC = () => {
                       </IonText>
                     )}
                   </IonCol>
-                  <IonCol size="2">
+                  <IonCol size="1">
                     <IonButton
                       style={{ marginTop: "23px" }}
                       color="primary"
@@ -1407,44 +1443,47 @@ const AddTransaction: React.FC = () => {
 
                 {/* Existing Category field */}
                 <IonRow>
-                  <IonCol size="10">
-                    <SearchableFilterSelect
-                      label="Category"
-                      placeholder="Select category"
-                      value={categoryId}
-                      options={sortedCategories
-                        .filter((c) => c.name)
-                        .map((c) => {
-                          const bucket = buckets.find(
-                            (b) => b.id === c.bucketId
-                          );
-                          return {
-                            id: c.id,
-                            name: `${c.name} - ${bucket?.name || "Unknown"}`,
-                          };
-                        })}
-                      onIonChange={(v) => {
-                        setCategoryId(v);
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          category: false,
-                        }));
-                      }}
-                    />
-                    {fieldErrors.category && (
-                      <IonText
-                        color="danger"
-                        style={{
-                          fontSize: "0.75rem",
-                          display: "block",
-                          marginTop: "4px",
+                  <IonCol size="11">
+                    <div className="form-input-wrapper">
+                      <label className="form-label">Category</label>
+                      <SearchableFilterSelect
+                        label=""
+                        placeholder="Select category"
+                        value={categoryId}
+                        options={sortedCategories
+                          .filter((c) => c.name)
+                          .map((c) => {
+                            const bucket = buckets.find(
+                              (b) => b.id === c.bucketId
+                            );
+                            return {
+                              id: c.id,
+                              name: `${c.name} - ${bucket?.name || "Unknown"}`,
+                            };
+                          })}
+                        onIonChange={(v) => {
+                          setCategoryId(v);
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            category: false,
+                          }));
                         }}
-                      >
-                        Required field
-                      </IonText>
-                    )}
+                      />
+                      {fieldErrors.category && (
+                        <IonText
+                          color="danger"
+                          style={{
+                            fontSize: "0.75rem",
+                            display: "block",
+                            marginTop: "4px",
+                          }}
+                        >
+                          Required field
+                        </IonText>
+                      )}
+                    </div>
                   </IonCol>
-                  <IonCol size="2">
+                  <IonCol size="1">
                     <IonButton
                       style={{ marginTop: "23px" }}
                       color="primary"
@@ -1461,46 +1500,49 @@ const AddTransaction: React.FC = () => {
                 </IonRow>
                 {/* Existing Payment Method field - using new component */}
                 <IonRow>
-                  <IonCol size="10">
-                    <SearchableFilterSelect
-                      label="Payment Method"
-                      placeholder="Select payment method"
-                      value={paymentMethodId}
-                      options={sortedPaymentMethods
-                        .filter((pm) => pm.name)
-                        .map((pm) => {
-                          const account = accounts.find(
-                            (a) => a.id === pm.accountId
-                          );
-                          return {
-                            id: pm.id,
-                            name: `${account?.name || "Unknown"} - ${
-                              pm.name as string
-                            }`,
-                          };
-                        })}
-                      onIonChange={(v) => {
-                        setPaymentMethodId(v);
-                        setFieldErrors((prev) => ({
-                          ...prev,
-                          paymentMethod: false,
-                        }));
-                      }}
-                    />
-                    {fieldErrors.paymentMethod && (
-                      <IonText
-                        color="danger"
-                        style={{
-                          fontSize: "0.75rem",
-                          display: "block",
-                          marginTop: "4px",
+                  <IonCol size="11">
+                    <div className="form-input-wrapper">
+                      <label className="form-label">Payment Method</label>
+                      <SearchableFilterSelect
+                        label=""
+                        placeholder="Select payment method"
+                        value={paymentMethodId}
+                        options={sortedPaymentMethods
+                          .filter((pm) => pm.name)
+                          .map((pm) => {
+                            const account = accounts.find(
+                              (a) => a.id === pm.accountId
+                            );
+                            return {
+                              id: pm.id,
+                              name: `${account?.name || "Unknown"} - ${
+                                pm.name as string
+                              }`,
+                            };
+                          })}
+                        onIonChange={(v) => {
+                          setPaymentMethodId(v);
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            paymentMethod: false,
+                          }));
                         }}
-                      >
-                        Required field
-                      </IonText>
-                    )}
+                      />
+                      {fieldErrors.paymentMethod && (
+                        <IonText
+                          color="danger"
+                          style={{
+                            fontSize: "0.75rem",
+                            display: "block",
+                            marginTop: "4px",
+                          }}
+                        >
+                          Required field
+                        </IonText>
+                      )}
+                    </div>
                   </IonCol>
-                  <IonCol size="2">
+                  <IonCol size="1">
                     <IonButton
                       style={{ marginTop: "23px" }}
                       color="primary"
@@ -1519,107 +1561,110 @@ const AddTransaction: React.FC = () => {
             )}
 
             <IonRow>
-              <IonCol size="7">
-                <IonInput
-                  label="Amount"
-                  placeholder="e.g. 1,000"
-                  labelPlacement="stacked"
-                  fill="outline"
-                  color={fieldErrors.amount ? "danger" : undefined}
-                  type="number"
-                  step="0.01"
-                  value={amount}
-                  onIonChange={(e) => {
-                    setAmount(e.detail.value!);
-                    setFieldErrors((prev) => ({ ...prev, amount: false }));
-                  }}
-                  inputMode="decimal"
-                />
-                {fieldErrors.amount && (
-                  <IonText
-                    color="danger"
-                    style={{
-                      fontSize: "0.75rem",
-                      display: "block",
-                      marginTop: "4px",
+              <IonCol size="8">
+                <div className="form-input-wrapper">
+                  <label className="form-label">Amount</label>
+                  <IonInput
+                    className="form-input"
+                    placeholder="e.g. 1,000"
+                    type="number"
+                    step="0.01"
+                    value={amount}
+                    onIonChange={(e) => {
+                      setAmount(e.detail.value!);
+                      setFieldErrors((prev) => ({ ...prev, amount: false }));
                     }}
-                  >
-                    Required field
-                  </IonText>
-                )}
+                    inputMode="decimal"
+                  />
+                  {fieldErrors.amount && (
+                    <span className="error-message">Required field</span>
+                  )}
+                </div>
               </IonCol>
 
               <IonCol size="3">
-                <IonInput
-                  label="Transaction Cost"
-                  labelPlacement="stacked"
-                  placeholder="e.g. 13.00"
-                  fill="outline"
-                  type="number"
-                  value={transactionCost}
-                  onIonChange={(e) => setTransactionCost(e.detail.value!)}
-                  inputMode="decimal"
-                  step="0.01"
-                />
+                <div className="form-input-wrapper">
+                  <label className="form-label">
+                    Transaction Cost (optional)
+                  </label>
+                  <IonInput
+                    className="form-input"
+                    placeholder="e.g. 13.00"
+                    type="number"
+                    value={transactionCost}
+                    onIonChange={(e) => setTransactionCost(e.detail.value!)}
+                    inputMode="decimal"
+                    step="0.01"
+                  />
+                </div>
+              </IonCol>
+            </IonRow>
+
+            {/* Original Amount, Currency, Exchange Rate */}
+            <IonRow>
+              <IonCol size="5">
+                <div className="form-input-wrapper">
+                  <label className="form-label">
+                    Original Amount (optional)
+                  </label>
+                  <IonInput
+                    className="form-input"
+                    placeholder="Amount in original currency, e.g. 100.00"
+                    type="number"
+                    value={originalAmount}
+                    onIonChange={(e) => setOriginalAmount(e.detail.value ?? "")}
+                    inputMode="decimal"
+                    step="0.01"
+                  />
+                </div>
+              </IonCol>
+
+              <IonCol size="3">
+                <div className="form-input-wrapper">
+                  <label className="form-label">Currency (optional)</label>
+                  <SearchableFilterSelect
+                    label=""
+                    placeholder="Select currency"
+                    value={
+                      originalCurrency
+                        ? currencies.indexOf(originalCurrency)
+                        : undefined
+                    }
+                    options={currencies.map((cur, index) => ({
+                      id: index,
+                      name: cur,
+                    }))}
+                    onIonChange={(v) => {
+                      if (v !== undefined) {
+                        setOriginalCurrency(currencies[v]);
+                      }
+                    }}
+                  />
+                </div>
+              </IonCol>
+
+              <IonCol size="3">
+                <div className="form-input-wrapper">
+                  <label className="form-label">Exchange Rate (optional)</label>
+                  <IonInput
+                    className="form-input"
+                    placeholder="e.g. 125.00"
+                    type="number"
+                    step="0.0001"
+                    value={exchangeRate}
+                    onIonChange={(e) => {
+                      setExchangeRate(e.detail.value ?? "");
+                      setExchangeRateOverride(true);
+                    }}
+                    onIonFocus={() => setExchangeRateOverride(true)}
+                    inputMode="decimal"
+                  />
+                </div>
               </IonCol>
             </IonRow>
 
             <IonRow>
-              <IonCol size="6">
-                <IonInput
-                  placeholder="Amount in original currency, e.g. 100.00"
-                  fill="outline"
-                  type="number"
-                  label="Original Amount"
-                  labelPlacement="stacked"
-                  value={originalAmount}
-                  onIonChange={(e) => setOriginalAmount(e.detail.value ?? "")}
-                  inputMode="decimal"
-                  step="0.01"
-                />
-              </IonCol>
-
-              <IonCol size="2">
-                <IonSelect
-                  label="Currency"
-                  labelPlacement="stacked"
-                  placeholder="e.g. USD"
-                  interface="popover"
-                  value={originalCurrency || undefined}
-                  onIonChange={(e) =>
-                    setOriginalCurrency((e.detail.value as string) ?? "")
-                  }
-                  fill="outline"
-                >
-                  {currencies.map((cur) => (
-                    <IonSelectOption key={cur} value={cur}>
-                      {cur}
-                    </IonSelectOption>
-                  ))}
-                </IonSelect>
-              </IonCol>
-
-              <IonCol size="2">
-                <IonInput
-                  label="Exchange Rate"
-                  labelPlacement="stacked"
-                  placeholder="e.g. 125.00"
-                  fill="outline"
-                  type="number"
-                  step="0.0001"
-                  value={exchangeRate}
-                  onIonChange={(e) => {
-                    setExchangeRate(e.detail.value ?? "");
-                    setExchangeRateOverride(true);
-                  }}
-                  onIonFocus={() => setExchangeRateOverride(true)}
-                  inputMode="decimal"
-                />
-              </IonCol>
-            </IonRow>
-
-            <IonRow>
-              <IonCol>
+              <IonCol size="11">
                 <IonButton
                   type="submit"
                   expand="block"
@@ -1642,8 +1687,6 @@ const AddTransaction: React.FC = () => {
           setSortedRecipients((prev) => [recipient, ...prev]);
           setRecipientId(recipient.id);
         }}
-        initialName=""
-        initialPhone=""
       />
 
       {/* Modal: Add Category */}
