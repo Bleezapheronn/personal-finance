@@ -1286,11 +1286,14 @@ const AddTransaction: React.FC = () => {
                             const account = accounts.find(
                               (a) => a.id === pm.accountId
                             );
+                            const currency = account?.currency
+                              ? `(${account.currency})`
+                              : "(—)";
                             return {
                               id: pm.id,
                               name: `${account?.name || "Unknown"} - ${
                                 pm.name as string
-                              }`,
+                              } ${currency}`,
                             };
                           })}
                         onIonChange={(v) => {
@@ -1346,11 +1349,14 @@ const AddTransaction: React.FC = () => {
                             const account = accounts.find(
                               (a) => a.id === pm.accountId
                             );
+                            const currency = account?.currency
+                              ? `(${account.currency})`
+                              : "(—)";
                             return {
                               id: pm.id,
                               name: `${account?.name || "Unknown"} - ${
                                 pm.name as string
-                              }`,
+                              } ${currency}`,
                             };
                           })}
                         onIonChange={(v) => {
@@ -1530,11 +1536,14 @@ const AddTransaction: React.FC = () => {
                             const account = accounts.find(
                               (a) => a.id === pm.accountId
                             );
+                            const currency = account?.currency
+                              ? `(${account.currency})`
+                              : "(—)";
                             return {
                               id: pm.id,
                               name: `${account?.name || "Unknown"} - ${
                                 pm.name as string
-                              }`,
+                              } ${currency}`,
                             };
                           })}
                         onIonChange={(v) => {

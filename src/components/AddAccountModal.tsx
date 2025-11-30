@@ -109,6 +109,11 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
       return;
     }
 
+    if (!currency || !currency.trim()) {
+      setErrorMsg("Currency is required");
+      return;
+    }
+
     try {
       setLoading(true);
       const now = new Date();
