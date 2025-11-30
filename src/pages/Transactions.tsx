@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   IonPage,
   IonHeader,
@@ -529,6 +529,23 @@ const Transactions: React.FC = () => {
     return Array.from(recIds);
   };
 
+  useEffect(() => {
+    // Clear payment method filter when account filter changes
+    // (to prevent showing incompatible payment method)
+    if (selectedAccountId !== undefined) {
+      setSelectedPaymentMethodId(undefined);
+    }
+  }, [selectedAccountId]);
+
+  // ADD THIS NEW useEffect:
+  useEffect(() => {
+    // Clear category filter when bucket filter changes
+    // (to prevent showing incompatible category)
+    if (selectedBucketId !== undefined) {
+      setSelectedCategoryId(undefined);
+    }
+  }, [selectedBucketId]);
+
   return (
     <IonPage>
       <IonHeader>
@@ -771,6 +788,17 @@ const Transactions: React.FC = () => {
                             const account = accounts.find(
                               (a) => a.id === pm.accountId
                             );
+
+                            // If an account is selected, only show payment methods for that account
+                            if (selectedAccountId !== undefined) {
+                              return (
+                                pm.accountId === selectedAccountId &&
+                                pmsWithTxns.includes(pm.id || 0) &&
+                                account?.name
+                              );
+                            }
+
+                            // Otherwise show all payment methods with transactions
                             return (
                               pmsWithTxns.includes(pm.id || 0) && account?.name
                             );
@@ -821,6 +849,16 @@ const Transactions: React.FC = () => {
                         options={categories
                           .filter((c) => {
                             const catsWithTxns = getCategoriesInTransactions();
+
+                            // If a bucket is selected, only show categories from that bucket
+                            if (selectedBucketId !== undefined) {
+                              return (
+                                c.bucketId === selectedBucketId &&
+                                catsWithTxns.includes(c.id || 0)
+                              );
+                            }
+
+                            // Otherwise show all categories with transactions
                             return c.name && catsWithTxns.includes(c.id || 0);
                           })
                           .map((c) => {
@@ -833,7 +871,7 @@ const Transactions: React.FC = () => {
                             };
                           })}
                         onIonChange={setSelectedCategoryId}
-                      />{" "}
+                      />
                     </IonCol>
                   </IonRow>
                   <IonRow>

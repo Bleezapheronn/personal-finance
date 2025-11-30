@@ -174,9 +174,15 @@ const AddTransaction: React.FC = () => {
         ? b
         : b.filter((bkt) => bkt.isActive !== false);
 
+      // FIXED: Filter categories - check against ALL buckets, then verify bucket is active
       const activeCategories = isEditMode
         ? c
-        : c.filter((cat) => cat.isActive !== false);
+        : c.filter((cat) => {
+            // Find the bucket (from ALL buckets, not just active ones)
+            const bucket = b.find((bucket) => bucket.id === cat.bucketId);
+            // Only show category if BOTH: category is active AND bucket is active
+            return cat.isActive !== false && bucket?.isActive !== false;
+          });
 
       // Filter payment methods: active AND account exists
       const activePaymentMethods = (

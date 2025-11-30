@@ -48,6 +48,7 @@ import {
   IonAccordionGroup,
   IonFab,
   IonFabButton,
+  IonToast,
 } from "@ionic/react";
 import {
   add,
@@ -67,6 +68,7 @@ type LocalAccount = Account & { previewUrl?: string };
 type DeleteState =
   | { type: "none" }
   | { type: "used"; accountId: number; accountName: string }
+  | { type: "used_deactivated"; accountId: number; accountName: string }
   | {
       type: "unused_with_pm";
       accountId: number;
@@ -96,6 +98,13 @@ const AccountsManagement: React.FC = () => {
   const [deletePaymentMethodId, setDeletePaymentMethodId] = useState<
     number | null
   >(null);
+  const [deletePaymentMethodState, setDeletePaymentMethodState] = useState<
+    "none" | "used" | "delete"
+  >("none");
+
+  // Toast state
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
 
   // Track blob URLs for cleanup
   const blobUrlsRef = useRef<Set<string>>(new Set());
@@ -160,8 +169,12 @@ const AccountsManagement: React.FC = () => {
   /**
    * handleAccountSaved - Called when account is added/updated via modal
    */
-  const handleAccountSaved = async () => {
+  const handleAccountSaved = async (isEdit: boolean) => {
     setEditingAccount(null);
+    setToastMessage(
+      isEdit ? "Account updated successfully!" : "Account added successfully!"
+    );
+    setShowToast(true);
     await fetchAccounts();
   };
 
@@ -212,11 +225,20 @@ const AccountsManagement: React.FC = () => {
       const accountPaymentMethods = paymentMethods.filter(
         (pm) => pm.accountId === account.id
       );
+      const isDeactivated = account.isActive === false;
 
-      if (isUsed) {
-        // Account has been used in transactions
+      if (isUsed && !isDeactivated) {
+        // Account is ACTIVE and has been used in transactions
         setDeleteState({
           type: "used",
+          accountId: account.id!,
+          accountName: account.name,
+        });
+      } else if (isUsed && isDeactivated) {
+        // Account is DEACTIVATED and has been used in transactions
+        // Show informational alert, no deactivate option
+        setDeleteState({
+          type: "used_deactivated",
           accountId: account.id!,
           accountName: account.name,
         });
@@ -306,12 +328,36 @@ const AccountsManagement: React.FC = () => {
       setLoading(false);
     }
   };
-
+  /**
+   * handleTogglePaymentMethodActive - Toggles payment method active/inactive status
+   */
+  const handleTogglePaymentMethodActive = async (
+    paymentMethod: PaymentMethod
+  ) => {
+    try {
+      setLoading(true);
+      const newStatus = paymentMethod.isActive === false ? true : false;
+      await db.paymentMethods.update(paymentMethod.id!, {
+        isActive: newStatus,
+      });
+      await fetchPaymentMethods();
+    } catch (error) {
+      console.error("Error toggling payment method status:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
   /**
    * handlePaymentMethodSaved - Called when payment method is added/updated via modal
    */
-  const handlePaymentMethodSaved = async () => {
+  const handlePaymentMethodSaved = async (isEdit: boolean) => {
     setEditingPaymentMethod(null);
+    setToastMessage(
+      isEdit
+        ? "Payment method updated successfully!"
+        : "Payment method added successfully!"
+    );
+    setShowToast(true);
     await fetchPaymentMethods();
   };
 
@@ -333,6 +379,64 @@ const AccountsManagement: React.FC = () => {
   };
 
   /**
+   * checkPaymentMethodUsage - Determines if payment method has been used in transactions
+   */
+  const checkPaymentMethodUsage = async (
+    paymentMethodId: number
+  ): Promise<boolean> => {
+    try {
+      const transactions = await db.transactions.toArray();
+      return transactions.some(
+        (txn) => txn.paymentChannelId === paymentMethodId
+      );
+    } catch (error) {
+      console.error("Error checking payment method usage:", error);
+      return false;
+    }
+  };
+
+  /**
+   * initiateDeletePaymentMethod - Check payment method usage and set appropriate state
+   */
+  const initiateDeletePaymentMethod = async (paymentMethodId: number) => {
+    try {
+      setLoading(true);
+      const isUsed = await checkPaymentMethodUsage(paymentMethodId);
+
+      if (isUsed) {
+        setDeletePaymentMethodId(paymentMethodId);
+        setDeletePaymentMethodState("used");
+      } else {
+        setDeletePaymentMethodId(paymentMethodId);
+        setDeletePaymentMethodState("delete");
+      }
+    } catch (error) {
+      console.error("Error checking payment method usage:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * handleDeactivatePaymentMethod - Deactivates payment method instead of deleting
+   */
+  const handleDeactivatePaymentMethod = async (paymentMethodId: number) => {
+    try {
+      setLoading(true);
+      await db.paymentMethods.update(paymentMethodId, { isActive: false });
+      setDeletePaymentMethodId(null);
+      setDeletePaymentMethodState("none");
+      await fetchPaymentMethods();
+      setToastMessage("Payment method deactivated successfully!");
+      setShowToast(true);
+    } catch (error) {
+      console.error("Error deactivating payment method:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
    * handleDeletePaymentMethod - Removes a payment method from the database
    */
   const handleDeletePaymentMethod = async (paymentMethodId: number) => {
@@ -340,29 +444,12 @@ const AccountsManagement: React.FC = () => {
       setLoading(true);
       await db.paymentMethods.delete(paymentMethodId);
       setDeletePaymentMethodId(null);
+      setDeletePaymentMethodState("none");
       await fetchPaymentMethods();
+      setToastMessage("Payment method deleted successfully!");
+      setShowToast(true);
     } catch (error) {
       console.error("Error deleting payment method:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * handleTogglePaymentMethodActive - Toggles payment method active/inactive status
-   */
-  const handleTogglePaymentMethodActive = async (
-    paymentMethod: PaymentMethod
-  ) => {
-    try {
-      setLoading(true);
-      const newStatus = paymentMethod.isActive === false ? true : false;
-      await db.paymentMethods.update(paymentMethod.id!, {
-        isActive: newStatus,
-      });
-      await fetchPaymentMethods();
-    } catch (error) {
-      console.error("Error toggling payment method status:", error);
     } finally {
       setLoading(false);
     }
@@ -478,6 +565,7 @@ const AccountsManagement: React.FC = () => {
                               <IonButton
                                 fill="clear"
                                 size="small"
+                                color="secondary"
                                 title="Edit Account"
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -563,6 +651,7 @@ const AccountsManagement: React.FC = () => {
                                         <IonButton
                                           fill="clear"
                                           size="small"
+                                          color="secondary"
                                           onClick={() =>
                                             handleEditPaymentMethod(pm)
                                           }
@@ -600,8 +689,8 @@ const AccountsManagement: React.FC = () => {
                                           size="small"
                                           color="danger"
                                           onClick={() =>
-                                            setDeletePaymentMethodId(
-                                              pm.id ?? null
+                                            initiateDeletePaymentMethod(
+                                              pm.id ?? 0
                                             )
                                           }
                                         >
@@ -711,7 +800,25 @@ const AccountsManagement: React.FC = () => {
           </IonCard>
         )}
 
-        {/* ALERT: Account has been used in transactions */}
+        {/* ALERT: Deactivated account has been used in transactions */}
+        <IonAlert
+          isOpen={deleteState.type === "used_deactivated"}
+          onDidDismiss={() => setDeleteState({ type: "none" })}
+          header="Cannot Delete Used Account"
+          message={`This account (${
+            deleteState.type === "used_deactivated"
+              ? deleteState.accountName
+              : ""
+          }) has been used in transactions and cannot be deleted. Deactivated accounts will no longer appear in dropdowns but will remain in your records.`}
+          buttons={[
+            {
+              text: "OK",
+              role: "cancel",
+            },
+          ]}
+        />
+
+        {/* ALERT: Account has been used in transactions (ACTIVE - offer to deactivate) */}
         <IonAlert
           isOpen={deleteState.type === "used"}
           onDidDismiss={() => setDeleteState({ type: "none" })}
@@ -792,10 +899,45 @@ const AccountsManagement: React.FC = () => {
           ]}
         />
 
+        {/* ALERT: Payment method is used in transactions */}
+        <IonAlert
+          isOpen={
+            deletePaymentMethodId !== null &&
+            deletePaymentMethodState === "used"
+          }
+          onDidDismiss={() => {
+            setDeletePaymentMethodId(null);
+            setDeletePaymentMethodState("none");
+          }}
+          header="Cannot Delete Used Payment Method"
+          message="This payment method has been used in transactions and cannot be deleted. Would you like to deactivate it instead? Deactivated payment methods will no longer appear in dropdowns but will remain in your records."
+          buttons={[
+            {
+              text: "Cancel",
+              role: "cancel",
+            },
+            {
+              text: "Deactivate",
+              role: "destructive",
+              handler: () => {
+                if (deletePaymentMethodId) {
+                  handleDeactivatePaymentMethod(deletePaymentMethodId);
+                }
+              },
+            },
+          ]}
+        />
+
         {/* DELETE PAYMENT METHOD ALERT */}
         <IonAlert
-          isOpen={deletePaymentMethodId !== null}
-          onDidDismiss={() => setDeletePaymentMethodId(null)}
+          isOpen={
+            deletePaymentMethodId !== null &&
+            deletePaymentMethodState === "delete"
+          }
+          onDidDismiss={() => {
+            setDeletePaymentMethodId(null);
+            setDeletePaymentMethodState("none");
+          }}
           header="Confirm Delete"
           message="Are you sure you want to delete this payment method?"
           buttons={[
@@ -822,7 +964,7 @@ const AccountsManagement: React.FC = () => {
             setShowAddAccountModal(false);
             setEditingAccount(null);
           }}
-          onAccountAdded={handleAccountSaved}
+          onAccountAdded={() => handleAccountSaved(!!editingAccount)}
           editingAccount={editingAccount}
         />
 
@@ -833,7 +975,9 @@ const AccountsManagement: React.FC = () => {
             setEditingPaymentMethod(null);
             setSelectedAccountForPaymentMethod(undefined);
           }}
-          onPaymentMethodAdded={handlePaymentMethodSaved}
+          onPaymentMethodAdded={() =>
+            handlePaymentMethodSaved(!!editingPaymentMethod)
+          }
           accounts={accounts}
           editingPaymentMethod={editingPaymentMethod}
           preSelectedAccountId={selectedAccountForPaymentMethod}
@@ -851,6 +995,16 @@ const AccountsManagement: React.FC = () => {
             <IonIcon icon={add} />
           </IonFabButton>
         </IonFab>
+
+        {/* TOAST NOTIFICATIONS */}
+        <IonToast
+          isOpen={showToast}
+          onDidDismiss={() => setShowToast(false)}
+          message={toastMessage}
+          duration={2000}
+          position="top"
+          color="success"
+        />
       </IonContent>
     </IonPage>
   );

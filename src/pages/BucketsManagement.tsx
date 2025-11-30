@@ -10,8 +10,6 @@ import {
   IonLabel,
   IonList,
   IonPage,
-  IonSelect,
-  IonSelectOption,
   IonToolbar,
   IonTitle,
   IonButtons,
@@ -41,6 +39,7 @@ import {
   reorderThree,
 } from "ionicons/icons";
 import { db, Bucket, Category } from "../db";
+import { AddCategoryModal } from "../components/AddCategoryModal";
 
 /**
  * BucketsManagement
@@ -51,6 +50,18 @@ import { db, Bucket, Category } from "../db";
  * - lists categories under their respective bucket and provides
  *   add / edit / delete functionality for categories.
  */
+
+type DeleteBucketState =
+  | { type: "none" }
+  | { type: "used"; bucketId: number; bucketName: string }
+  | { type: "used_deactivated"; bucketId: number; bucketName: string }
+  | { type: "delete"; bucketId: number; bucketName: string };
+
+type DeleteCategoryState =
+  | { type: "none" }
+  | { type: "used"; categoryId: number; categoryName: string }
+  | { type: "used_deactivated"; categoryId: number; categoryName: string }
+  | { type: "delete"; categoryId: number; categoryName: string };
 
 const BucketsManagement: React.FC = () => {
   // buckets state
@@ -68,27 +79,32 @@ const BucketsManagement: React.FC = () => {
     undefined
   );
   const [isActive, setIsActive] = useState<boolean>(true);
-  const [displayOrder, setDisplayOrder] = useState<number>(0); // NEW
-  const [excludeFromReports, setExcludeFromReports] = useState<boolean>(false); // NEW
+  const [excludeFromReports, setExcludeFromReports] = useState<boolean>(false);
 
-  // categories state + form
+  // categories state - ADD THIS BACK
   const [categories, setCategories] = useState<Category[]>([]);
-  const [categoryId, setCategoryId] = useState<number | null>(null);
-  const [categoryName, setCategoryName] = useState("");
-  const [categoryDescription, setCategoryDescription] = useState("");
-  const [categoryBucketId, setCategoryBucketId] = useState<number | null>(null);
-  const [categoryIsActive, setCategoryIsActive] = useState<boolean>(true);
 
-  const [showAlert, setShowAlert] = useState(false);
-  const [alertMessage, setAlertMessage] = useState("");
-  const [deleteBucketId, setDeleteBucketId] = useState<number | null>(null);
-  const [deleteCategoryId, setDeleteCategoryId] = useState<number | null>(null);
+  // delete state - ADD THIS BACK
+  const [deleteBucketState, setDeleteBucketState] = useState<DeleteBucketState>(
+    { type: "none" }
+  );
+  const [deleteCategoryState, setDeleteCategoryState] =
+    useState<DeleteCategoryState>({ type: "none" });
+
   const [toastMessage, setToastMessage] = useState("");
   const [showToast, setShowToast] = useState(false);
+  const [alertMessage] = useState("");
+  const [showAlert, setShowAlert] = useState(false);
 
   // modal states
   const [showBucketModal, setShowBucketModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [selectedCategoryBucket, setSelectedCategoryBucket] = useState<
+    number | undefined
+  >(undefined);
+  const [editingCategory, setEditingCategory] = useState<Category | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     fetchBuckets();
@@ -103,8 +119,8 @@ const BucketsManagement: React.FC = () => {
       setBuckets(all);
     } catch (err) {
       console.error(err);
-      setAlertMessage("Failed to load buckets");
-      setShowAlert(true);
+      setToastMessage("Failed to load buckets");
+      setShowToast(true);
     }
   };
 
@@ -114,8 +130,8 @@ const BucketsManagement: React.FC = () => {
       setCategories(all);
     } catch (err) {
       console.error(err);
-      setAlertMessage("Failed to load categories");
-      setShowAlert(true);
+      setToastMessage("Failed to load categories");
+      setShowToast(true);
     }
   };
 
@@ -127,8 +143,12 @@ const BucketsManagement: React.FC = () => {
     setMaxPercentage(undefined);
     setMinFixedAmount(undefined);
     setIsActive(true);
-    setDisplayOrder(0); // NEW
-    setExcludeFromReports(false); // NEW
+    setExcludeFromReports(false);
+  };
+
+  const resetCategoryForm = () => {
+    setEditingCategory(undefined);
+    setSelectedCategoryBucket(undefined);
   };
 
   const validatePercent = (v?: number) =>
@@ -156,23 +176,28 @@ const BucketsManagement: React.FC = () => {
     }
 
     const now = new Date();
+    const isEditMode = bucketId !== null; // Capture this BEFORE resetting
+
     try {
-      if (bucketId !== null) {
-        // update existing
-        await db.buckets.update(bucketId, {
+      if (isEditMode) {
+        // UPDATE MODE: Keep existing displayOrder
+        await db.buckets.update(bucketId!, {
           name: name.trim(),
           description: description.trim() || undefined,
           minPercentage: minPercentage ?? 0,
           maxPercentage: maxPercentage ?? 100,
           minFixedAmount: minFixedAmount ?? undefined,
           isActive,
-          displayOrder,
+          // displayOrder stays the same (not editable)
           excludeFromReports,
           updatedAt: now,
         } as Partial<Bucket>);
         setToastMessage("Bucket updated");
       } else {
-        // add new
+        // ADD MODE: Auto-calculate displayOrder based on bucket count
+        const allBuckets = await db.buckets.toArray();
+        const newDisplayOrder = allBuckets.length;
+
         const newBucket: Omit<Bucket, "id"> = {
           name: name.trim(),
           description: description.trim() || undefined,
@@ -180,7 +205,7 @@ const BucketsManagement: React.FC = () => {
           maxPercentage: maxPercentage ?? 100,
           minFixedAmount: minFixedAmount ?? undefined,
           isActive,
-          displayOrder,
+          displayOrder: newDisplayOrder,
           excludeFromReports,
           createdAt: now,
           updatedAt: now,
@@ -188,9 +213,17 @@ const BucketsManagement: React.FC = () => {
         await db.buckets.add(newBucket);
         setToastMessage("Bucket created");
       }
-      resetForm();
+
+      // MOVED: Only reset form if we're in add mode
+      if (!isEditMode) {
+        resetForm();
+      }
+
       await fetchBuckets();
       setShowToast(true);
+
+      // Close modal after successful save (both add and edit)
+      handleCloseBucketModal();
     } catch (err) {
       console.error(err);
       setToastMessage("Failed to save bucket");
@@ -205,9 +238,7 @@ const BucketsManagement: React.FC = () => {
     setMinPercentage(b.minPercentage);
     setMaxPercentage(b.maxPercentage);
     setMinFixedAmount(b.minFixedAmount);
-    setIsActive(Boolean(b.isActive));
-    setDisplayOrder(b.displayOrder ?? 0); // NEW
-    setExcludeFromReports(Boolean(b.excludeFromReports)); // NEW
+    setExcludeFromReports(Boolean(b.excludeFromReports));
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -229,69 +260,9 @@ const BucketsManagement: React.FC = () => {
     }
   };
 
-  // ========== Categories CRUD ==========
-
-  const resetCategoryForm = () => {
-    setCategoryId(null);
-    setCategoryName("");
-    setCategoryDescription("");
-    setCategoryBucketId(null);
-    setCategoryIsActive(true);
-  };
-
-  const handleAddOrUpdateCategory = async () => {
-    if (!categoryName.trim()) {
-      setToastMessage("Category name is required");
-      setShowToast(true);
-      return;
-    }
-    if (categoryBucketId == null) {
-      setToastMessage("Select a bucket for this category");
-      setShowToast(true);
-      return;
-    }
-
-    const now = new Date();
-    try {
-      if (categoryId !== null) {
-        await db.categories.update(categoryId, {
-          name: categoryName.trim(),
-          description: categoryDescription.trim() || undefined,
-          isActive: categoryIsActive,
-          updatedAt: now,
-        } as Partial<Category>);
-        setToastMessage("Category updated");
-      } else {
-        const newCategory: Omit<Category, "id"> = {
-          name: categoryName.trim(),
-          bucketId: categoryBucketId,
-          description: categoryDescription.trim() || undefined,
-          isActive: categoryIsActive,
-          createdAt: now,
-          updatedAt: now,
-        };
-        await db.categories.add(newCategory);
-        setToastMessage("Category created");
-      }
-      resetCategoryForm();
-      await fetchCategories();
-      setShowToast(true);
-    } catch (err) {
-      console.error(err);
-      setToastMessage("Failed to save category");
-      setShowToast(true);
-    }
-  };
-
-  const editCategory = (c: Category) => {
-    setCategoryId(c.id ?? null);
-    setCategoryName(c.name ?? "");
-    setCategoryDescription(c.description ?? "");
-    setCategoryBucketId(c.bucketId ?? null);
-    setCategoryIsActive(Boolean(c.isActive));
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
+  /**
+   * toggleCategoryActive - Toggles category active/inactive status
+   */
   const toggleCategoryActive = async (c: Category) => {
     if (c.id == null) return;
     try {
@@ -310,6 +281,22 @@ const BucketsManagement: React.FC = () => {
     }
   };
 
+  const handleCategoryAdded = async (isEdit: boolean = false) => {
+    setEditingCategory(undefined);
+    setSelectedCategoryBucket(undefined);
+    setToastMessage(
+      isEdit ? "Category updated successfully!" : "Category added successfully!"
+    );
+    setShowToast(true);
+    await fetchCategories();
+  };
+
+  const handleCloseCategoryModal = () => {
+    setEditingCategory(undefined);
+    setSelectedCategoryBucket(undefined);
+    setShowCategoryModal(false);
+  };
+
   const deleteBucket = async (id?: number) => {
     if (!id) return;
     try {
@@ -321,7 +308,7 @@ const BucketsManagement: React.FC = () => {
       await fetchCategories();
       setToastMessage("Bucket and its categories deleted");
       setShowToast(true);
-      setDeleteBucketId(null);
+      setDeleteBucketState({ type: "none" });
     } catch (err) {
       console.error(err);
       setToastMessage("Failed to delete bucket");
@@ -336,7 +323,7 @@ const BucketsManagement: React.FC = () => {
       await fetchCategories();
       setToastMessage("Category deleted");
       setShowToast(true);
-      setDeleteCategoryId(null);
+      setDeleteCategoryState({ type: "none" });
     } catch (err) {
       console.error(err);
       setToastMessage("Failed to delete category");
@@ -357,25 +344,9 @@ const BucketsManagement: React.FC = () => {
     setShowBucketModal(false);
   };
 
-  const handleCloseCategoryModal = () => {
-    resetCategoryForm();
-    setShowCategoryModal(false);
-  };
-
   const handleSaveBucket = async () => {
     await saveBucket();
-    if (bucketId === null) {
-      // Only close if we were adding, not editing
-      handleCloseBucketModal();
-    }
-  };
-
-  const handleSaveCategory = async () => {
-    await handleAddOrUpdateCategory();
-    if (categoryId === null) {
-      // Only close if we were adding, not editing
-      handleCloseCategoryModal();
-    }
+    // Remove the conditional check - let saveBucket handle it
   };
 
   const handleReorderBuckets = async (
@@ -416,58 +387,16 @@ const BucketsManagement: React.FC = () => {
    */
   const checkBucketUsage = async (bucketId: number): Promise<boolean> => {
     try {
-      // Get all categories for this bucket
-      const bucketCategories = categories.filter(
-        (c) => c.bucketId === bucketId
-      );
-
-      // Check if any of these categories are used in transactions
       const transactions = await db.transactions.toArray();
-      return transactions.some((txn) =>
-        bucketCategories.some((cat) => cat.id === txn.categoryId)
-      );
+      const categories = await db.categories
+        .where("bucketId")
+        .equals(bucketId)
+        .toArray();
+      const categoryIds = categories.map((c) => c.id);
+      return transactions.some((txn) => categoryIds.includes(txn.categoryId));
     } catch (error) {
       console.error("Error checking bucket usage:", error);
       return false;
-    }
-  };
-
-  /**
-   * initiateBucketDelete - Check bucket usage and show appropriate alert
-   */
-  const initiateBucketDelete = async (bucket: Bucket) => {
-    try {
-      const isUsed = await checkBucketUsage(bucket.id!);
-
-      if (isUsed) {
-        // Show deactivation modal
-        setDeleteBucketId(-bucket.id!); // Use negative ID to indicate deactivation mode
-      } else {
-        // Show simple delete confirmation
-        setDeleteBucketId(bucket.id!);
-      }
-    } catch (error) {
-      console.error("Error checking bucket usage:", error);
-    }
-  };
-
-  /**
-   * handleDeactivateBucket - Deactivates a bucket instead of deleting
-   */
-  const handleDeactivateBucket = async (bucketId: number) => {
-    try {
-      await db.buckets.update(bucketId, {
-        isActive: false,
-        updatedAt: new Date(),
-      } as Partial<Bucket>);
-      setDeleteBucketId(null);
-      setToastMessage("Bucket deactivated successfully!");
-      setShowToast(true);
-      await fetchBuckets();
-    } catch (error) {
-      console.error("Error deactivating bucket:", error);
-      setToastMessage("Failed to deactivate bucket");
-      setShowToast(true);
     }
   };
 
@@ -485,21 +414,95 @@ const BucketsManagement: React.FC = () => {
   };
 
   /**
+   * initiateBucketDelete - Check bucket usage and show appropriate alert
+   */
+  const initiateBucketDelete = async (bucket: Bucket) => {
+    try {
+      const isUsed = await checkBucketUsage(bucket.id!);
+      const isDeactivated = bucket.isActive === false;
+
+      if (isUsed && !isDeactivated) {
+        // Bucket is ACTIVE and has been used in transactions
+        setDeleteBucketState({
+          type: "used",
+          bucketId: bucket.id!,
+          bucketName: bucket.name || "Unknown",
+        });
+      } else if (isUsed && isDeactivated) {
+        // Bucket is DEACTIVATED and has been used in transactions
+        // Show informational alert, no deactivate option
+        setDeleteBucketState({
+          type: "used_deactivated",
+          bucketId: bucket.id!,
+          bucketName: bucket.name || "Unknown",
+        });
+      } else {
+        // Bucket is unused, safe to delete
+        setDeleteBucketState({
+          type: "delete",
+          bucketId: bucket.id!,
+          bucketName: bucket.name || "Unknown",
+        });
+      }
+    } catch (error) {
+      console.error("Error checking bucket usage:", error);
+    }
+  };
+
+  /**
    * initiateCategoryDelete - Check category usage and show appropriate alert
    */
   const initiateCategoryDelete = async (category: Category) => {
     try {
       const isUsed = await checkCategoryUsage(category.id!);
+      const isDeactivated = category.isActive === false;
 
-      if (isUsed) {
-        // Show deactivation modal
-        setDeleteCategoryId(-category.id!); // Use negative ID to indicate deactivation mode
+      if (isUsed && !isDeactivated) {
+        // Category is ACTIVE and has been used in transactions
+        setDeleteCategoryState({
+          type: "used",
+          categoryId: category.id!,
+          categoryName: category.name || "Unknown",
+        });
+      } else if (isUsed && isDeactivated) {
+        // Category is DEACTIVATED and has been used in transactions
+        // Show informational alert, no deactivate option
+        setDeleteCategoryState({
+          type: "used_deactivated",
+          categoryId: category.id!,
+          categoryName: category.name || "Unknown",
+        });
       } else {
-        // Show simple delete confirmation
-        setDeleteCategoryId(category.id!);
+        // Category is unused, safe to delete
+        setDeleteCategoryState({
+          type: "delete",
+          categoryId: category.id!,
+          categoryName: category.name || "Unknown",
+        });
       }
     } catch (error) {
       console.error("Error checking category usage:", error);
+    }
+  };
+
+  /**
+   * handleDeactivateBucket - Deactivates a bucket instead of deleting
+   */
+  const handleDeactivateBucket = async (bucketId: number) => {
+    try {
+      const now = new Date();
+      await db.buckets.update(bucketId, {
+        isActive: false,
+        updatedAt: now,
+      } as Partial<Bucket>);
+      setDeleteBucketState({ type: "none" });
+      setToastMessage("Bucket deactivated successfully!");
+      setShowToast(true);
+      await fetchBuckets();
+    } catch (error) {
+      console.error("Error deactivating bucket:", error);
+      setToastMessage("Failed to deactivate bucket");
+      setShowToast(true);
     }
   };
 
@@ -508,11 +511,12 @@ const BucketsManagement: React.FC = () => {
    */
   const handleDeactivateCategory = async (categoryId: number) => {
     try {
+      const now = new Date();
       await db.categories.update(categoryId, {
         isActive: false,
-        updatedAt: new Date(),
+        updatedAt: now,
       } as Partial<Category>);
-      setDeleteCategoryId(null);
+      setDeleteCategoryState({ type: "none" });
       setToastMessage("Category deactivated successfully!");
       setShowToast(true);
       await fetchCategories();
@@ -596,7 +600,7 @@ const BucketsManagement: React.FC = () => {
                             onClick={(e) => {
                               e.stopPropagation();
                               resetCategoryForm();
-                              setCategoryBucketId(b.id ?? null);
+                              setSelectedCategoryBucket(b.id);
                               setShowCategoryModal(true);
                             }}
                             aria-label={`Add category to ${b.name}`}
@@ -695,7 +699,7 @@ const BucketsManagement: React.FC = () => {
                                 color="secondary"
                                 fill="clear"
                                 onClick={() => {
-                                  editCategory(c);
+                                  setEditingCategory(c);
                                   setShowCategoryModal(true);
                                 }}
                                 aria-label={`Edit category ${c.name}`}
@@ -845,26 +849,6 @@ const BucketsManagement: React.FC = () => {
                     min={0}
                   />
                 </IonCol>
-              </IonRow>
-
-              <IonRow>
-                <IonCol size="6">
-                  <IonInput
-                    label="Display Order"
-                    labelPlacement="stacked"
-                    fill="outline"
-                    type="number"
-                    value={displayOrder}
-                    onIonChange={(e) =>
-                      setDisplayOrder(
-                        e.detail.value ? Number(e.detail.value) : 0
-                      )
-                    }
-                    placeholder="0"
-                    min={0}
-                    helperText="Lower numbers appear first"
-                  />
-                </IonCol>
                 <IonCol size="6">
                   <IonItem lines="none">
                     <IonLabel>Exclude from Reports</IonLabel>
@@ -878,19 +862,8 @@ const BucketsManagement: React.FC = () => {
                 </IonCol>
               </IonRow>
 
-              <IonRow>
-                <IonCol>
-                  <IonItem lines="none">
-                    <IonLabel>Active</IonLabel>
-                    <IonCheckbox
-                      checked={isActive}
-                      onIonChange={(e) =>
-                        setIsActive(Boolean(e.detail.checked))
-                      }
-                    />
-                  </IonItem>
-                </IonCol>
-              </IonRow>
+              {/* REMOVED: Active checkbox - buckets are toggled via the toggle button in the list */}
+              {/* This checkbox should not appear in either add or edit mode */}
 
               <IonRow>
                 <IonCol>
@@ -903,97 +876,15 @@ const BucketsManagement: React.FC = () => {
           </IonContent>
         </IonModal>
 
-        {/* Category Modal */}
-        <IonModal
+        {/* Replace inline category form with AddCategoryModal component */}
+        <AddCategoryModal
           isOpen={showCategoryModal}
-          onDidDismiss={handleCloseCategoryModal}
-        >
-          <IonHeader>
-            <IonToolbar>
-              <IonButtons slot="end">
-                <IonButton onClick={handleCloseCategoryModal}>
-                  <IonIcon icon={close} />
-                </IonButton>
-              </IonButtons>
-              <IonTitle>
-                {categoryId ? "Edit Category" : "Add Category"}
-              </IonTitle>
-            </IonToolbar>
-          </IonHeader>
-          <IonContent className="ion-padding">
-            <IonGrid>
-              <IonRow>
-                <IonCol>
-                  <IonSelect
-                    label="Bucket"
-                    labelPlacement="stacked"
-                    fill="outline"
-                    value={categoryBucketId ?? undefined}
-                    onIonChange={(e) =>
-                      setCategoryBucketId(e.detail.value ?? null)
-                    }
-                  >
-                    <IonSelectOption value={null}>-- select --</IonSelectOption>
-                    {buckets.map((b) => (
-                      <IonSelectOption key={b.id} value={b.id}>
-                        {b.name}
-                      </IonSelectOption>
-                    ))}
-                  </IonSelect>
-                </IonCol>
-              </IonRow>
-
-              <IonRow>
-                <IonCol>
-                  <IonInput
-                    label="Name"
-                    labelPlacement="stacked"
-                    fill="outline"
-                    value={categoryName}
-                    onIonChange={(e) => setCategoryName(e.detail.value ?? "")}
-                    placeholder="e.g., Rent"
-                  />
-                </IonCol>
-              </IonRow>
-
-              <IonRow>
-                <IonCol>
-                  <IonInput
-                    label="Description (optional)"
-                    labelPlacement="stacked"
-                    fill="outline"
-                    value={categoryDescription}
-                    onIonChange={(e) =>
-                      setCategoryDescription(e.detail.value ?? "")
-                    }
-                  />
-                </IonCol>
-              </IonRow>
-
-              <IonRow>
-                <IonCol>
-                  <IonItem lines="none">
-                    <IonLabel>Active</IonLabel>
-                    <IonCheckbox
-                      checked={categoryIsActive}
-                      onIonChange={(e) =>
-                        setCategoryIsActive(Boolean(e.detail.checked))
-                      }
-                    />
-                  </IonItem>
-                </IonCol>
-              </IonRow>
-
-              <IonRow>
-                <IonCol>
-                  <IonButton expand="block" onClick={handleSaveCategory}>
-                    {categoryId ? "Update Category" : "Add Category"}
-                  </IonButton>
-                </IonCol>
-              </IonRow>
-            </IonGrid>
-          </IonContent>
-        </IonModal>
+          onClose={handleCloseCategoryModal}
+          onCategoryAdded={() => handleCategoryAdded(!!editingCategory)}
+          buckets={buckets}
+          preSelectedBucketId={selectedCategoryBucket}
+          editingCategory={editingCategory}
+        />
 
         <IonToast
           isOpen={showToast}
@@ -1014,10 +905,32 @@ const BucketsManagement: React.FC = () => {
 
         {/* Delete bucket confirmation */}
         <IonAlert
-          isOpen={deleteBucketId !== null && deleteBucketId < 0}
-          onDidDismiss={() => setDeleteBucketId(null)}
+          isOpen={deleteBucketState.type === "used_deactivated"}
+          onDidDismiss={() => setDeleteBucketState({ type: "none" })}
           header="Cannot Delete Used Bucket"
-          message={`This bucket has been used in transactions and cannot be deleted. Would you like to deactivate it instead? Deactivated buckets will no longer appear in dropdowns but will remain in your records.`}
+          message={`This bucket (${
+            deleteBucketState.type === "used_deactivated"
+              ? deleteBucketState.bucketName
+              : ""
+          }) has been used in transactions and cannot be deleted. Deactivated buckets will no longer appear in dropdowns but will remain in your records.`}
+          buttons={[
+            {
+              text: "OK",
+              role: "cancel",
+            },
+          ]}
+        />
+
+        {/* ALERT: Active bucket has been used in transactions (offer to deactivate) */}
+        <IonAlert
+          isOpen={deleteBucketState.type === "used"}
+          onDidDismiss={() => setDeleteBucketState({ type: "none" })}
+          header="Cannot Delete Used Bucket"
+          message={`This bucket (${
+            deleteBucketState.type === "used"
+              ? deleteBucketState.bucketName
+              : ""
+          }) has been used in transactions and cannot be deleted. Would you like to deactivate it instead? Deactivated buckets will no longer appear in dropdowns but will remain in your records.`}
           buttons={[
             {
               text: "Cancel",
@@ -1027,8 +940,8 @@ const BucketsManagement: React.FC = () => {
               text: "Deactivate",
               role: "destructive",
               handler: () => {
-                if (deleteBucketId) {
-                  handleDeactivateBucket(Math.abs(deleteBucketId));
+                if (deleteBucketState.type === "used") {
+                  handleDeactivateBucket(deleteBucketState.bucketId);
                 }
               },
             },
@@ -1037,10 +950,14 @@ const BucketsManagement: React.FC = () => {
 
         {/* ALERT: Delete unused bucket */}
         <IonAlert
-          isOpen={deleteBucketId !== null && deleteBucketId > 0}
-          onDidDismiss={() => setDeleteBucketId(null)}
+          isOpen={deleteBucketState.type === "delete"}
+          onDidDismiss={() => setDeleteBucketState({ type: "none" })}
           header="Confirm Delete"
-          message="Are you sure you want to delete this bucket? All associated categories will also be deleted."
+          message={`Are you sure you want to delete "${
+            deleteBucketState.type === "delete"
+              ? deleteBucketState.bucketName
+              : ""
+          }"? All associated categories will also be deleted. This action cannot be undone.`}
           buttons={[
             {
               text: "Cancel",
@@ -1050,20 +967,44 @@ const BucketsManagement: React.FC = () => {
               text: "Delete",
               role: "destructive",
               handler: () => {
-                if (deleteBucketId) {
-                  deleteBucket(deleteBucketId);
+                if (deleteBucketState.type === "delete") {
+                  deleteBucket(deleteBucketState.bucketId);
                 }
               },
             },
           ]}
         />
 
-        {/* ALERT: Category has been used in transactions */}
+        {/* ALERTS FOR CATEGORIES */}
+
+        {/* ALERT: Deactivated category has been used in transactions */}
         <IonAlert
-          isOpen={deleteCategoryId !== null && deleteCategoryId < 0}
-          onDidDismiss={() => setDeleteCategoryId(null)}
+          isOpen={deleteCategoryState.type === "used_deactivated"}
+          onDidDismiss={() => setDeleteCategoryState({ type: "none" })}
           header="Cannot Delete Used Category"
-          message={`This category has been used in transactions and cannot be deleted. Would you like to deactivate it instead? Deactivated categories will no longer appear in dropdowns but will remain in your records.`}
+          message={`This category (${
+            deleteCategoryState.type === "used_deactivated"
+              ? deleteCategoryState.categoryName
+              : ""
+          }) has been used in transactions and cannot be deleted. Deactivated categories will no longer appear in dropdowns but will remain in your records.`}
+          buttons={[
+            {
+              text: "OK",
+              role: "cancel",
+            },
+          ]}
+        />
+
+        {/* ALERT: Active category has been used in transactions (offer to deactivate) */}
+        <IonAlert
+          isOpen={deleteCategoryState.type === "used"}
+          onDidDismiss={() => setDeleteCategoryState({ type: "none" })}
+          header="Cannot Delete Used Category"
+          message={`This category (${
+            deleteCategoryState.type === "used"
+              ? deleteCategoryState.categoryName
+              : ""
+          }) has been used in transactions and cannot be deleted. Would you like to deactivate it instead? Deactivated categories will no longer appear in dropdowns but will remain in your records.`}
           buttons={[
             {
               text: "Cancel",
@@ -1073,8 +1014,8 @@ const BucketsManagement: React.FC = () => {
               text: "Deactivate",
               role: "destructive",
               handler: () => {
-                if (deleteCategoryId) {
-                  handleDeactivateCategory(Math.abs(deleteCategoryId));
+                if (deleteCategoryState.type === "used") {
+                  handleDeactivateCategory(deleteCategoryState.categoryId);
                 }
               },
             },
@@ -1083,10 +1024,14 @@ const BucketsManagement: React.FC = () => {
 
         {/* ALERT: Delete unused category */}
         <IonAlert
-          isOpen={deleteCategoryId !== null && deleteCategoryId > 0}
-          onDidDismiss={() => setDeleteCategoryId(null)}
+          isOpen={deleteCategoryState.type === "delete"}
+          onDidDismiss={() => setDeleteCategoryState({ type: "none" })}
           header="Confirm Delete"
-          message="Are you sure you want to delete this category?"
+          message={`Are you sure you want to delete "${
+            deleteCategoryState.type === "delete"
+              ? deleteCategoryState.categoryName
+              : ""
+          }"? This action cannot be undone.`}
           buttons={[
             {
               text: "Cancel",
@@ -1096,8 +1041,8 @@ const BucketsManagement: React.FC = () => {
               text: "Delete",
               role: "destructive",
               handler: () => {
-                if (deleteCategoryId) {
-                  deleteCategory(deleteCategoryId);
+                if (deleteCategoryState.type === "delete") {
+                  deleteCategory(deleteCategoryState.categoryId);
                 }
               },
             },

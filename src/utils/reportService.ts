@@ -79,11 +79,6 @@ export const generatePeriodReport = async (
     .between(start, end)
     .toArray();
 
-  console.log("=== REPORT DEBUG ===");
-  console.log(`Period: ${label}`);
-  console.log(`Date range: ${start.toISOString()} to ${end.toISOString()}`);
-  console.log(`Total transactions found: ${allTransactions.length}`);
-
   // Fetch buckets and categories
   const buckets = await db.buckets.toArray();
   const categories = await db.categories.toArray();
@@ -154,10 +149,6 @@ export const generatePeriodReport = async (
       });
     }
   });
-
-  console.log(`Total Income: ${totalIncome}`);
-  console.log(`Total Expense: ${totalExpense}`);
-  console.log("=== END DEBUG ===");
 
   const netTotal = totalIncome + totalExpense;
 

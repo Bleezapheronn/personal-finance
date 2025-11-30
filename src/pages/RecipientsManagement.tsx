@@ -34,6 +34,12 @@ import { db } from "../db";
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import type { Recipient } from "../db";
 
+type DeleteState =
+  | { type: "none" }
+  | { type: "used"; recipientId: number; recipientName: string }
+  | { type: "used_deactivated"; recipientId: number; recipientName: string }
+  | { type: "delete"; recipientId: number; recipientName: string };
+
 const RecipientsManagement: React.FC = () => {
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [editingRecipient, setEditingRecipient] = useState<Recipient | null>(
@@ -42,9 +48,6 @@ const RecipientsManagement: React.FC = () => {
   const [showAddRecipientModal, setShowAddRecipientModal] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [deleteRecipientId, setDeleteRecipientId] = useState<number | null>(
-    null
-  );
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
 
@@ -59,6 +62,8 @@ const RecipientsManagement: React.FC = () => {
   const [duplicateRecipient, setDuplicateRecipient] =
     useState<Recipient | null>(null);
   const [showDuplicateAlert, setShowDuplicateAlert] = useState(false);
+
+  const [deleteState, setDeleteState] = useState<DeleteState>({ type: "none" });
 
   useEffect(() => {
     fetchRecipients();
@@ -146,13 +151,30 @@ const RecipientsManagement: React.FC = () => {
     try {
       setLoading(true);
       const isUsed = await checkRecipientUsage(recipient.id!);
+      const isDeactivated = recipient.isActive === false;
 
-      if (isUsed) {
-        // Show deactivation modal
-        setDeleteRecipientId(-recipient.id!); // Use negative ID to indicate deactivation mode
+      if (isUsed && !isDeactivated) {
+        // Recipient is ACTIVE and has been used in transactions
+        setDeleteState({
+          type: "used",
+          recipientId: recipient.id!,
+          recipientName: recipient.name,
+        });
+      } else if (isUsed && isDeactivated) {
+        // Recipient is DEACTIVATED and has been used in transactions
+        // Show informational alert, no deactivate option
+        setDeleteState({
+          type: "used_deactivated",
+          recipientId: recipient.id!,
+          recipientName: recipient.name,
+        });
       } else {
-        // Show simple delete confirmation
-        setDeleteRecipientId(recipient.id!);
+        // Recipient is unused, safe to delete
+        setDeleteState({
+          type: "delete",
+          recipientId: recipient.id!,
+          recipientName: recipient.name,
+        });
       }
     } catch (error) {
       console.error("Error checking recipient usage:", error);
@@ -168,7 +190,7 @@ const RecipientsManagement: React.FC = () => {
     try {
       setLoading(true);
       await db.recipients.update(recipientId, { isActive: false });
-      setDeleteRecipientId(null);
+      setDeleteState({ type: "none" });
       setToastMessage("Recipient deactivated successfully!");
       setShowToast(true);
       await fetchRecipients();
@@ -188,7 +210,7 @@ const RecipientsManagement: React.FC = () => {
     try {
       setLoading(true);
       await db.recipients.delete(recipientId);
-      setDeleteRecipientId(null);
+      setDeleteState({ type: "none" });
       setToastMessage("Recipient deleted successfully!");
       setShowToast(true);
       await fetchRecipients();
@@ -336,9 +358,6 @@ const RecipientsManagement: React.FC = () => {
   };
 
   // Determine which alert to show
-  const showDeactivateAlert = deleteRecipientId! < 0;
-  const deleteIdForAlert = Math.abs(deleteRecipientId || 0);
-  const recipientForAlert = recipients.find((r) => r.id === deleteIdForAlert);
 
   return (
     <IonPage>
@@ -526,13 +545,31 @@ const RecipientsManagement: React.FC = () => {
           </IonCardContent>
         </IonCard>
 
-        {/* ALERT: Recipient has been used in transactions */}
+        {/* ALERT: Deactivated recipient has been used in transactions */}
         <IonAlert
-          isOpen={showDeactivateAlert && deleteRecipientId !== null}
-          onDidDismiss={() => setDeleteRecipientId(null)}
+          isOpen={deleteState.type === "used_deactivated"}
+          onDidDismiss={() => setDeleteState({ type: "none" })}
           header="Cannot Delete Used Recipient"
           message={`This recipient (${
-            recipientForAlert?.name || ""
+            deleteState.type === "used_deactivated"
+              ? deleteState.recipientName
+              : ""
+          }) has been used in transactions and cannot be deleted. Deactivated recipients will no longer appear in dropdowns but will remain in your records.`}
+          buttons={[
+            {
+              text: "OK",
+              role: "cancel",
+            },
+          ]}
+        />
+
+        {/* ALERT: Active recipient has been used in transactions (offer to deactivate) */}
+        <IonAlert
+          isOpen={deleteState.type === "used"}
+          onDidDismiss={() => setDeleteState({ type: "none" })}
+          header="Cannot Delete Used Recipient"
+          message={`This recipient (${
+            deleteState.type === "used" ? deleteState.recipientName : ""
           }) has been used in transactions and cannot be deleted. Would you like to deactivate it instead? Deactivated recipients will no longer appear in dropdowns but will remain in your records.`}
           buttons={[
             {
@@ -543,8 +580,8 @@ const RecipientsManagement: React.FC = () => {
               text: "Deactivate",
               role: "destructive",
               handler: () => {
-                if (deleteIdForAlert) {
-                  handleDeactivateRecipient(deleteIdForAlert);
+                if (deleteState.type === "used") {
+                  handleDeactivateRecipient(deleteState.recipientId);
                 }
               },
             },
@@ -553,11 +590,11 @@ const RecipientsManagement: React.FC = () => {
 
         {/* ALERT: Delete unused recipient */}
         <IonAlert
-          isOpen={!showDeactivateAlert && deleteRecipientId !== null}
-          onDidDismiss={() => setDeleteRecipientId(null)}
+          isOpen={deleteState.type === "delete"}
+          onDidDismiss={() => setDeleteState({ type: "none" })}
           header="Confirm Delete"
           message={`Are you sure you want to delete "${
-            recipientForAlert?.name || ""
+            deleteState.type === "delete" ? deleteState.recipientName : ""
           }"? This action cannot be undone.`}
           buttons={[
             {
@@ -568,8 +605,8 @@ const RecipientsManagement: React.FC = () => {
               text: "Delete",
               role: "destructive",
               handler: () => {
-                if (deleteIdForAlert) {
-                  handleDeleteRecipient(deleteIdForAlert);
+                if (deleteState.type === "delete") {
+                  handleDeleteRecipient(deleteState.recipientId);
                 }
               },
             },

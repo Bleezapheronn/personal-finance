@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   IonModal,
   IonHeader,
@@ -24,6 +24,8 @@ interface AddCategoryModalProps {
   onClose: () => void;
   onCategoryAdded: (category: Category) => void;
   buckets: Bucket[];
+  preSelectedBucketId?: number; // NEW: Optional pre-selected bucket
+  editingCategory?: Category; // NEW: For edit mode
 }
 
 export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
@@ -31,17 +33,35 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
   onClose,
   onCategoryAdded,
   buckets,
+  preSelectedBucketId,
+  editingCategory,
 }) => {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [bucketId, setBucketId] = useState<number | undefined>(undefined);
+  const [bucketId, setBucketId] = useState<number | undefined>(
+    preSelectedBucketId
+  );
   const [isActive, setIsActive] = useState(true);
   const [alertMessage, setAlertMessage] = useState("");
+
+  // Set pre-selected bucket when modal opens
+  useEffect(() => {
+    if (isOpen && preSelectedBucketId) {
+      setBucketId(preSelectedBucketId);
+    }
+
+    if (editingCategory) {
+      setName(editingCategory.name || "");
+      setDescription(editingCategory.description || "");
+      setBucketId(editingCategory.bucketId);
+      setIsActive(editingCategory.isActive !== false);
+    }
+  }, [isOpen, preSelectedBucketId, editingCategory]);
 
   const resetForm = () => {
     setName("");
     setDescription("");
-    setBucketId(undefined);
+    setBucketId(preSelectedBucketId);
     setIsActive(true);
     setAlertMessage("");
   };
@@ -58,26 +78,45 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
 
     try {
       const now = new Date();
-      const newCategory: Omit<Category, "id"> = {
-        name: name.trim(),
-        bucketId: bucketId,
-        description: description.trim() || undefined,
-        isActive: isActive,
-        createdAt: now,
-        updatedAt: now,
-      };
 
-      const id = await db.categories.add(newCategory);
-      const saved = await db.categories.get(id);
+      if (editingCategory?.id) {
+        // UPDATE MODE
+        await db.categories.update(editingCategory.id, {
+          name: name.trim(),
+          bucketId: bucketId,
+          description: description.trim() || undefined,
+          isActive: isActive,
+          updatedAt: now,
+        });
 
-      if (saved) {
-        onCategoryAdded(saved);
-        resetForm();
-        onClose();
+        const updated = await db.categories.get(editingCategory.id);
+        if (updated) {
+          onCategoryAdded(updated);
+        }
+      } else {
+        // ADD MODE
+        const newCategory: Omit<Category, "id"> = {
+          name: name.trim(),
+          bucketId: bucketId,
+          description: description.trim() || undefined,
+          isActive: isActive,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const id = await db.categories.add(newCategory);
+        const saved = await db.categories.get(id);
+
+        if (saved) {
+          onCategoryAdded(saved);
+        }
       }
+
+      resetForm();
+      onClose();
     } catch (err) {
       console.error(err);
-      setAlertMessage("Failed to add category");
+      setAlertMessage("Failed to save category");
     }
   };
 
@@ -90,7 +129,9 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
     <IonModal isOpen={isOpen} onDidDismiss={handleClose}>
       <IonHeader>
         <IonToolbar>
-          <IonTitle>Add Category</IonTitle>
+          <IonTitle>
+            {editingCategory ? "Edit Category" : "Add Category"}
+          </IonTitle>
           <IonButtons slot="end">
             <IonButton onClick={handleClose}>
               <IonIcon icon={close} />
@@ -157,7 +198,7 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
           <IonRow>
             <IonCol>
               <IonButton expand="block" onClick={handleSave}>
-                Add Category
+                {editingCategory ? "Save Changes" : "Add Category"}
               </IonButton>
             </IonCol>
           </IonRow>
