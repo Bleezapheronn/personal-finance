@@ -846,6 +846,7 @@ const AccountsManagement: React.FC = () => {
               setEditingAccount(null);
               setShowAddAccountModal(true);
             }}
+            title="Add Account"
           >
             <IonIcon icon={add} />
           </IonFabButton>

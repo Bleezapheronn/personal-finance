@@ -625,6 +625,7 @@ const RecipientsManagement: React.FC = () => {
               setEditingRecipient(null);
               setShowAddRecipientModal(true);
             }}
+            title="Add Recipient"
           >
             <IonIcon icon={add} />
           </IonFabButton>

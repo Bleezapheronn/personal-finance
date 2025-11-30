@@ -784,6 +784,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
               resetForm();
               setShowAddTemplateModal(true);
             }}
+            title="Add Template"
           >
             <IonIcon icon={add} />
           </IonFabButton>

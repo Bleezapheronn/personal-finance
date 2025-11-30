@@ -538,7 +538,7 @@ const BucketsManagement: React.FC = () => {
       <IonContent className="ion-padding">
         {/* FAB button for adding buckets */}
         <IonFab vertical="bottom" horizontal="end" slot="fixed">
-          <IonFabButton onClick={handleOpenBucketModal}>
+          <IonFabButton onClick={handleOpenBucketModal} title="Add Bucket">
             <IonIcon icon={add} />
           </IonFabButton>
         </IonFab>

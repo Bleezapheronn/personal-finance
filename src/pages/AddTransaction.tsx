@@ -20,6 +20,7 @@ import {
   IonItem,
   IonIcon,
   useIonViewWillEnter,
+  IonToast,
 } from "@ionic/react";
 import {
   db,
@@ -99,6 +100,8 @@ const AddTransaction: React.FC = () => {
   const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
 
   const [successMsg, setSuccessMsg] = useState("");
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [successToastMessage, setSuccessToastMessage] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [fieldErrors, setFieldErrors] = useState<ValidationErrors>({});
 
@@ -144,93 +147,99 @@ const AddTransaction: React.FC = () => {
     }
   }, [amount, originalAmount, exchangeRateOverride]);
 
-  // Load lookup data on mount
-  useEffect(() => {
-    let isMounted = true;
+  // Load lookup data on mount AND when page is visited
+  useIonViewWillEnter(() => {
+    loadLookupData();
+  });
 
-    const load = async () => {
-      try {
-        const [b, c, a, pm, r, allTemplates] = await Promise.all([
-          db.buckets.toArray(),
-          db.categories.toArray(),
-          db.accounts.toArray(),
-          db.paymentMethods.toArray(),
-          db.recipients.toArray(),
-          db.smsImportTemplates.toArray(),
-        ]);
+  // Helper function to load all lookup data
+  const loadLookupData = async () => {
+    try {
+      const [b, c, a, pm, r, allTemplates] = await Promise.all([
+        db.buckets.toArray(),
+        db.categories.toArray(),
+        db.accounts.toArray(),
+        db.paymentMethods.toArray(),
+        db.recipients.toArray(),
+        db.smsImportTemplates.toArray(),
+      ]);
 
-        if (!isMounted) return;
+      // When in EDIT MODE: Include deactivated items
+      // When in ADD MODE: Only show active items
+      const activeAccounts = isEditMode
+        ? a
+        : a.filter((acc) => acc.isActive !== false);
 
-        const activeAccounts = a.filter((acc) => acc.isActive !== false);
-        const activeBuckets = b.filter((bkt) => bkt.isActive !== false);
-        const activeCategories = c.filter((cat) => cat.isActive !== false);
+      const activeBuckets = isEditMode
+        ? b
+        : b.filter((bkt) => bkt.isActive !== false);
 
-        // Filter payment methods: active AND account exists
-        const activePaymentMethods = pm.filter((pmeth) => {
-          const accountExists = activeAccounts.some(
-            (acc) => acc.id === pmeth.accountId
-          );
-          return pmeth.isActive !== false && accountExists;
-        });
+      const activeCategories = isEditMode
+        ? c
+        : c.filter((cat) => cat.isActive !== false);
 
-        const activeRecipients = r.filter((rec) => rec.isActive !== false);
+      // Filter payment methods: active AND account exists
+      const activePaymentMethods = (
+        isEditMode ? pm : pm.filter((pmeth) => pmeth.isActive !== false)
+      ).filter((pmeth) => {
+        const accountExists = activeAccounts.some(
+          (acc) => acc.id === pmeth.accountId
+        );
+        return accountExists;
+      });
 
-        setBuckets(activeBuckets);
-        setAccounts(activeAccounts);
-        setSmsTemplates(allTemplates.filter((t) => t.isActive !== false));
+      const activeRecipients = isEditMode
+        ? r
+        : r.filter((rec) => rec.isActive !== false);
 
-        const transactions = await db.transactions.toArray();
+      setBuckets(activeBuckets);
+      setAccounts(activeAccounts);
+      setSmsTemplates(allTemplates.filter((t) => t.isActive !== false));
 
-        if (!isMounted) return;
+      const transactions = await db.transactions.toArray();
 
-        // Count transactions per recipient
-        const recipientCounts = new Map<number, number>();
-        transactions.forEach((txn) => {
-          const count = recipientCounts.get(txn.recipientId) || 0;
-          recipientCounts.set(txn.recipientId, count + 1);
-        });
-        const sortedRecips = [...activeRecipients].sort((a, b) => {
-          const countA = recipientCounts.get(a.id!) || 0;
-          const countB = recipientCounts.get(b.id!) || 0;
-          return countB - countA; // Most transactions first
-        });
-        setSortedRecipients(sortedRecips);
+      // Count transactions per recipient (use only active for sorting)
+      const recipientCounts = new Map<number, number>();
+      transactions.forEach((txn) => {
+        const count = recipientCounts.get(txn.recipientId) || 0;
+        recipientCounts.set(txn.recipientId, count + 1);
+      });
+      const sortedRecips = [...activeRecipients].sort((a, b) => {
+        const countA = recipientCounts.get(a.id!) || 0;
+        const countB = recipientCounts.get(b.id!) || 0;
+        return countB - countA; // Most transactions first
+      });
+      setSortedRecipients(sortedRecips);
 
-        // Count transactions per category
-        const categoryCounts = new Map<number, number>();
-        transactions.forEach((txn) => {
-          const count = categoryCounts.get(txn.categoryId) || 0;
-          categoryCounts.set(txn.categoryId, count + 1);
-        });
-        const sortedCats = [...activeCategories].sort((a, b) => {
-          const countA = categoryCounts.get(a.id!) || 0;
-          const countB = categoryCounts.get(b.id!) || 0;
-          return countB - countA; // Most transactions first
-        });
-        setSortedCategories(sortedCats);
+      // Count transactions per category
+      const categoryCounts = new Map<number, number>();
+      transactions.forEach((txn) => {
+        const count = categoryCounts.get(txn.categoryId) || 0;
+        categoryCounts.set(txn.categoryId, count + 1);
+      });
+      const sortedCats = [...activeCategories].sort((a, b) => {
+        const countA = categoryCounts.get(a.id!) || 0;
+        const countB = categoryCounts.get(b.id!) || 0;
+        return countB - countA; // Most transactions first
+      });
+      setSortedCategories(sortedCats);
 
-        // Count transactions per payment method
-        const paymentMethodCounts = new Map<number, number>();
-        transactions.forEach((txn) => {
-          const count = paymentMethodCounts.get(txn.paymentChannelId) || 0;
-          paymentMethodCounts.set(txn.paymentChannelId, count + 1);
-        });
-        const sortedPMs = [...activePaymentMethods].sort((a, b) => {
-          const countA = paymentMethodCounts.get(a.id!) || 0;
-          const countB = paymentMethodCounts.get(b.id!) || 0;
-          return countB - countA; // Most transactions first
-        });
-        setSortedPaymentMethods(sortedPMs);
-      } catch (err) {
-        console.error("Failed to load lookup data:", err);
-      }
-    };
-    load();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+      // Count transactions per payment method
+      const paymentMethodCounts = new Map<number, number>();
+      transactions.forEach((txn) => {
+        const count = paymentMethodCounts.get(txn.paymentChannelId) || 0;
+        paymentMethodCounts.set(txn.paymentChannelId, count + 1);
+      });
+      const sortedPMs = [...activePaymentMethods].sort((a, b) => {
+        const countA = paymentMethodCounts.get(a.id!) || 0;
+        const countB = paymentMethodCounts.get(b.id!) || 0;
+        return countB - countA; // Most transactions first
+      });
+      setSortedPaymentMethods(sortedPMs);
+    } catch (err) {
+      console.error("Failed to load lookup data:", err);
+    }
+  };
 
   // Load transaction data in edit mode OR clear form in add mode when id changes
   useEffect(() => {
@@ -474,7 +483,7 @@ const AddTransaction: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg("");
-    setSuccessMsg("");
+    setShowSuccessToast(false);
     setFieldErrors({});
 
     // Validate form using utility function
@@ -615,7 +624,8 @@ const AddTransaction: React.FC = () => {
           await db.transactions.update(outgoingTxId, outgoingTx);
           await db.transactions.update(incomingTxId, incomingTx);
 
-          setSuccessMsg("Transfer transaction updated successfully!");
+          setSuccessToastMessage("Transfer transaction updated successfully!");
+          setShowSuccessToast(true);
         } else {
           // CREATE MODE: Create new pair of transactions
           const outgoingId = await db.transactions.add(outgoingTx);
@@ -629,7 +639,8 @@ const AddTransaction: React.FC = () => {
             transferPairId: outgoingId,
           });
 
-          setSuccessMsg("Transfer transaction added successfully!");
+          setSuccessToastMessage("Transfer transaction added successfully!");
+          setShowSuccessToast(true);
         }
       } else {
         // REGULAR TRANSACTION (income/expense)
@@ -663,33 +674,39 @@ const AddTransaction: React.FC = () => {
 
         if (isEditMode && id) {
           await db.transactions.update(Number(id), tx);
-          setSuccessMsg("Transaction updated successfully!");
+          setSuccessToastMessage("Transaction updated successfully!");
+          setShowSuccessToast(true);
         } else {
           await db.transactions.add(tx);
-          setSuccessMsg("Transaction added successfully!");
+          setSuccessToastMessage("Transaction added successfully!");
+          setShowSuccessToast(true);
         }
       }
 
-      // Reset form
-      setSelectedDate("");
-      setSelectedTime("");
-      setFieldErrors({});
-      setAmount("");
-      setTransactionCost("");
-      setTransactionReference("");
-      setOriginalAmount("");
-      setOriginalCurrency("");
-      setExchangeRate("");
-      setExchangeRateOverride(false);
-      setCategoryId(undefined);
-      setPaymentMethodId(undefined);
-      setRecipientId(undefined);
-      setTransferRecipientId(undefined);
-      setTransferToPaymentMethodId(undefined);
-      setDescription("");
+      // Reset form (ONLY for add mode, not edit mode)
+      if (!isEditMode) {
+        setSelectedDate("");
+        setSelectedTime("");
+        setFieldErrors({});
+        setAmount("");
+        setTransactionCost("");
+        setTransactionReference("");
+        setOriginalAmount("");
+        setOriginalCurrency("");
+        setExchangeRate("");
+        setExchangeRateOverride(false);
+        setCategoryId(undefined);
+        setPaymentMethodId(undefined);
+        setRecipientId(undefined);
+        setTransferRecipientId(undefined);
+        setTransferToPaymentMethodId(undefined);
+        setDescription("");
 
-      // Navigate to transactions list
-      history.push("/transactions");
+        // Redirect to transactions list after successful add (with brief delay for toast)
+        setTimeout(() => {
+          history.push("/transactions");
+        }, 500);
+      }
     } catch (error) {
       console.error("Error adding transaction:", error);
       setErrorMsg(
@@ -1026,7 +1043,7 @@ const AddTransaction: React.FC = () => {
                           backgroundColor: "var(--ion-background-color)",
                           border: "1px solid var(--ion-color-medium)",
                           borderRadius: "4px",
-                          marginTop: "4px",
+                          marginTop: "64px",
                           maxHeight: "200px",
                           overflowY: "auto",
                           zIndex: 1000,
@@ -1719,6 +1736,16 @@ const AddTransaction: React.FC = () => {
         smsTemplates={smsTemplates}
         paymentMethods={sortedPaymentMethods}
         paymentMethodId={paymentMethodId}
+      />
+
+      {/* TOAST NOTIFICATIONS */}
+      <IonToast
+        isOpen={showSuccessToast}
+        onDidDismiss={() => setShowSuccessToast(false)}
+        message={successToastMessage}
+        duration={2000}
+        position="top"
+        color="success"
       />
     </IonPage>
   );
