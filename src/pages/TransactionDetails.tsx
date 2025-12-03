@@ -17,9 +17,13 @@ import {
   IonLabel,
   useIonViewWillEnter,
   IonIcon,
+  IonAlert,
+  IonGrid,
+  IonRow,
+  IonCol,
 } from "@ionic/react";
 import { useParams, useHistory } from "react-router-dom";
-import { createOutline } from "ionicons/icons";
+import { createOutline, calendar, trash } from "ionicons/icons";
 import {
   db,
   Transaction,
@@ -27,6 +31,7 @@ import {
   PaymentMethod,
   Recipient,
   Account,
+  Budget,
 } from "../db";
 
 const TransactionDetails: React.FC = () => {
@@ -40,6 +45,8 @@ const TransactionDetails: React.FC = () => {
   );
   const [account, setAccount] = useState<Account | null>(null);
   const [recipient, setRecipient] = useState<Recipient | null>(null);
+  const [budget, setBudget] = useState<Budget | null>(null);
+  const [showRemoveAlert, setShowRemoveAlert] = useState(false);
 
   useIonViewWillEnter(() => {
     const fetchDetail = async () => {
@@ -65,6 +72,12 @@ const TransactionDetails: React.FC = () => {
         setRecipient(rec || null);
         setAccount(acc || null);
 
+        // Fetch linked budget if exists
+        if (transaction.budgetId) {
+          const linkedBudget = await db.budgets.get(transaction.budgetId);
+          setBudget(linkedBudget || null);
+        }
+
         // Fetch recent history for same recipient
         const allForRecipient = await db.transactions
           .where("recipientId")
@@ -78,6 +91,28 @@ const TransactionDetails: React.FC = () => {
     };
     fetchDetail();
   });
+
+  const handleRemoveFromBudget = async () => {
+    if (!txn) return;
+
+    try {
+      await db.transactions.update(txn.id!, {
+        budgetId: undefined,
+        occurrenceDate: undefined,
+      });
+
+      // Update local state
+      setTxn({
+        ...txn,
+        budgetId: undefined,
+        occurrenceDate: undefined,
+      });
+      setBudget(null);
+      setShowRemoveAlert(false);
+    } catch (error) {
+      console.error("Error removing transaction from budget:", error);
+    }
+  };
 
   if (!txn) {
     return (
@@ -109,6 +144,12 @@ const TransactionDetails: React.FC = () => {
           </IonButtons>
           <IonTitle>Transaction Details</IonTitle>
           <IonButtons slot="end">
+            <IonButton
+              onClick={() => navigate.push(`/budget/from-transaction/${id}`)}
+              title="Create Budget from Transaction"
+            >
+              <IonIcon slot="icon-only" icon={calendar} />
+            </IonButton>
             <IonButton onClick={() => navigate.push(`/edit/${id}`)}>
               <IonIcon slot="icon-only" icon={createOutline} />
             </IonButton>
@@ -232,6 +273,60 @@ const TransactionDetails: React.FC = () => {
           </IonCardContent>
         </IonCard>
 
+        {/* Linked Budget Card - Only shown if transaction is linked to a budget */}
+        {txn.budgetId && budget && txn.occurrenceDate && (
+          <IonCard style={{ marginTop: "1.6rem" }}>
+            <IonCardHeader
+              style={{
+                fontWeight: 500,
+                fontSize: "1rem",
+                display: "flex",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>Linked Budget</span>
+            </IonCardHeader>
+            <IonCardContent>
+              <IonGrid>
+                <IonRow>
+                  <IonCol>
+                    <IonText style={{ fontWeight: "bold", fontSize: "1.1rem" }}>
+                      {new Date(txn.occurrenceDate).toLocaleDateString(
+                        undefined,
+                        {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        }
+                      )}
+                    </IonText>
+                  </IonCol>
+                  <IonCol style={{ textAlign: "right" }}>
+                    <IonText style={{ fontWeight: "bold", fontSize: "1.1rem" }}>
+                      {budget.amount.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </IonText>
+                  </IonCol>
+                  <IonCol size="1">
+                    <IonButton
+                      fill="clear"
+                      size="small"
+                      color="danger"
+                      style={{ marginTop: -4 }}
+                      onClick={() => setShowRemoveAlert(true)}
+                      title="Remove from budget"
+                    >
+                      <IonIcon icon={trash} />
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
+              </IonGrid>
+            </IonCardContent>
+          </IonCard>
+        )}
+
         {/* Recent Activity/History */}
         {history.length > 0 && (
           <IonCard style={{ marginTop: "1.6rem" }}>
@@ -275,6 +370,25 @@ const TransactionDetails: React.FC = () => {
             </IonCardContent>
           </IonCard>
         )}
+
+        {/* Remove from Budget Alert */}
+        <IonAlert
+          isOpen={showRemoveAlert}
+          onDidDismiss={() => setShowRemoveAlert(false)}
+          header="Remove from Budget?"
+          message="This transaction will no longer be linked to the budget item."
+          buttons={[
+            {
+              text: "Cancel",
+              role: "cancel",
+            },
+            {
+              text: "Remove",
+              role: "destructive",
+              handler: handleRemoveFromBudget,
+            },
+          ]}
+        />
       </IonContent>
     </IonPage>
   );

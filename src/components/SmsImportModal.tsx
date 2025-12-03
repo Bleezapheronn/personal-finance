@@ -11,8 +11,6 @@ import {
   IonRow,
   IonCol,
   IonLabel,
-  IonSelect,
-  IonSelectOption,
   IonText,
   IonIcon,
   IonCheckbox,
@@ -20,6 +18,7 @@ import {
 import { close } from "ionicons/icons";
 import { SmsImportTemplate, PaymentMethod } from "../db";
 import { useSmsParser, ParsedSmsData } from "../hooks/useSmsParser";
+import { SelectableDropdown } from "./SelectableDropdown";
 
 interface SmsImportModalProps {
   isOpen: boolean;
@@ -40,7 +39,7 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
 }) => {
   const [smsText, setSmsText] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<
-    number | undefined
+    string | undefined
   >(undefined);
 
   // Track which parsed fields are checked
@@ -132,41 +131,40 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
         <IonGrid>
           <IonRow>
             <IonCol>
-              <IonSelect
-                label="Select Template (optional)"
-                labelPlacement="stacked"
-                fill="outline"
-                interface="popover"
-                placeholder="Auto-detect from all templates"
-                value={selectedTemplateId}
-                onIonChange={(e) => {
-                  setSelectedTemplateId(e.detail.value);
-                  clearParsedData();
-                }}
-              >
-                <IonSelectOption value={undefined}>
-                  Auto-detect from all templates
-                </IonSelectOption>
-                {smsTemplates.map((template) => (
-                  <IonSelectOption key={template.id} value={template.id}>
-                    {template.name}
-                    {template.paymentMethodId && (
-                      <>
-                        {" "}
-                        (
-                        {
-                          paymentMethods.find(
+              <div className="form-input-wrapper">
+                <label className="form-label">Select Template (optional)</label>
+                <SelectableDropdown
+                  label="Select Template"
+                  placeholder="Auto-detect from all templates"
+                  value={selectedTemplateId}
+                  options={[
+                    {
+                      value: "",
+                      label: "Auto-detect from all templates",
+                    },
+                    ...smsTemplates.map((template) => {
+                      const paymentMethodName = template.paymentMethodId
+                        ? paymentMethods.find(
                             (pm) => pm.id === template.paymentMethodId
                           )?.name
-                        }
-                        )
-                      </>
-                    )}
-                  </IonSelectOption>
-                ))}
-              </IonSelect>
+                        : null;
+                      return {
+                        value: template.id!.toString(),
+                        label: paymentMethodName
+                          ? `${template.name} (${paymentMethodName})`
+                          : template.name,
+                      };
+                    }),
+                  ]}
+                  onValueChange={(value) => {
+                    setSelectedTemplateId(value === "" ? undefined : value);
+                    clearParsedData();
+                  }}
+                />
+              </div>
             </IonCol>
           </IonRow>
+
           <IonRow>
             <IonCol>
               <IonLabel position="stacked">Paste SMS Message</IonLabel>
@@ -190,12 +188,18 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
               />
             </IonCol>
           </IonRow>
+
           <IonRow>
             <IonCol>
               <IonButton
                 expand="block"
                 fill="outline"
-                onClick={() => previewParse(smsText, selectedTemplateId)}
+                onClick={() =>
+                  previewParse(
+                    smsText,
+                    selectedTemplateId ? Number(selectedTemplateId) : undefined
+                  )
+                }
                 disabled={!smsText.trim()}
               >
                 Preview Parse
@@ -439,6 +443,7 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
               </IonButton>
             </IonCol>
           </IonRow>
+
           <IonRow>
             <IonCol>
               <IonText color="medium">

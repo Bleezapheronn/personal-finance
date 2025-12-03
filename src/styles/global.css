@@ -1,0 +1,284 @@
+/* ===== REUSABLE PROGRESS BAR STYLES ===== */
+
+/**
+ * Generic progress bar container
+ * Usage: Wrap progress bar components with this class for consistent styling
+ */
+.progress-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/**
+ * Progress bar wrapper - creates the background container
+ * Features: rounded corners, border, light background
+ */
+.progress-bar-wrapper {
+  width: 100%;
+  height: 24px;
+  background-color: var(--ion-color-light);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--ion-color-step-200);
+}
+
+/**
+ * Progress bar fill - the animated colored bar
+ * Customize via inline style: width, backgroundColor
+ */
+.progress-bar-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+/**
+ * Progress bar labels - min/max percentage display
+ * Shows target range or current percentage
+ */
+.progress-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--ion-color-medium);
+  padding: 0 0.25rem;
+}
+
+/**
+ * Complete progress bar component
+ * Combines wrapper + fill + percentage label
+ * Usage: Apply to parent div, nest wrapper and percentage label inside
+ */
+.progress-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.progress-bar .progress-bar-wrapper {
+  flex: 1;
+}
+
+.progress-bar .progress-percentage {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #666;
+  min-width: 38px;
+  text-align: right;
+}
+
+/* ===== REUSABLE DATE COLUMN STYLES ===== */
+
+/**
+ * Date column for transaction/budget items
+ * Displays: Weekday (short), Day, Month
+ * Usage: Apply to column containing date display
+ */
+.date-column {
+  text-align: center;
+  line-height: 1;
+  color: #666;
+}
+
+.date-column h2 {
+  margin-top: 0;
+}
+
+.date-column-weekday {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #999;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.date-column-day {
+  font-size: 3.2rem;
+  font-weight: bold;
+  line-height: 1;
+}
+
+.date-column-month {
+  font-size: 1.5rem;
+  font-weight: bold;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+/* ===== REUSABLE TIME GROUP HEADER STYLES ===== */
+
+/**
+ * Section header for grouped items (e.g., "This Week", "Overdue")
+ * Usage: Apply to h3 or similar heading
+ */
+.time-group-header {
+  font-size: 0.9rem;
+  font-weight: bold;
+  color: #999;
+  margin: 16px 0 8px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.time-group-header.overdue {
+  color: #D44619;
+}
+
+/* ===== REUSABLE ITEM DESCRIPTION STYLES ===== */
+
+/**
+ * Item description/title (typically the main text of a transaction/budget item)
+ * Usage: Apply to h2 or h3 containing item title
+ */
+.item-description {
+  color: rgb(68, 124, 224);
+  margin: 0 0 4px 0;
+  font-size: 1.375rem;
+  line-height: 1.2;
+}
+
+.item-description.clickable {
+  cursor: pointer;
+}
+
+/* ===== REUSABLE ITEM METADATA STYLES ===== */
+
+/**
+ * Metadata row for items (recipient + arrow icon)
+ * Usage: Apply to div containing recipient info
+ */
+.item-metadata {
+  font-size: 0.85rem;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.item-metadata-icon {
+  font-size: 1.2rem;
+}
+
+.item-metadata-icon.expense {
+  color: #D44619;
+}
+
+.item-metadata-icon.income {
+  color: #009688;
+}
+
+/* ===== REUSABLE ITEM AMOUNT STYLES ===== */
+
+/**
+ * Amount display for items (typically right-aligned)
+ * Usage: Apply to div containing amount
+ */
+.item-amount {
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.item-amount.expense {
+  color: #D44619;
+}
+
+.item-amount.income {
+  color: #009688;
+}
+
+/**
+ * Target/subtotal amount display (smaller)
+ * Usage: Apply to "of X" text below main amount
+ */
+.item-amount-target {
+  font-size: 0.85rem;
+  color: #999;
+}
+
+/* ===== REUSABLE ACTION BUTTONS ROW STYLES ===== */
+
+/**
+ * Row containing action buttons (edit/delete/link)
+ * Usage: Apply to IonRow containing action buttons
+ */
+.item-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.item-actions-container {
+  padding-right: 0;
+}
+
+/* ===== REUSABLE METRIC STYLES ===== */
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.metric-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.metric-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+/* ===== REUSABLE STATUS BADGE STYLES ===== */
+
+.status-badge {
+  display: inline-block;
+  padding: 0.4rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-on-target {
+  background-color: #2dd36f;
+  color: white;
+}
+
+.status-above-max {
+  background-color: #ffc409;
+  color: #000;
+}
+
+.status-below-min-fixed,
+.status-below-min-percentage {
+  background-color: #eb445c;
+  color: white;
+}
+
+/* ===== REUSABLE SUMMARY STYLES ===== */
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.summary-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.summary-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.summary-value.income {
+  color: #2dd36f;
+}
+
+.summary-value.expense {
+  color: #eb445c;
+}

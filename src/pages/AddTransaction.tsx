@@ -48,15 +48,15 @@ import { AddPaymentMethodModal } from "../components/AddPaymentMethodModal";
 import { SmsImportModal } from "../components/SmsImportModal";
 import { ParsedSmsData } from "../hooks/useSmsParser";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
+import { SelectableDropdown } from "../components/SelectableDropdown";
 
 const AddTransaction: React.FC = () => {
   const history = useHistory();
   const { id } = useParams<{ id?: string }>();
   const isEditMode = Boolean(id);
 
-  // Separate date and time states
-  const [selectedDate, setSelectedDate] = useState<string>("");
-  const [selectedTime, setSelectedTime] = useState<string>("");
+  // Combined date and time into single datetime state
+  const [transactionDateTime, setTransactionDateTime] = useState<string>("");
 
   // transaction type: true = expense, false = income
   const [transactionType, setTransactionType] = useState<
@@ -287,17 +287,16 @@ const AddTransaction: React.FC = () => {
               setRecipientId(txn.recipientId);
             }
 
-            // Format date as YYYY-MM-DD
+            // Format datetime for datetime-local input (YYYY-MM-DDTHH:mm)
             const txnDate = new Date(txn.date);
             const year = txnDate.getFullYear();
             const month = String(txnDate.getMonth() + 1).padStart(2, "0");
             const day = String(txnDate.getDate()).padStart(2, "0");
-            setSelectedDate(`${year}-${month}-${day}`);
-
-            // Format time as HH:mm
             const hours = String(txnDate.getHours()).padStart(2, "0");
             const minutes = String(txnDate.getMinutes()).padStart(2, "0");
-            setSelectedTime(`${hours}:${minutes}`);
+            setTransactionDateTime(
+              `${year}-${month}-${day}T${hours}:${minutes}`
+            );
 
             setAmount(Math.abs(txn.amount).toString());
             setTransactionCost(
@@ -323,8 +322,7 @@ const AddTransaction: React.FC = () => {
       loadTransaction();
     } else {
       // ADD MODE: Clear form
-      setSelectedDate("");
-      setSelectedTime("");
+      setTransactionDateTime("");
       setTransactionType("expense");
       setAmount("");
       setTransactionCost("");
@@ -341,7 +339,7 @@ const AddTransaction: React.FC = () => {
       setDescription("");
       setEditingTransaction(null);
     }
-  }, [id, isEditMode]); // dateTime intentionally excluded to avoid infinite loop
+  }, [id, isEditMode]);
 
   // Load descriptions sorted by frequency when component mounts
   useEffect(() => {
@@ -492,10 +490,14 @@ const AddTransaction: React.FC = () => {
     setShowSuccessToast(false);
     setFieldErrors({});
 
-    // Validate form using utility function
+    // Updated validation to use transactionDateTime
     const formValidation = validateTransactionForm({
-      selectedDate,
-      selectedTime,
+      selectedDate: transactionDateTime
+        ? transactionDateTime.split("T")[0]
+        : "",
+      selectedTime: transactionDateTime
+        ? transactionDateTime.split("T")[1]
+        : "",
       amount,
       description,
       categoryId,
@@ -515,8 +517,7 @@ const AddTransaction: React.FC = () => {
     }
 
     // Validate date/time
-    const dateTimeString = `${selectedDate}T${selectedTime}`;
-    const dateTimeValidation = validateDateTime(dateTimeString);
+    const dateTimeValidation = validateDateTime(transactionDateTime);
 
     if (!dateTimeValidation.isValid) {
       setFieldErrors(dateTimeValidation.errors);
@@ -551,14 +552,12 @@ const AddTransaction: React.FC = () => {
       }
     }
 
-    // Rest of your submit logic continues...
-    const selectedDateTime = new Date(dateTimeString);
+    // Parse datetime directly from transactionDateTime
+    const selectedDateTime = new Date(transactionDateTime);
     const numericAmountRaw = parseFloat(amount);
 
     const parsedCost = transactionCost ? parseFloat(transactionCost) : NaN;
-    const numericCost = !isNaN(parsedCost)
-      ? -Math.abs(parsedCost) // always store as outgoing (negative)
-      : undefined;
+    const numericCost = !isNaN(parsedCost) ? -Math.abs(parsedCost) : undefined;
 
     const numericOriginalAmountRaw = originalAmount
       ? parseFloat(originalAmount)
@@ -691,8 +690,7 @@ const AddTransaction: React.FC = () => {
 
       // Reset form (ONLY for add mode, not edit mode)
       if (!isEditMode) {
-        setSelectedDate("");
-        setSelectedTime("");
+        setTransactionDateTime("");
         setFieldErrors({});
         setAmount("");
         setTransactionCost("");
@@ -759,20 +757,23 @@ const AddTransaction: React.FC = () => {
 
   // Handle SMS import
   const handleSmsImport = async (parsedData: ParsedSmsData) => {
-    // Populate fields from parsed data
-    if (parsedData.date) {
-      // Convert MM-DD-YYYY to YYYY-MM-DD format for the date input
+    // Combine date and time into datetime-local format
+    if (parsedData.date && parsedData.time) {
       const dateParts = parsedData.date.split("-");
       if (dateParts.length === 3) {
         const formattedDate = `${dateParts[2]}-${dateParts[0]}-${dateParts[1]}`;
-        setSelectedDate(formattedDate);
+        setTransactionDateTime(`${formattedDate}T${parsedData.time}`);
       } else {
-        setSelectedDate(parsedData.date);
+        setTransactionDateTime(`${parsedData.date}T${parsedData.time}`);
+      }
+    } else if (parsedData.date) {
+      const dateParts = parsedData.date.split("-");
+      if (dateParts.length === 3) {
+        const formattedDate = `${dateParts[2]}-${dateParts[0]}-${dateParts[1]}`;
+        setTransactionDateTime(formattedDate);
       }
     }
-    if (parsedData.time) {
-      setSelectedTime(parsedData.time);
-    }
+
     if (parsedData.amount) {
       setAmount(parsedData.amount);
     }
@@ -833,8 +834,12 @@ const AddTransaction: React.FC = () => {
     if (errorMsg && errorMsg === "Please fill in all required fields.") {
       // Re-validate to check if all fields are now filled
       const formValidation = validateTransactionForm({
-        selectedDate,
-        selectedTime,
+        selectedDate: transactionDateTime
+          ? transactionDateTime.split("T")[0]
+          : "",
+        selectedTime: transactionDateTime
+          ? transactionDateTime.split("T")[1]
+          : "",
         amount,
         description,
         categoryId,
@@ -853,8 +858,7 @@ const AddTransaction: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    selectedDate,
-    selectedTime,
+    transactionDateTime,
     amount,
     description,
     categoryId,
@@ -885,16 +889,10 @@ const AddTransaction: React.FC = () => {
   }, [description, fieldErrors.description]);
 
   useEffect(() => {
-    if (fieldErrors.date && selectedDate) {
-      setFieldErrors((prev) => ({ ...prev, date: false }));
+    if ((fieldErrors.date || fieldErrors.time) && transactionDateTime) {
+      setFieldErrors((prev) => ({ ...prev, date: false, time: false }));
     }
-  }, [selectedDate, fieldErrors.date]);
-
-  useEffect(() => {
-    if (fieldErrors.time && selectedTime) {
-      setFieldErrors((prev) => ({ ...prev, time: false }));
-    }
-  }, [selectedTime, fieldErrors.time]);
+  }, [transactionDateTime, fieldErrors.date, fieldErrors.time]);
 
   return (
     <IonPage>
@@ -964,50 +962,41 @@ const AddTransaction: React.FC = () => {
                 {successMsg && <IonText color="success">{successMsg}</IonText>}
               </IonCol>
             </IonRow>
+
+            {/* Transaction Date/Time - UPDATED: Single datetime-local field */}
             <IonRow>
-              <IonCol size="3">
+              <IonCol size="4">
                 <div className="form-input-wrapper">
-                  <label className="form-label">Date</label>
+                  <label className="form-label">Transaction Date/Time</label>
                   <IonInput
                     className="form-input"
-                    type="date"
-                    value={selectedDate}
+                    type="datetime-local"
+                    value={transactionDateTime}
                     onIonChange={(e) => {
-                      setSelectedDate(e.detail.value ?? "");
-                      setFieldErrors((prev) => ({ ...prev, date: false }));
+                      setTransactionDateTime(e.detail.value ?? "");
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        date: false,
+                        time: false,
+                      }));
                     }}
                   />
-                  {fieldErrors.date && (
+                  {(fieldErrors.date || fieldErrors.time) && (
                     <span className="error-message">Required field</span>
                   )}
                 </div>
               </IonCol>
-              <IonCol size="2">
-                <div className="form-input-wrapper">
-                  <label className="form-label">Time</label>
-                  <IonInput
-                    className="form-input"
-                    type="time"
-                    value={selectedTime}
-                    onIonChange={(e) => {
-                      setSelectedTime(e.detail.value ?? "");
-                      setFieldErrors((prev) => ({ ...prev, time: false }));
-                    }}
-                  />
-                  {fieldErrors.time && (
-                    <span className="error-message">Required field</span>
-                  )}
-                </div>
-              </IonCol>
-              <IonCol size="6">
+
+              {/* Transaction Reference (optional) */}
+              <IonCol size="7">
                 <div className="form-input-wrapper">
                   <label className="form-label">
                     Transaction Reference (optional)
                   </label>
                   <IonInput
                     className="form-input"
-                    placeholder="e.g. ABCD123XYZ"
                     type="text"
+                    placeholder="e.g. ABCD123XYZ"
                     value={transactionReference}
                     onIonChange={(e) =>
                       setTransactionReference(e.detail.value ?? "")
@@ -1016,6 +1005,7 @@ const AddTransaction: React.FC = () => {
                 </div>
               </IonCol>
             </IonRow>
+
             <IonRow>
               <IonCol size="11">
                 <div className="form-input-wrapper">
@@ -1654,22 +1644,16 @@ const AddTransaction: React.FC = () => {
               <IonCol size="3">
                 <div className="form-input-wrapper">
                   <label className="form-label">Currency (optional)</label>
-                  <SearchableFilterSelect
-                    label=""
+                  <SelectableDropdown
+                    label="Currency"
                     placeholder="Select currency"
-                    value={
-                      originalCurrency
-                        ? currencies.indexOf(originalCurrency)
-                        : undefined
-                    }
-                    options={currencies.map((cur, index) => ({
-                      id: index,
-                      name: cur,
+                    value={originalCurrency}
+                    options={currencies.map((cur) => ({
+                      value: cur,
+                      label: cur,
                     }))}
-                    onIonChange={(v) => {
-                      if (v !== undefined) {
-                        setOriginalCurrency(currencies[v]);
-                      }
+                    onValueChange={(currency) => {
+                      setOriginalCurrency(currency);
                     }}
                   />
                 </div>

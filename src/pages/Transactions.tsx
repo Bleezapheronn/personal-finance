@@ -27,11 +27,14 @@ import {
   IonAccordion,
   IonAccordionGroup,
   IonSearchbar,
+  IonFab,
+  IonFabButton,
 } from "@ionic/react";
 
 import { useHistory } from "react-router-dom";
 import {
   createOutline,
+  addOutline,
   trashOutline,
   arrowUpCircle,
   arrowDownCircle,
@@ -373,8 +376,8 @@ const Transactions: React.FC = () => {
       }
     });
 
-    const accountTotals = Array.from(accountTotalsMap.entries()).map(
-      ([accountId, total]) => {
+    const accountTotals = Array.from(accountTotalsMap.entries())
+      .map(([accountId, total]) => {
         const account = accounts.find((a) => a.id === accountId);
         return {
           accountId,
@@ -382,8 +385,16 @@ const Transactions: React.FC = () => {
           total,
           imageUrl: accountImages.get(accountId),
         };
-      }
-    );
+      })
+      // NEW: Filter out credit accounts unless balance is negative (i.e., overdraft used)
+      .filter((account) => {
+        const acct = accounts.find((a) => a.id === account.accountId);
+        if (acct?.isCredit) {
+          // Only show credit accounts if they have negative balance (credit used)
+          return account.total < 0;
+        }
+        return true; // Always show non-credit accounts
+      });
 
     accountTotals.sort((a, b) => a.accountName.localeCompare(b.accountName));
 
@@ -993,6 +1004,9 @@ const Transactions: React.FC = () => {
               {groupedTransactions().map(([group, txns]) => (
                 <div key={group} style={{ marginBottom: "24px" }}>
                   <h3
+                    className={`time-group-header ${
+                      group === "Overdue" ? "overdue" : ""
+                    }`}
                     style={{
                       fontSize: "0.9rem",
                       fontWeight: "bold",
@@ -1009,32 +1023,16 @@ const Transactions: React.FC = () => {
                       <IonItem key={txn.id}>
                         <IonGrid>
                           <IonRow>
-                            <IonCol size="1" style={{ textAlign: "center" }}>
-                              <h2
-                                style={{
-                                  textAlign: "center",
-                                  lineHeight: "1.2",
-                                  color: "#666",
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    fontSize: "1.6rem",
-                                    fontWeight: "bold",
-                                  }}
-                                >
+                            <IonCol size="1" className="date-column">
+                              <h2>
+                                <div className="date-column-weekday">
                                   {new Date(txn.date)
                                     .toLocaleDateString("en-US", {
-                                      month: "short",
+                                      weekday: "short",
                                     })
                                     .toUpperCase()}
                                 </div>
-                                <div
-                                  style={{
-                                    fontSize: "3.2rem",
-                                    fontWeight: "bold",
-                                  }}
-                                >
+                                <div className="date-column-day">
                                   {new Date(txn.date).toLocaleDateString(
                                     "en-US",
                                     {
@@ -1042,19 +1040,20 @@ const Transactions: React.FC = () => {
                                     }
                                   )}
                                 </div>
+                                <div className="date-column-month">
+                                  {new Date(txn.date)
+                                    .toLocaleDateString("en-US", {
+                                      month: "short",
+                                    })
+                                    .toUpperCase()}
+                                </div>
                               </h2>
                             </IonCol>
                             <IonCol size="11">
                               <IonRow>
                                 {txn.description && (
                                   <h2
-                                    style={{
-                                      color: "rgb(68, 124, 224)",
-                                      fontSize: "1.5rem",
-                                      fontWeight: "bold",
-                                      lineHeight: "1.2",
-                                      cursor: "pointer",
-                                    }}
+                                    className="item-description clickable"
                                     onClick={() => handleView(txn.id)}
                                   >
                                     <div>{txn.description}</div>
@@ -1159,18 +1158,13 @@ const Transactions: React.FC = () => {
                                 </IonCol>
                                 <IonCol size="4">
                                   <div
-                                    style={{
-                                      color:
-                                        txn.amount +
-                                          (txn.transactionCost || 0) <
-                                        0
-                                          ? "#D44619"
-                                          : "#009688",
-                                      fontSize: "1.8rem",
-                                      fontWeight: "bold",
-                                      lineHeight: "1.2",
-                                      textAlign: "right",
-                                    }}
+                                    className={`item-amount ${
+                                      txn.amount + (txn.transactionCost || 0) <
+                                      0
+                                        ? "expense"
+                                        : "income"
+                                    }`}
+                                    style={{ textAlign: "right" }}
                                   >
                                     {(
                                       txn.amount + (txn.transactionCost || 0)
@@ -1223,6 +1217,16 @@ const Transactions: React.FC = () => {
           }}
         />
       </IonContent>
+
+      {/* FAB BUTTON FOR ADDING TRANSACTIONS */}
+      <IonFab vertical="bottom" horizontal="end" slot="fixed">
+        <IonFabButton
+          onClick={() => history.push("/add")}
+          title="Add Transaction"
+        >
+          <IonIcon icon={addOutline} />
+        </IonFabButton>
+      </IonFab>
     </IonPage>
   );
 };

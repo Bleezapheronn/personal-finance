@@ -15,6 +15,7 @@ import {
 } from "@ionic/react";
 import { close, trash } from "ionicons/icons";
 import { db, Account } from "../db";
+import { SelectableDropdown } from "./SelectableDropdown";
 
 interface AddAccountModalProps {
   isOpen: boolean;
@@ -33,6 +34,8 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
 }) => {
   const [accountName, setAccountName] = useState("");
   const [currency, setCurrency] = useState("KES");
+  const [isCredit, setIsCredit] = useState(false);
+  const [creditLimit, setCreditLimit] = useState<string>("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [imageRemovalIntent, setImageRemovalIntent] = useState(false);
@@ -47,6 +50,8 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
     }
     setAccountName("");
     setCurrency("KES");
+    setIsCredit(false);
+    setCreditLimit("");
     setImageFile(null);
     setPreviewUrl(null);
     setImageRemovalIntent(false);
@@ -57,6 +62,8 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
     if (isOpen && editingAccount) {
       setAccountName(editingAccount.name);
       setCurrency(editingAccount.currency || "KES");
+      setIsCredit(editingAccount.isCredit || false);
+      setCreditLimit(editingAccount.creditLimit?.toString() || "");
       if (editingAccount.imageBlob) {
         const url = URL.createObjectURL(editingAccount.imageBlob);
         setPreviewUrl(url);
@@ -75,7 +82,6 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] ?? null;
-    // Revoke old preview URL BEFORE creating new one
     if (previewUrlRef.current) {
       URL.revokeObjectURL(previewUrlRef.current);
     }
@@ -114,6 +120,14 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
       return;
     }
 
+    if (isCredit && creditLimit) {
+      const limit = parseFloat(creditLimit);
+      if (isNaN(limit) || limit < 0) {
+        setErrorMsg("Credit limit must be a positive number");
+        return;
+      }
+    }
+
     try {
       setLoading(true);
       const now = new Date();
@@ -123,18 +137,16 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
         const updateData: Partial<Account> = {
           name: accountName.trim(),
           currency: currency || "KES",
+          isCredit: isCredit,
+          creditLimit: isCredit ? parseFloat(creditLimit) : undefined,
           updatedAt: now,
         };
 
-        // Handle image updates
         if (imageFile) {
-          // New file selected
           updateData.imageBlob = imageFile;
         } else if (imageRemovalIntent) {
-          // User explicitly removed the image
           updateData.imageBlob = undefined;
         }
-        // Otherwise don't touch imageBlob (keep existing)
 
         await db.accounts.update(editingAccount.id, updateData);
         const updated = await db.accounts.get(editingAccount.id);
@@ -146,6 +158,8 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
         const newAccount: Omit<Account, "id"> = {
           name: accountName.trim(),
           currency: currency || "KES",
+          isCredit: isCredit,
+          creditLimit: isCredit ? parseFloat(creditLimit) : undefined,
           imageBlob: imageFile ?? undefined,
           isActive: true,
           createdAt: now,
@@ -205,7 +219,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                 <label className="form-label">Account Name</label>
                 <input
                   type="text"
-                  placeholder="e.g., M-Pesa, PayPal"
+                  placeholder="e.g., M-Pesa, PayPal, Fuliza"
                   value={accountName}
                   onChange={(e) => setAccountName(e.target.value)}
                   disabled={loading}
@@ -222,33 +236,78 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
             </IonCol>
           </IonRow>
 
-          {/* Currency */}
+          {/* Currency - UPDATED: Using SelectableDropdown */}
           <IonRow>
             <IonCol>
               <div className="form-input-wrapper">
                 <label className="form-label">Currency</label>
-                <select
+                <SelectableDropdown
+                  label="Currency"
+                  placeholder="Select currency"
                   value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  disabled={loading}
-                  style={{
-                    padding: "12px",
-                    border: "1px solid var(--ion-color-medium)",
-                    borderRadius: "4px",
-                    backgroundColor: "var(--ion-background-color)",
-                    color: "inherit",
-                    fontSize: "0.95rem",
+                  options={CURRENCY_OPTIONS.map((curr) => ({
+                    value: curr,
+                    label: curr,
+                  }))}
+                  onValueChange={(selectedCurrency) => {
+                    setCurrency(selectedCurrency);
                   }}
-                >
-                  {CURRENCY_OPTIONS.map((curr) => (
-                    <option key={curr} value={curr}>
-                      {curr}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </IonCol>
           </IonRow>
+
+          {/* Is Credit Account Checkbox */}
+          <IonRow>
+            <IonCol>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "8px" }}
+              >
+                <input
+                  type="checkbox"
+                  id="isCredit"
+                  checked={isCredit}
+                  onChange={(e) => setIsCredit(e.target.checked)}
+                  disabled={loading}
+                  style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                />
+                <label
+                  htmlFor="isCredit"
+                  style={{ cursor: "pointer", marginBottom: 0 }}
+                >
+                  Credit/Overdraft Account (e.g., Fuliza)
+                </label>
+              </div>
+            </IonCol>
+          </IonRow>
+
+          {/* Credit Limit Input (only show if isCredit is checked) */}
+          {isCredit && (
+            <IonRow>
+              <IonCol>
+                <div className="form-input-wrapper">
+                  <label className="form-label">Credit Limit (optional)</label>
+                  <input
+                    type="number"
+                    placeholder="e.g., 50000"
+                    value={creditLimit}
+                    onChange={(e) => setCreditLimit(e.target.value)}
+                    disabled={loading}
+                    inputMode="decimal"
+                    step="0.01"
+                    style={{
+                      padding: "12px",
+                      border: "1px solid var(--ion-color-medium)",
+                      borderRadius: "4px",
+                      backgroundColor: "var(--ion-background-color)",
+                      color: "inherit",
+                      fontSize: "0.95rem",
+                    }}
+                  />
+                </div>
+              </IonCol>
+            </IonRow>
+          )}
 
           {/* Image Upload */}
           <IonRow>

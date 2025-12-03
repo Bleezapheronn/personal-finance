@@ -16,6 +16,7 @@ import {
 } from "@ionic/react";
 import { close } from "ionicons/icons";
 import { db, PaymentMethod, Account } from "../db";
+import { SelectableDropdown } from "./SelectableDropdown";
 
 interface AddPaymentMethodModalProps {
   isOpen: boolean;
@@ -41,6 +42,8 @@ export const AddPaymentMethodModal: React.FC<AddPaymentMethodModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
+
+  const activeAccounts = accounts.filter((a) => a.isActive !== false);
 
   const resetForm = () => {
     setName("");
@@ -201,33 +204,29 @@ export const AddPaymentMethodModal: React.FC<AddPaymentMethodModalProps> = ({
             </IonText>
           )}
           <IonGrid>
+            {/* Account - UPDATED: Using SelectableDropdown */}
             <IonRow>
               <IonCol>
                 <div className="form-input-wrapper">
                   <label className="form-label">Account</label>
-                  <select
-                    value={accountId ?? ""}
-                    onChange={(e) =>
-                      setAccountId(parseInt(e.target.value) || undefined)
+                  <SelectableDropdown
+                    label="Account"
+                    placeholder="Select account"
+                    value={
+                      accountId
+                        ? activeAccounts
+                            .find((a) => a.id === accountId)
+                            ?.id?.toString()
+                        : undefined
                     }
-                    disabled={loading}
-                    style={{
-                      padding: "12px",
-                      border: "1px solid var(--ion-color-medium)",
-                      borderRadius: "4px",
-                      backgroundColor: "var(--ion-background-color)",
-                      color: "inherit",
-                      fontSize: "0.95rem",
+                    options={activeAccounts.map((account) => ({
+                      value: account.id!.toString(),
+                      label: `${account.name} (${account.currency || "—"})`,
+                    }))}
+                    onValueChange={(selectedAccountId) => {
+                      setAccountId(parseInt(selectedAccountId, 10));
                     }}
-                  >
-                    {accounts
-                      .filter((a) => a.isActive !== false) // Hide deactivated accounts
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.currency || "—"})
-                        </option>
-                      ))}
-                  </select>
+                  />
                 </div>
               </IonCol>
             </IonRow>

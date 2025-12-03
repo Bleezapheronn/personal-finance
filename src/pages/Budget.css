@@ -1,0 +1,62 @@
+/* Budget-specific styles only - everything reusable moved to global.css */
+
+.budget-header {
+  font-size: 0.9rem;
+  font-weight: bold;
+  color: #999;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+.budget-item-date {
+  text-align: center;
+  line-height: 1.2;
+  color: #666;
+}
+
+.budget-item-date-month {
+  font-size: 1.5rem;
+  font-weight: bold;
+}
+
+.budget-item-date-day {
+  font-size: 3.2rem;
+  font-weight: bold;
+}
+
+.budget-item-title {
+  color: rgb(68, 124, 224);
+  margin: 0 0 4px 0;
+}
+
+.budget-item-meta {
+  font-size: 0.85rem;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.budget-item-amount {
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.budget-item-amount.expense {
+  color: #D44619;
+}
+
+.budget-item-amount.income {
+  color: #009688;
+}
+
+.budget-item-target {
+  font-size: 0.85rem;
+  color: #999;
+}
+
+.budget-item-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}

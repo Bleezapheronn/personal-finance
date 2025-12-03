@@ -11,21 +11,20 @@ import {
   IonRow,
   IonCol,
   IonInput,
-  IonSelect,
-  IonSelectOption,
   IonAlert,
   IonIcon,
 } from "@ionic/react";
 import { close } from "ionicons/icons";
 import { db, Category, Bucket } from "../db";
+import { SelectableDropdown } from "./SelectableDropdown";
 
 interface AddCategoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCategoryAdded: (category: Category) => void;
   buckets: Bucket[];
-  preSelectedBucketId?: number; // NEW: Optional pre-selected bucket
-  editingCategory?: Category; // NEW: For edit mode
+  preSelectedBucketId?: number;
+  editingCategory?: Category;
 }
 
 export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
@@ -150,51 +149,59 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
           />
         )}
         <IonGrid>
+          {/* Bucket - UPDATED: Using SelectableDropdown */}
           <IonRow>
             <IonCol>
-              <IonSelect
-                label="Bucket"
-                placeholder="Select bucket"
-                interface="popover"
-                value={bucketId}
-                onIonChange={(e) =>
-                  setBucketId(e.detail.value as number | undefined)
-                }
-                labelPlacement="stacked"
-                fill="outline"
-              >
-                {buckets.map((b) => (
-                  <IonSelectOption key={b.id} value={b.id}>
-                    {b.name}
-                  </IonSelectOption>
-                ))}
-              </IonSelect>
+              <div className="form-input-wrapper">
+                <label className="form-label">Bucket</label>
+                <SelectableDropdown
+                  label="Bucket"
+                  placeholder="Select bucket"
+                  value={
+                    bucketId
+                      ? buckets.find((b) => b.id === bucketId)?.id?.toString()
+                      : undefined
+                  }
+                  options={buckets.map((bucket) => ({
+                    value: bucket.id!.toString(),
+                    label: bucket.name || "Unnamed Bucket",
+                  }))}
+                  onValueChange={(selectedBucketId) => {
+                    setBucketId(parseInt(selectedBucketId, 10));
+                  }}
+                />
+              </div>
             </IonCol>
           </IonRow>
+
           <IonRow>
             <IonCol>
-              <IonInput
-                label="Category Name"
-                labelPlacement="stacked"
-                fill="outline"
-                placeholder="e.g., Groceries"
-                value={name}
-                onIonChange={(e) => setName(e.detail.value ?? "")}
-              />
+              <div className="form-input-wrapper">
+                <label className="form-label">Category Name</label>
+                <IonInput
+                  className="form-input"
+                  placeholder="e.g., Groceries"
+                  value={name}
+                  onIonChange={(e) => setName(e.detail.value ?? "")}
+                />
+              </div>
             </IonCol>
           </IonRow>
+
           <IonRow>
             <IonCol>
-              <IonInput
-                label="Description (optional)"
-                labelPlacement="stacked"
-                fill="outline"
-                placeholder="Category description"
-                value={description}
-                onIonChange={(e) => setDescription(e.detail.value ?? "")}
-              />
+              <div className="form-input-wrapper">
+                <label className="form-label">Description (optional)</label>
+                <IonInput
+                  className="form-input"
+                  placeholder="Category description"
+                  value={description}
+                  onIonChange={(e) => setDescription(e.detail.value ?? "")}
+                />
+              </div>
             </IonCol>
           </IonRow>
+
           <IonRow>
             <IonCol>
               <IonButton expand="block" onClick={handleSave}>

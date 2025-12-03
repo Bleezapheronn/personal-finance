@@ -1,3 +1,5 @@
+/* Transactions-specific styles only - everything reusable moved to global.css */
+
 ion-accordion-group {
   overflow: visible !important;
 }

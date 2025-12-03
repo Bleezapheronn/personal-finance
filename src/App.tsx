@@ -20,11 +20,13 @@ import {
   IonListHeader,
 } from "@ionic/react";
 import { IonReactRouter } from "@ionic/react-router";
-import { list, add, barChart } from "ionicons/icons";
+import { list, barChart, calendar } from "ionicons/icons";
 
 import Transactions from "./pages/Transactions";
 import AddTransaction from "./pages/AddTransaction";
 import TransactionDetails from "./pages/TransactionDetails";
+import Budget from "./pages/Budget"; // NEW
+import AddBudget from "./pages/AddBudget"; // NEW
 import BucketsManagement from "./pages/BucketsManagement";
 import AccountsManagement from "./pages/AccountsManagement";
 import RecipientsManagement from "./pages/RecipientsManagement";
@@ -107,6 +109,22 @@ const InnerApp: React.FC = () => {
             <Route exact path="/transaction-details/:id">
               <TransactionDetails />
             </Route>
+            {/* NEW: Budget routes */}
+            <Route
+              exact
+              path="/budget"
+              render={(props) => <Budget key={location.key} {...props} />}
+            />
+            <Route exact path="/budget/add">
+              <AddBudget />
+            </Route>
+            <Route exact path="/budget/edit/:id">
+              <AddBudget />
+            </Route>
+            <Route exact path="/budget/from-transaction/:transactionId">
+              <AddBudget />
+            </Route>
+            {/* END NEW */}
             <Route path="/buckets-management">
               <BucketsManagement />
             </Route>
@@ -131,9 +149,10 @@ const InnerApp: React.FC = () => {
               <IonIcon aria-hidden="true" icon={list} />
               <IonLabel>Transactions</IonLabel>
             </IonTabButton>
-            <IonTabButton tab="add" href="/add">
-              <IonIcon aria-hidden="true" icon={add} />
-              <IonLabel>Add Transaction</IonLabel>
+            <IonTabButton tab="budget" href="/budget">
+              {/* NEW: Budget tab */}
+              <IonIcon aria-hidden="true" icon={calendar} />
+              <IonLabel>Budget</IonLabel>
             </IonTabButton>
             <IonTabButton tab="reports" href="/reports">
               <IonIcon aria-hidden="true" icon={barChart} />
