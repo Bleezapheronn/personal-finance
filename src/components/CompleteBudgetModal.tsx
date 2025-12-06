@@ -199,7 +199,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
           budgetOccurrence.budget.amount < 0 ? -Math.abs(cost) : Math.abs(cost);
       }
 
-      // Create transaction with occurrenceDate
+      // Create transaction with occurrenceDate and description from budget
       const newTransaction: Omit<Transaction, "id"> = {
         categoryId: budgetOccurrence.budget.categoryId,
         paymentChannelId: budgetOccurrence.budget.paymentChannelId,
@@ -208,6 +208,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
         amount: signedAmount,
         transactionCost: signedCost,
         transactionReference: transactionReference.trim() || undefined,
+        description: budgetOccurrence.budget.description, // NEW: Copy budget description
         budgetId: budgetOccurrence.budgetId,
         occurrenceDate: budgetOccurrence.dueDate,
       };

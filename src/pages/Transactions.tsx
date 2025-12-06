@@ -640,7 +640,7 @@ const Transactions: React.FC = () => {
         {error && <IonText color="danger">{error}</IonText>}
 
         {!loading && transactions && transactions.length > 0 && (
-          <IonCard>
+          <IonCard style={{ margin: 0, marginBottom: "16px" }}>
             <IonCardContent>
               <IonGrid>
                 <IonRow>
@@ -1018,7 +1018,7 @@ const Transactions: React.FC = () => {
                   >
                     {group}
                   </h3>
-                  <IonList>
+                  <IonList style={{ borderRadius: "4px" }}>
                     {txns.map((txn) => (
                       <IonItem key={txn.id}>
                         <IonGrid>

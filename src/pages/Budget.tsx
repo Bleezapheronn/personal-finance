@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useHistory } from "react-router-dom";
 import {
   IonPage,
@@ -38,7 +38,9 @@ import {
   arrowUpCircle,
   arrowDownCircle,
   linkOutline,
-  shieldHalfOutline, // NEW: Add this import
+  bag, // NEW: Add this import
+  chevronBack,
+  chevronForward,
 } from "ionicons/icons";
 import {
   db,
@@ -103,6 +105,14 @@ const BudgetPage: React.FC = () => {
   >(undefined);
   const [budgetOccurrenceDateForLinking, setBudgetOccurrenceDateForLinking] =
     useState<Date | undefined>(undefined);
+
+  // New state variables for budget period
+  const [budgetSummaryPeriod, setBudgetSummaryPeriod] = useState<
+    "month" | "quarter" | "year"
+  >("month");
+
+  // Add this state near the top with other state variables
+  const [currentGoalIndex, setCurrentGoalIndex] = useState(0);
 
   // Load all data
   useIonViewWillEnter(() => {
@@ -645,6 +655,291 @@ const BudgetPage: React.FC = () => {
     }
   };
 
+  // Add imports
+  // import { chevronBack, chevronForward } from "ionicons/icons";
+
+  // Add this helper function to get period boundaries
+  const getBudgetPeriodBoundaries = (
+    period: "month" | "quarter" | "year"
+  ): { start: Date; end: Date; label: string } => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = today.getMonth();
+
+    switch (period) {
+      case "month": {
+        const start = new Date(year, month, 1);
+        const end = new Date(year, month + 1, 0);
+        const label = today.toLocaleString("en-US", {
+          month: "long",
+          year: "numeric",
+        });
+        return { start, end, label };
+      }
+      case "quarter": {
+        const quarterMonth = Math.floor(month / 3) * 3;
+        const start = new Date(year, quarterMonth, 1);
+        const end = new Date(year, quarterMonth + 3, 0);
+        const quarterNum = Math.floor(month / 3) + 1;
+        const label = `Q${quarterNum} ${year}`;
+        return { start, end, label };
+      }
+      case "year": {
+        const start = new Date(year, 0, 1);
+        const end = new Date(year, 11, 31);
+        const label = year.toString();
+        return { start, end, label };
+      }
+    }
+  };
+
+  // Update the calculateBudgetedAmounts function signature:
+  const calculateBudgetedAmounts = (
+    period: "month" | "quarter" | "year"
+  ): {
+    totalExpense: number;
+    totalIncome: number;
+    expensePaid: number;
+    incomePaid: number;
+  } => {
+    const { start, end } = getBudgetPeriodBoundaries(period);
+
+    let totalExpense = 0;
+    let totalIncome = 0;
+    let expensePaid = 0;
+    let incomePaid = 0;
+
+    // Get all occurrences for this period
+    const occurrences = generateBudgetOccurrences();
+
+    occurrences.forEach((occ) => {
+      const occDate = new Date(occ.dueDate);
+      occDate.setHours(0, 0, 0, 0);
+
+      // Check if occurrence falls within the period
+      if (occDate >= start && occDate <= end) {
+        const budgetAmount =
+          occ.budget.amount + (occ.budget.transactionCost || 0);
+
+        if (budgetAmount < 0) {
+          // Expense
+          totalExpense += Math.abs(budgetAmount);
+          expensePaid += Math.abs(occ.amountPaid);
+        } else {
+          // Income
+          totalIncome += budgetAmount;
+          incomePaid += occ.amountPaid;
+        }
+      }
+    });
+
+    return { totalExpense, totalIncome, expensePaid, incomePaid };
+  };
+
+  // Add these handlers BEFORE the BudgetSummaryCard component definition
+  const handleBudgetPeriodPrevious = () => {
+    if (budgetSummaryPeriod === "quarter") {
+      setBudgetSummaryPeriod("month");
+    } else if (budgetSummaryPeriod === "year") {
+      setBudgetSummaryPeriod("quarter");
+    }
+  };
+
+  const handleBudgetPeriodNext = () => {
+    if (budgetSummaryPeriod === "month") {
+      setBudgetSummaryPeriod("quarter");
+    } else if (budgetSummaryPeriod === "quarter") {
+      setBudgetSummaryPeriod("year");
+    }
+  };
+
+  // Define BudgetSummaryCard AFTER all helper functions and handlers
+  const BudgetSummaryCard = () => {
+    const { label } = getBudgetPeriodBoundaries(budgetSummaryPeriod);
+    const { totalExpense, totalIncome, expensePaid, incomePaid } =
+      calculateBudgetedAmounts(budgetSummaryPeriod);
+
+    const netBudgeted = totalIncome - totalExpense;
+
+    const expensePercentage =
+      totalExpense > 0 ? Math.min((expensePaid / totalExpense) * 100, 100) : 0;
+    const incomePercentage =
+      totalIncome > 0 ? Math.min((incomePaid / totalIncome) * 100, 100) : 0;
+
+    const netColor =
+      netBudgeted > 0 ? "positive" : netBudgeted < 0 ? "negative" : "neutral";
+
+    const isAtStart = budgetSummaryPeriod === "month";
+    const isAtEnd = budgetSummaryPeriod === "year";
+
+    return (
+      <IonCard className="budget-summary-card">
+        <IonCardContent>
+          {/* Period Selector - Three Option Progression */}
+          <div className="period-selector">
+            <IonButton
+              fill="clear"
+              size="small"
+              onClick={handleBudgetPeriodPrevious}
+              disabled={isAtStart}
+            >
+              <IonIcon icon={chevronBack} />
+            </IonButton>
+
+            <div className="period-label">{label}</div>
+
+            <IonButton
+              fill="clear"
+              size="small"
+              onClick={handleBudgetPeriodNext}
+              disabled={isAtEnd}
+            >
+              <IonIcon icon={chevronForward} />
+            </IonButton>
+          </div>
+
+          {/* Net Total Display + Labels and Amounts (Combined) */}
+          <IonGrid style={{ marginBottom: "1.5rem" }}>
+            <IonRow>
+              {/* Expense Column */}
+              <IonCol size="4">
+                <div className="metric">
+                  <IonText color="medium" className="metric-label">
+                    Expenses
+                  </IonText>
+                  <IonText className="metric-value expense">
+                    {expensePaid.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </IonText>
+                  <IonText color="medium" className="metric-subtext">
+                    of{" "}
+                    {totalExpense.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </IonText>
+                </div>
+              </IonCol>
+
+              {/* Net Total Column */}
+              <IonCol size="4">
+                <div className="metric" style={{ textAlign: "center" }}>
+                  <IonText color="medium" className="metric-label">
+                    Net Total
+                  </IonText>
+                  <IonText className={`metric-value ${netColor}`}>
+                    {Math.abs(netBudgeted).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </IonText>
+                </div>
+              </IonCol>
+
+              {/* Income Column */}
+              <IonCol size="4">
+                <div className="metric" style={{ textAlign: "right" }}>
+                  <IonText color="medium" className="metric-label">
+                    Income
+                  </IonText>
+                  <IonText className="metric-value income">
+                    {incomePaid.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </IonText>
+                  <IonText color="medium" className="metric-subtext">
+                    of{" "}
+                    {totalIncome.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </IonText>
+                </div>
+              </IonCol>
+            </IonRow>
+          </IonGrid>
+
+          {/* Bidirectional Progress Bar */}
+          <div className="bidirectional-bar">
+            {/* Expense Section */}
+            <div className="expense-section">
+              <div className="expense-bar">
+                <div
+                  className="expense-bar-fill"
+                  style={{
+                    width: `${expensePercentage}%`,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="divider" />
+
+            {/* Income Section */}
+            <div className="income-section">
+              <div className="income-bar">
+                <div
+                  className="income-bar-fill"
+                  style={{
+                    width: `${incomePercentage}%`,
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Labels (Below Bars) */}
+          <div className="progress-labels">
+            <span className="min-label">{Math.round(expensePercentage)}%</span>
+            <span className="max-label">{Math.round(incomePercentage)}%</span>
+          </div>
+        </IonCardContent>
+      </IonCard>
+    );
+  };
+
+  // Find the first incomplete goal index
+  const getInitialGoalIndex = (): number => {
+    const allGoals = getAllGoals();
+    const firstIncompleteIndex = allGoals.findIndex(
+      (goal) => !goal.isCompleted
+    );
+
+    // If all goals are completed, show the first one
+    return firstIncompleteIndex >= 0 ? firstIncompleteIndex : 0;
+  };
+
+  // Reset goal index when component mounts or data loads
+  useEffect(() => {
+    setCurrentGoalIndex(getInitialGoalIndex());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  // Add this helper function to get all goals (active + completed) sorted by due date
+  const getAllGoals = (): BudgetOccurrence[] => {
+    const occurrences = generateBudgetOccurrences();
+
+    // Get all goals (active and completed)
+    const allGoals = occurrences.filter((occ) => occ.budget.isGoal);
+
+    // Sort by due date ascending (earliest first)
+    return allGoals.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+  };
+
+  // Add these handlers for goal navigation
+  const handleGoalPrevious = () => {
+    setCurrentGoalIndex((prev) => Math.max(0, prev - 1));
+  };
+
+  const handleGoalNext = () => {
+    const allGoals = getAllGoals();
+    setCurrentGoalIndex((prev) => Math.min(prev + 1, allGoals.length - 1));
+  };
+
   const activeGoals = getActiveGoals();
   const mostRecentCompletedGoal = getMostRecentCompletedGoal();
   const groupedBudgets = groupedOccurrences();
@@ -700,8 +995,8 @@ const BudgetPage: React.FC = () => {
 
         {!loading && (
           <>
-            {/* Active Goals Section */}
-            {(activeGoals.length > 0 || mostRecentCompletedGoal) && (
+            {/* Active Goals Section - Scrollable */}
+            {getAllGoals().length > 0 && (
               <div style={{ marginBottom: "24px" }}>
                 <h2
                   style={{
@@ -715,169 +1010,260 @@ const BudgetPage: React.FC = () => {
                   Goals
                 </h2>
 
-                {activeGoals.map((goal) => (
-                  <IonCard
-                    key={`${goal.budgetId}-${goal.dueDate.getTime()}`}
-                    onClick={() => {
-                      setSelectedBudgetForCompletion(goal);
-                      setShowCompleteModal(true);
-                    }}
-                    style={{ cursor: "pointer", margin: "10px 0" }}
-                  >
-                    <IonCardContent>
-                      <IonGrid>
-                        <IonRow>
-                          <IonCol size="8">
-                            <h3
-                              style={{
-                                fontSize: "1.375rem",
-                                margin: "0 0 8px 0",
-                              }}
-                            >
-                              {goal.budget.description}
-                            </h3>
-                            <p
-                              style={{
-                                fontSize: "0.85rem",
-                                color: "#666",
-                                margin: "0 0 8px 0",
-                              }}
-                            >
-                              {getBucketName(goal.budget.categoryId)} •{" "}
-                              {getRecipientName(goal.budget.recipientId)}
-                            </p>
-                          </IonCol>
-                          <IonCol size="4" style={{ textAlign: "right" }}>
-                            <div
-                              style={{
-                                fontSize: "1.2rem",
-                                fontWeight: "bold",
-                                color:
-                                  goal.budget.amount < 0
-                                    ? "#D44619"
-                                    : "#009688",
-                              }}
-                            >
-                              {Math.abs(goal.amountPaid).toLocaleString(
-                                undefined,
-                                {
+                {(() => {
+                  const allGoals = getAllGoals();
+                  if (allGoals.length === 0) return null;
+
+                  const currentGoal = allGoals[currentGoalIndex];
+                  const isAtStart = currentGoalIndex === 0;
+                  const isAtEnd = currentGoalIndex === allGoals.length - 1;
+
+                  return (
+                    <IonCard
+                      onClick={() => {
+                        setSelectedBudgetForCompletion(currentGoal);
+                        setShowCompleteModal(true);
+                      }}
+                      style={{ cursor: "pointer", margin: "0" }}
+                    >
+                      <IonCardContent>
+                        {/* Goal Navigation Header */}
+                        <div
+                          className="period-selector"
+                          style={{ marginBottom: "1rem" }}
+                        >
+                          <IonButton
+                            fill="clear"
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleGoalPrevious();
+                            }}
+                            disabled={isAtStart}
+                          >
+                            <IonIcon icon={chevronBack} />
+                          </IonButton>
+
+                          <div
+                            className="period-label"
+                            style={{
+                              wordWrap: "break-word",
+                              overflowWrap: "break-word",
+                              whiteSpace: "normal",
+                              lineHeight: "1.4",
+                            }}
+                          >
+                            {currentGoal.budget.description}
+                          </div>
+
+                          <IonButton
+                            fill="clear"
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleGoalNext();
+                            }}
+                            disabled={isAtEnd}
+                          >
+                            <IonIcon icon={chevronForward} />
+                          </IonButton>
+                        </div>
+
+                        {/* Goal Details */}
+                        <IonGrid>
+                          <IonRow>
+                            <IonCol size="4">
+                              <p
+                                style={{
+                                  color: "var(--ion-color-medium)",
+                                  fontSize: "0.85rem",
+                                  fontWeight: "500",
+                                  margin: "0",
+                                }}
+                              >
+                                {getRecipientName(
+                                  currentGoal.budget.recipientId
+                                )}
+                              </p>
+                              <p
+                                style={{
+                                  color: "var(--ion-color-medium)",
+                                  fontSize: "0.85rem",
+                                  fontWeight: "500",
+                                  margin: "0",
+                                }}
+                              >
+                                {getBucketName(currentGoal.budget.categoryId)} •{" "}
+                                {getCategoryName(currentGoal.budget.categoryId)}
+                              </p>
+                            </IonCol>
+                            {/* Goal Counter */}
+                            <IonCol size="4" style={{ textAlign: "center" }}>
+                              <p
+                                style={{
+                                  fontSize: "0.75rem",
+                                  color: "#999",
+                                }}
+                              >
+                                Goal {currentGoalIndex + 1} of {allGoals.length}
+                              </p>
+                              <p
+                                style={{
+                                  fontSize: "0.75rem",
+                                  color: "#999",
+                                }}
+                              >
+                                {currentGoal.dueDate.toLocaleDateString(
+                                  "en-US",
+                                  {
+                                    day: "2-digit",
+                                    month: "short",
+                                    year: "numeric",
+                                  }
+                                )}
+                              </p>
+                            </IonCol>
+                            <IonCol size="4" style={{ textAlign: "right" }}>
+                              <div
+                                style={{
+                                  fontSize: "1.2rem",
+                                  fontWeight: "bold",
+                                  color:
+                                    currentGoal.budget.amount < 0
+                                      ? "#eb445c"
+                                      : "#009688",
+                                }}
+                              >
+                                {Math.abs(
+                                  currentGoal.amountPaid
+                                ).toLocaleString(undefined, {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
-                                }
-                              )}
-                            </div>
-                            <div style={{ fontSize: "0.85rem", color: "#999" }}>
-                              of{" "}
-                              {Math.abs(
-                                goal.budget.amount +
-                                  (goal.budget.transactionCost || 0)
-                              ).toLocaleString(undefined, {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}
-                            </div>
-                          </IonCol>
-                        </IonRow>
+                                })}
+                              </div>
+                              <div
+                                style={{ fontSize: "0.85rem", color: "#999" }}
+                              >
+                                of{" "}
+                                {Math.abs(
+                                  currentGoal.budget.amount +
+                                    (currentGoal.budget.transactionCost || 0)
+                                ).toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </div>
+                            </IonCol>
+                          </IonRow>
 
-                        {/* Enhanced Progress Bar - Reports Style */}
-                        <IonRow style={{ marginTop: "12px" }}>
-                          <IonCol>
-                            <div className="progress-bar">
-                              <div className="progress-bar-wrapper">
+                          {/* Enhanced Progress Bar - Reports Style */}
+                          <IonRow style={{ marginTop: "12px" }}>
+                            <IonCol>
+                              <div className="progress-bar">
+                                <div className="progress-bar-wrapper">
+                                  <div
+                                    className="progress-bar-fill"
+                                    style={{
+                                      backgroundColor:
+                                        getProgressPercentage(currentGoal) ===
+                                        100
+                                          ? "#2dd36f"
+                                          : "rgb(68, 124, 224)",
+                                      width: `${getProgressPercentage(
+                                        currentGoal
+                                      )}%`,
+                                    }}
+                                  />
+                                </div>
+                                <div className="progress-percentage">
+                                  {Math.round(
+                                    getProgressPercentage(currentGoal)
+                                  )}
+                                  %
+                                </div>
+                              </div>
+                            </IonCol>
+                          </IonRow>
+
+                          {/* Status Badge */}
+                          {currentGoal.isCompleted && (
+                            <IonRow style={{ marginTop: "8px" }}>
+                              <IonCol>
                                 <div
-                                  className="progress-bar-fill"
                                   style={{
-                                    backgroundColor:
-                                      getProgressPercentage(goal) === 100
-                                        ? "#2dd36f"
-                                        : "rgb(68, 124, 224)",
-                                    width: `${getProgressPercentage(goal)}%`,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                    color: "#2dd36f",
+                                    fontSize: "0.9rem",
+                                    fontWeight: "600",
                                   }}
-                                />
-                              </div>
-                              <div className="progress-percentage">
-                                {Math.round(getProgressPercentage(goal))}%
-                              </div>
-                            </div>
-                          </IonCol>
-                        </IonRow>
+                                >
+                                  <IonIcon icon={checkmarkCircle} />
+                                  Completed
+                                </div>
+                              </IonCol>
+                            </IonRow>
+                          )}
 
-                        {/* Edit/Delete/Link buttons */}
-                        <IonRow style={{ marginTop: "12px", gap: "8px" }}>
-                          <IonCol
-                            style={{ paddingRight: 0, textAlign: "right" }}
-                          >
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              style={{ marginRight: "0" }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenLinkModal(goal); // Pass full occurrence object
-                              }}
-                              title="Link Transaction"
+                          {/* Edit/Delete/Link buttons */}
+                          <IonRow style={{ marginTop: "12px", gap: "8px" }}>
+                            <IonCol
+                              style={{ paddingRight: 0, textAlign: "right" }}
                             >
-                              <IonIcon icon={linkOutline} slot="end" />
-                            </IonButton>
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              style={{ marginRight: "0" }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                history.push(`/budget/edit/${goal.budget.id}`);
-                              }}
-                              title="Edit Goal"
-                            >
-                              <IonIcon icon={createOutline} slot="end" />
-                            </IonButton>
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              color="danger"
-                              style={{ marginRight: "0" }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteClick(goal.budget.id!);
-                              }}
-                              title="Delete Goal"
-                            >
-                              <IonIcon icon={trashOutline} slot="end" />
-                            </IonButton>
-                          </IonCol>
-                        </IonRow>
-                      </IonGrid>
-                    </IonCardContent>
-                  </IonCard>
-                ))}
-
-                {mostRecentCompletedGoal && activeGoals.length === 0 && (
-                  <IonCard style={{ opacity: 0.7 }}>
-                    <IonCardContent>
-                      <IonGrid>
-                        <IonRow>
-                          <IonCol size="8">
-                            <h3 style={{ margin: "0 0 8px 0" }}>
-                              ✓ {mostRecentCompletedGoal.budget.description}
-                            </h3>
-                            <p style={{ fontSize: "0.85rem", color: "#666" }}>
-                              Completed{" "}
-                              {mostRecentCompletedGoal.dueDate.toLocaleDateString()}
-                            </p>
-                          </IonCol>
-                          <IonCol size="4" style={{ textAlign: "right" }}>
-                            <IonIcon
-                              icon={checkmarkCircle}
-                              style={{ fontSize: "2rem", color: "success" }}
-                            />
-                          </IonCol>
-                        </IonRow>
-                      </IonGrid>
-                    </IonCardContent>
-                  </IonCard>
-                )}
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                style={{ marginRight: "0" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenLinkModal(currentGoal);
+                                }}
+                                title="Link Transaction"
+                              >
+                                <IonIcon icon={linkOutline} slot="end" />
+                              </IonButton>
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                style={{ marginRight: "0" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  history.push(
+                                    `/budget/edit/${currentGoal.budget.id}`
+                                  );
+                                }}
+                                title="Edit Goal"
+                              >
+                                <IonIcon icon={createOutline} slot="end" />
+                              </IonButton>
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                color="danger"
+                                style={{ marginRight: "0" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteClick(currentGoal.budget.id!);
+                                }}
+                                title="Delete Goal"
+                              >
+                                <IonIcon icon={trashOutline} slot="end" />
+                              </IonButton>
+                            </IonCol>
+                          </IonRow>
+                        </IonGrid>
+                      </IonCardContent>
+                    </IonCard>
+                  );
+                })()}
               </div>
             )}
+
+            {/* Budget Summary Card */}
+            {activeGoals.length > 0 || mostRecentCompletedGoal ? (
+              <BudgetSummaryCard />
+            ) : null}
 
             {/* Budget Items by Time Group */}
             {groupedBudgets.length === 0 ? (
@@ -895,7 +1281,7 @@ const BudgetPage: React.FC = () => {
                     {timeGroup}
                   </h3>
 
-                  <IonList>
+                  <IonList style={{ borderRadius: "4px" }}>
                     {occurrences.map((occ) => (
                       <IonItem
                         key={`${occ.budgetId}-${occ.dueDate.getTime()}`}
@@ -937,7 +1323,7 @@ const BudgetPage: React.FC = () => {
                                   {occ.budget.description}
                                   {!occ.budget.isFlexible && (
                                     <IonIcon
-                                      icon={shieldHalfOutline}
+                                      icon={bag}
                                       style={{
                                         marginLeft: "8px",
                                         fontSize: "1rem",
@@ -1045,7 +1431,7 @@ const BudgetPage: React.FC = () => {
                                   fontWeight: "bold",
                                   color:
                                     occ.budget.amount < 0
-                                      ? "#D44619"
+                                      ? "#eb445c"
                                       : "#009688",
                                 }}
                               >

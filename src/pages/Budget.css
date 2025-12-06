@@ -43,7 +43,7 @@
 }
 
 .budget-item-amount.expense {
-  color: #D44619;
+  color: #eb445c;
 }
 
 .budget-item-amount.income {
@@ -59,4 +59,246 @@
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+
+/* ===== BIDIRECTIONAL BUDGET PROGRESS CARD STYLES ===== */
+
+.budget-summary-card {
+  margin: 0;
+  background: linear-gradient(
+    135deg,
+    var(--ion-color-light-shade),
+    var(--ion-color-light)
+  );
+}
+
+.period-selector {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  margin-bottom: 1rem;
+}
+
+.period-label {
+  flex: 1;
+  text-align: center;
+  font-weight: 400;
+  font-size: 1.375rem;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+  line-height: 1.4;
+  padding: 0 1rem;
+}
+
+.net-total-display {
+  text-align: center;
+  margin-bottom: 1.5rem;
+  padding: 0.5rem 0;
+}
+
+.net-total-label {
+  font-size: 0.85rem;
+  color: #999;
+  margin-bottom: 0.25rem;
+}
+
+.net-total-amount {
+  font-size: 1.8rem;
+  font-weight: bold;
+}
+
+.net-total-amount.positive {
+  color: #2dd36f;
+}
+
+.net-total-amount.negative {
+  color: #eb445c;
+}
+
+.net-total-amount.neutral {
+  color: #999;
+}
+
+.bidirectional-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.expense-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.expense-bar {
+  width: 100%;
+  height: 28px;
+  background-color: var(--ion-color-light);
+  border-radius: 14px 0 0 14px;
+  overflow: hidden;
+  border: 1px solid var(--ion-color-medium);
+  border-right: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 2px;
+}
+
+.expense-bar-fill {
+  height: 100%;
+  background-color: #eb445c;
+  transition: width 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 8px;
+  color: white;
+  font-weight: bold;
+  font-size: 0.85rem;
+}
+
+.divider {
+  width: 2px;
+  height: 36px;
+  background-color: var(--ion-color-medium);
+  flex-shrink: 0;
+}
+
+.income-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.income-bar {
+  width: 100%;
+  height: 28px;
+  background-color: var(--ion-color-light);
+  border-radius: 0 14px 14px 0;
+  overflow: hidden;
+  border: 1px solid var(--ion-color-medium);
+  border-left: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 2px;
+}
+
+.income-bar-fill {
+  height: 100%;
+  background-color: #2dd36f;
+  transition: width 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  color: white;
+  font-weight: bold;
+  font-size: 0.85rem;
+}
+
+.budget-summary-labels {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.expense-label,
+.income-label {
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.expense-label {
+  text-align: right;
+  color: #eb445c;
+}
+
+.income-label {
+  text-align: left;
+  color: #2dd36f;
+}
+
+.label-text {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.label-amount {
+  font-weight: bold;
+  font-size: 0.95rem;
+}
+
+.label-percentage {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+/* ===== BUDGET SUMMARY METRIC STYLES ===== */
+
+.metric-value.expense {
+  color: #eb445c;
+}
+
+.metric-value.income {
+  color: #009688;
+}
+
+.metric-value.positive {
+  color: #009688;
+}
+
+.metric-value.negative {
+  color: #eb445c;
+}
+
+.metric-value.neutral {
+  color: #999;
+}
+
+.metric-subtext {
+  font-size: 0.8rem !important;
+  display: block;
+}
+
+/* Responsive adjustments */
+@media (max-width: 576px) {
+  .bidirectional-bar {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .expense-section,
+  .income-section {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .expense-bar,
+  .income-bar {
+    border-radius: 8px;
+    border: 1px solid #ddd;
+  }
+
+  .divider {
+    display: none;
+  }
+
+  .budget-summary-labels {
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .expense-label,
+  .income-label {
+    text-align: center;
+  }
 }

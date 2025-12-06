@@ -121,7 +121,7 @@
 }
 
 .time-group-header.overdue {
-  color: #D44619;
+  color: #eb445c;
 }
 
 /* ===== REUSABLE ITEM DESCRIPTION STYLES ===== */
@@ -160,7 +160,7 @@
 }
 
 .item-metadata-icon.expense {
-  color: #D44619;
+  color: #eb445c;
 }
 
 .item-metadata-icon.income {
@@ -179,7 +179,7 @@
 }
 
 .item-amount.expense {
-  color: #D44619;
+  color: #eb445c;
 }
 
 .item-amount.income {

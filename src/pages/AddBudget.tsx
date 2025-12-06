@@ -496,6 +496,28 @@ const AddBudget: React.FC = () => {
     }
   }, [id, transactionId, isEditMode, isFromTransaction]);
 
+  // Add this state near the top with other state variables
+  const [hasLinkedTransactions, setHasLinkedTransactions] = useState(false);
+
+  // Add this effect to check for linked transactions when loading a budget for editing
+  useEffect(() => {
+    if (isEditMode && id) {
+      const checkLinkedTransactions = async () => {
+        try {
+          const linkedTxns = await db.transactions
+            .where("budgetId")
+            .equals(Number(id))
+            .toArray();
+          setHasLinkedTransactions(linkedTxns.length > 0);
+        } catch (err) {
+          console.error("Failed to check linked transactions:", err);
+        }
+      };
+
+      checkLinkedTransactions();
+    }
+  }, [id, isEditMode]);
+
   const resetForm = () => {
     setBudgetType("expense");
     setDescription("");
@@ -591,14 +613,38 @@ const AddBudget: React.FC = () => {
             ? frequencyDetails
             : undefined,
         isGoal: isGoal,
-        isFlexible: isFlexible, // NEW: Include isFlexible
+        isFlexible: isFlexible,
         isActive: true,
         createdAt: editingBudget?.createdAt || new Date(),
         updatedAt: new Date(),
       };
 
       if (isEditMode && id) {
+        // Get the old budget to check if due date changed
+        const oldBudget = await db.budgets.get(Number(id));
+
+        // Update the budget
         await db.budgets.update(Number(id), budgetData);
+
+        // If due date changed and there are linked transactions, update them
+        if (
+          oldBudget &&
+          oldBudget.dueDate.getTime() !== dueDateObj.getTime() &&
+          hasLinkedTransactions
+        ) {
+          const linkedTransactions = await db.transactions
+            .where("budgetId")
+            .equals(Number(id))
+            .toArray();
+
+          // Update all linked transactions with the new occurrence date
+          for (const txn of linkedTransactions) {
+            await db.transactions.update(txn.id!, {
+              occurrenceDate: dueDateObj,
+            });
+          }
+        }
+
         setSuccessToastMessage("Budget updated successfully!");
         setShowSuccessToast(true);
       } else {
@@ -996,7 +1042,20 @@ const AddBudget: React.FC = () => {
               {/* Frequency */}
               <IonCol size="5">
                 <div className="form-input-wrapper">
-                  <label className="form-label">Frequency</label>
+                  <label className="form-label">
+                    Frequency
+                    {hasLinkedTransactions && (
+                      <span
+                        style={{
+                          fontSize: "0.75rem",
+                          color: "#999",
+                          marginLeft: "4px",
+                        }}
+                      >
+                        (locked - has linked transactions)
+                      </span>
+                    )}
+                  </label>
                   <SelectableDropdown
                     label="Frequency"
                     placeholder="Select frequency"
@@ -1010,19 +1069,34 @@ const AddBudget: React.FC = () => {
                       { value: "yearly", label: "Yearly" },
                     ]}
                     onValueChange={(freqValue) => {
-                      setFrequency(
-                        freqValue as
-                          | "once"
-                          | "daily"
-                          | "weekly"
-                          | "monthly"
-                          | "yearly"
-                          | "custom"
-                      );
-                      setDayOfMonth("");
-                      setIntervalDays("");
+                      if (!hasLinkedTransactions) {
+                        setFrequency(
+                          freqValue as
+                            | "once"
+                            | "daily"
+                            | "weekly"
+                            | "monthly"
+                            | "yearly"
+                            | "custom"
+                        );
+                        setDayOfMonth("");
+                        setIntervalDays("");
+                      }
                     }}
                   />
+                  {hasLinkedTransactions && (
+                    <IonText
+                      color="medium"
+                      style={{
+                        fontSize: "0.75rem",
+                        display: "block",
+                        marginTop: "4px",
+                      }}
+                    >
+                      You can only change the day of month or interval days, not
+                      the frequency type.
+                    </IonText>
+                  )}
                 </div>
               </IonCol>
 
