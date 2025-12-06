@@ -168,5 +168,147 @@ export class FinanceDB extends Dexie {
   }
 }
 
+// NEW: Migration function to fix undefined isActive states
+export const migrateIsActiveStates = async (): Promise<{
+  accountsUpdated: number;
+  recipientsUpdated: number;
+  categoriesUpdated: number;
+  bucketsUpdated: number;
+  paymentMethodsUpdated: number;
+  smsTemplatesUpdated: number;
+  totalUpdated: number;
+}> => {
+  const results = {
+    accountsUpdated: 0,
+    recipientsUpdated: 0,
+    categoriesUpdated: 0,
+    bucketsUpdated: 0,
+    paymentMethodsUpdated: 0,
+    smsTemplatesUpdated: 0,
+    totalUpdated: 0,
+  };
+
+  try {
+    console.log("🔄 Starting isActive migration...");
+
+    // Migrate Accounts - use toArray() and filter instead of equals()
+    const allAccounts = await db.accounts.toArray();
+    const accountsWithUndefinedActive = allAccounts.filter(
+      (acc) => acc.isActive === undefined
+    );
+
+    if (accountsWithUndefinedActive.length > 0) {
+      for (const account of accountsWithUndefinedActive) {
+        await db.accounts.update(account.id!, { isActive: true });
+      }
+      results.accountsUpdated = accountsWithUndefinedActive.length;
+      console.log(
+        `✅ Updated ${accountsWithUndefinedActive.length} accounts with isActive = true`
+      );
+    }
+
+    // Migrate Recipients
+    const allRecipients = await db.recipients.toArray();
+    const recipientsWithUndefinedActive = allRecipients.filter(
+      (rec) => rec.isActive === undefined
+    );
+
+    if (recipientsWithUndefinedActive.length > 0) {
+      for (const recipient of recipientsWithUndefinedActive) {
+        await db.recipients.update(recipient.id!, { isActive: true });
+      }
+      results.recipientsUpdated = recipientsWithUndefinedActive.length;
+      console.log(
+        `✅ Updated ${recipientsWithUndefinedActive.length} recipients with isActive = true`
+      );
+    }
+
+    // Migrate Categories
+    const allCategories = await db.categories.toArray();
+    const categoriesWithUndefinedActive = allCategories.filter(
+      (cat) => cat.isActive === undefined
+    );
+
+    if (categoriesWithUndefinedActive.length > 0) {
+      for (const category of categoriesWithUndefinedActive) {
+        await db.categories.update(category.id!, { isActive: true });
+      }
+      results.categoriesUpdated = categoriesWithUndefinedActive.length;
+      console.log(
+        `✅ Updated ${categoriesWithUndefinedActive.length} categories with isActive = true`
+      );
+    }
+
+    // Migrate Buckets
+    const allBuckets = await db.buckets.toArray();
+    const bucketsWithUndefinedActive = allBuckets.filter(
+      (bkt) => bkt.isActive === undefined
+    );
+
+    if (bucketsWithUndefinedActive.length > 0) {
+      for (const bucket of bucketsWithUndefinedActive) {
+        await db.buckets.update(bucket.id!, { isActive: true });
+      }
+      results.bucketsUpdated = bucketsWithUndefinedActive.length;
+      console.log(
+        `✅ Updated ${bucketsWithUndefinedActive.length} buckets with isActive = true`
+      );
+    }
+
+    // Migrate Payment Methods
+    const allPaymentMethods = await db.paymentMethods.toArray();
+    const paymentMethodsWithUndefinedActive = allPaymentMethods.filter(
+      (pm) => pm.isActive === undefined
+    );
+
+    if (paymentMethodsWithUndefinedActive.length > 0) {
+      for (const method of paymentMethodsWithUndefinedActive) {
+        await db.paymentMethods.update(method.id!, { isActive: true });
+      }
+      results.paymentMethodsUpdated = paymentMethodsWithUndefinedActive.length;
+      console.log(
+        `✅ Updated ${paymentMethodsWithUndefinedActive.length} payment methods with isActive = true`
+      );
+    }
+
+    // Migrate SMS Import Templates
+    const allSmsTemplates = await db.smsImportTemplates.toArray();
+    const smsTemplatesWithUndefinedActive = allSmsTemplates.filter(
+      (tpl) => tpl.isActive === undefined
+    );
+
+    if (smsTemplatesWithUndefinedActive.length > 0) {
+      for (const template of smsTemplatesWithUndefinedActive) {
+        await db.smsImportTemplates.update(template.id!, { isActive: true });
+      }
+      results.smsTemplatesUpdated = smsTemplatesWithUndefinedActive.length;
+      console.log(
+        `✅ Updated ${smsTemplatesWithUndefinedActive.length} SMS templates with isActive = true`
+      );
+    }
+
+    results.totalUpdated =
+      results.accountsUpdated +
+      results.recipientsUpdated +
+      results.categoriesUpdated +
+      results.bucketsUpdated +
+      results.paymentMethodsUpdated +
+      results.smsTemplatesUpdated;
+
+    if (results.totalUpdated === 0) {
+      console.log("✨ No undefined isActive states found. Database is clean!");
+    } else {
+      console.log(
+        `🎉 Migration complete! Fixed ${results.totalUpdated} records with undefined isActive states.`
+      );
+    }
+
+    return results;
+  } catch (error) {
+    console.error("❌ Error during isActive migration:", error);
+    throw error;
+  }
+};
+
 // Export a singleton db instance
 export const db = new FinanceDB();
