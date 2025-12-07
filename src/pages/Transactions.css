@@ -4,10 +4,14 @@ ion-accordion-group {
   overflow: visible !important;
 }
 
-ion-accordion {
-  overflow: visible !important;
+ion-accordion.accordion-collapsed {
+  overflow: hidden !important;
+  z-index: 1
 }
-
+ion-accordion.accordion-expanded {
+  overflow: visible !important;
+  z-index: 1000
+}
 ion-accordion::part(content) {
   overflow: visible !important;
 }

@@ -800,31 +800,25 @@ const AddTransaction: React.FC = () => {
 
     // Handle recipient
     if (parsedData.recipientName) {
-      let recipient = sortedRecipients.find(
+      // Search for existing recipient (case-insensitive by name only)
+      const existingRecipient = sortedRecipients.find(
         (r) => r.name?.toLowerCase() === parsedData.recipientName?.toLowerCase()
       );
 
-      if (!recipient && parsedData.recipientName) {
-        try {
-          const now = new Date();
-          const recId = await db.recipients.add({
+      if (existingRecipient) {
+        // Recipient exists - prepopulate the field
+        setRecipientId(existingRecipient.id);
+      } else {
+        // Recipient doesn't exist - open AddRecipientModal with pre-filled data
+        setShowRecipientModal(true);
+        // Store parsed data temporarily to pass to modal
+        sessionStorage.setItem(
+          "smsRecipientData",
+          JSON.stringify({
             name: parsedData.recipientName,
-            phone: parsedData.recipientPhone,
-            isActive: true,
-            createdAt: now,
-            updatedAt: now,
-          });
-          recipient = await db.recipients.get(recId);
-          if (recipient) {
-            setSortedRecipients((prev) => [recipient!, ...prev]);
-          }
-        } catch (err) {
-          console.error("Failed to create recipient:", err);
-        }
-      }
-
-      if (recipient) {
-        setRecipientId(recipient.id);
+            phone: parsedData.recipientPhone || "",
+          })
+        );
       }
     }
   };

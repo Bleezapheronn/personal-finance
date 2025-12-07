@@ -26,9 +26,10 @@ import {
   IonAlert,
   IonAccordion,
   IonAccordionGroup,
-  IonSearchbar,
+  IonInput, // ADD THIS
   IonFab,
   IonFabButton,
+  IonToast,
 } from "@ionic/react";
 
 import { useHistory } from "react-router-dom";
@@ -38,6 +39,7 @@ import {
   trashOutline,
   arrowUpCircle,
   arrowDownCircle,
+  closeCircle,
   closeCircleOutline,
   downloadOutline,
   cloudUploadOutline,
@@ -75,6 +77,7 @@ const Transactions: React.FC = () => {
   >(undefined);
   const [isTransferDelete, setIsTransferDelete] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
 
   // Filter states
   const [selectedAccountId, setSelectedAccountId] = useState<
@@ -212,6 +215,7 @@ const Transactions: React.FC = () => {
         // Delete single transaction
         await db.transactions.delete(transactionToDelete);
         setSuccessMsg("Transaction deleted successfully!");
+        setShowSuccessToast(true);
       }
 
       fetchTransactions(); // refresh after delete
@@ -339,6 +343,131 @@ const Transactions: React.FC = () => {
     setSelectedDateFrom("");
     setSelectedDateTo("");
     setSelectedDescription("");
+  };
+
+  // ADD THESE NEW HELPER FUNCTIONS after clearFilters():
+
+  const clearIndividualFilter = (filterName: string) => {
+    switch (filterName) {
+      case "account":
+        setSelectedAccountId(undefined);
+        break;
+      case "paymentMethod":
+        setSelectedPaymentMethodId(undefined);
+        break;
+      case "recipient":
+        setSelectedRecipientId(undefined);
+        break;
+      case "bucket":
+        setSelectedBucketId(undefined);
+        break;
+      case "category":
+        setSelectedCategoryId(undefined);
+        break;
+      case "dateFrom":
+        setSelectedDateFrom("");
+        break;
+      case "dateTo":
+        setSelectedDateTo("");
+        break;
+      case "description":
+        setSelectedDescription("");
+        break;
+    }
+  };
+
+  const getActiveFilterChips = (): Array<{
+    label: string;
+    displayLabel: string;
+    tooltip: string;
+    filterName: string;
+  }> => {
+    const chips: Array<{
+      label: string;
+      displayLabel: string;
+      tooltip: string;
+      filterName: string;
+    }> = [];
+
+    if (selectedAccountId !== undefined) {
+      const account = accounts.find((a) => a.id === selectedAccountId);
+      chips.push({
+        label: `Account: ${account?.name}`,
+        displayLabel: account?.name || "Account",
+        tooltip: "Clear Account filter",
+        filterName: "account",
+      });
+    }
+
+    if (selectedPaymentMethodId !== undefined) {
+      const pm = paymentMethods.find((p) => p.id === selectedPaymentMethodId);
+      const account = accounts.find((a) => a.id === pm?.accountId);
+      chips.push({
+        label: `${account?.name} - ${pm?.name}`,
+        displayLabel: `${account?.name} - ${pm?.name}`,
+        tooltip: "Clear Payment Method filter",
+        filterName: "paymentMethod",
+      });
+    }
+
+    if (selectedRecipientId !== undefined) {
+      const recipient = recipients.find((r) => r.id === selectedRecipientId);
+      chips.push({
+        label: `Recipient: ${recipient?.name}`,
+        displayLabel: recipient?.name || "Recipient",
+        tooltip: "Clear Recipient filter",
+        filterName: "recipient",
+      });
+    }
+
+    if (selectedBucketId !== undefined) {
+      const bucket = buckets.find((b) => b.id === selectedBucketId);
+      chips.push({
+        label: `Bucket: ${bucket?.name}`,
+        displayLabel: bucket?.name || "Bucket",
+        tooltip: "Clear Bucket filter",
+        filterName: "bucket",
+      });
+    }
+
+    if (selectedCategoryId !== undefined) {
+      const category = categories.find((c) => c.id === selectedCategoryId);
+      chips.push({
+        label: `Category: ${category?.name}`,
+        displayLabel: category?.name || "Category",
+        tooltip: "Clear Category filter",
+        filterName: "category",
+      });
+    }
+
+    if (selectedDateFrom) {
+      chips.push({
+        label: `From: ${selectedDateFrom}`,
+        displayLabel: selectedDateFrom,
+        tooltip: "Clear From Date filter",
+        filterName: "dateFrom",
+      });
+    }
+
+    if (selectedDateTo) {
+      chips.push({
+        label: `To: ${selectedDateTo}`,
+        displayLabel: selectedDateTo,
+        tooltip: "Clear To Date filter",
+        filterName: "dateTo",
+      });
+    }
+
+    if (selectedDescription) {
+      chips.push({
+        label: `"${selectedDescription}"`,
+        displayLabel: selectedDescription,
+        tooltip: "Clear Description filter",
+        filterName: "description",
+      });
+    }
+
+    return chips;
   };
 
   const hasActiveFilters = () => {
@@ -621,6 +750,16 @@ const Transactions: React.FC = () => {
           ]}
         />
 
+        {/* Success Toast */}
+        <IonToast
+          isOpen={showSuccessToast}
+          onDidDismiss={() => setShowSuccessToast(false)}
+          message={successMsg}
+          duration={2000}
+          position="top"
+          color="success"
+        />
+
         {successMsg && (
           <IonText color="success">
             <p
@@ -647,7 +786,7 @@ const Transactions: React.FC = () => {
                   {accountTotals.map((account) => (
                     <IonCol
                       key={account.accountId}
-                      size={accountTotals.length > 3 ? "2" : "3"}
+                      size="2"
                       onClick={() => setSelectedAccountId(account.accountId)}
                       style={{
                         cursor: "pointer",
@@ -681,7 +820,7 @@ const Transactions: React.FC = () => {
                             fontWeight: "bold",
                             marginLeft: "2px",
                             textAlign: "left",
-                            color: account.total < 0 ? "#D44619" : "#009688",
+                            color: account.total < 0 ? "#eb445c" : "#009688",
                           }}
                         >
                           {account.total.toLocaleString(undefined, {
@@ -719,7 +858,7 @@ const Transactions: React.FC = () => {
                           fontSize: "1.6rem",
                           fontWeight: "bold",
                           textAlign: "right",
-                          color: overallTotal < 0 ? "#D44619" : "#009688",
+                          color: overallTotal < 0 ? "#eb445c" : "#009688",
                         }}
                       >
                         {overallTotal.toLocaleString(undefined, {
@@ -735,39 +874,149 @@ const Transactions: React.FC = () => {
           </IonCard>
         )}
 
-        {/* Filters Accordion */}
+        {/* Filters Accordion - UPDATED HEADER WITH CHIPS ON SAME LINE */}
         {!loading && transactions && transactions.length > 0 && (
           <IonAccordionGroup style={{ marginBottom: "16px" }}>
             <IonAccordion value="filters">
-              <IonItem slot="header" color="light">
-                <IonLabel>
-                  <strong>Filters</strong>
-                  {hasActiveFilters() && (
-                    <IonChip
-                      color="primary"
-                      style={{ marginLeft: "8px", fontSize: "0.75rem" }}
-                    >
-                      <IonLabel>Active</IonLabel>
-                    </IonChip>
-                  )}
-                </IonLabel>
+              <IonItem
+                slot="header"
+                color="light"
+                style={{
+                  borderRadius: "4px",
+                  display: "flex",
+                  alignItems: "center",
+                  width: "100%",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    flexWrap: "wrap",
+                    flex: 1,
+                  }}
+                >
+                  <IonLabel>Filters</IonLabel>
+                  {hasActiveFilters() &&
+                    getActiveFilterChips().map((chip) => (
+                      <div
+                        key={chip.filterName}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          clearIndividualFilter(chip.filterName);
+                        }}
+                      >
+                        <IonChip
+                          color="primary"
+                          style={{
+                            cursor: "pointer",
+                            fontSize: "0.75rem",
+                            height: "24px",
+                            margin: "0",
+                            flexShrink: 0,
+                          }}
+                          title={chip.tooltip}
+                        >
+                          <IonLabel style={{ padding: "0 4px" }}>
+                            {chip.displayLabel}
+                          </IonLabel>
+                          <IonIcon icon={closeCircle} />
+                        </IonChip>
+                      </div>
+                    ))}
+                </div>
               </IonItem>
               <div slot="content" style={{ padding: "16px" }}>
                 <IonGrid>
                   <IonRow>
                     <IonCol size="12">
-                      <IonSearchbar
-                        value={selectedDescription}
-                        onIonInput={(e) =>
-                          setSelectedDescription(e.detail.value || "")
-                        }
-                        placeholder="Search description..."
-                        animated
-                      />
+                      <div className="form-input-wrapper">
+                        <label className="form-label">Description</label>
+                        <div
+                          style={{
+                            position: "relative",
+                            display: "flex",
+                            alignItems: "center",
+                          }}
+                        >
+                          <IonInput
+                            className="form-input"
+                            type="text"
+                            placeholder="Search Description..."
+                            value={selectedDescription}
+                            onIonInput={(e: CustomEvent) => {
+                              setSelectedDescription(
+                                (e.detail.value as string) || ""
+                              );
+                            }}
+                            style={{
+                              width: "100%",
+                              paddingRight: selectedDescription
+                                ? "44px"
+                                : "12px",
+                            }}
+                          />
+                          {selectedDescription && (
+                            <button
+                              onClick={(e: React.MouseEvent) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setSelectedDescription("");
+                              }}
+                              style={{
+                                position: "absolute",
+                                right: "8px",
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                color: "var(--ion-color-medium)",
+                                fontSize: "1.2rem",
+                                opacity: 0.7,
+                                transition: "opacity 0.2s",
+                                padding: "4px",
+                                width: "32px",
+                                height: "32px",
+                              }}
+                              onMouseEnter={(e: React.MouseEvent) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.opacity = "1";
+                              }}
+                              onMouseLeave={(e: React.MouseEvent) => {
+                                (
+                                  e.currentTarget as HTMLButtonElement
+                                ).style.opacity = "0.7";
+                              }}
+                              title="Clear description filter"
+                            >
+                              <IonIcon icon={closeCircleOutline} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </IonCol>
                   </IonRow>
                   <IonRow>
                     <IonCol size="12" sizeMd="6">
+                      <div
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: "500",
+                          opacity: 0.7,
+                          marginBottom: "8px",
+                        }}
+                      >
+                        Account
+                      </div>
                       <SearchableFilterSelect
                         label="Account"
                         placeholder="All Accounts"
@@ -788,6 +1037,16 @@ const Transactions: React.FC = () => {
                       />
                     </IonCol>
                     <IonCol size="12" sizeMd="6">
+                      <div
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: "500",
+                          opacity: 0.7,
+                          marginBottom: "8px",
+                        }}
+                      >
+                        Payment Method
+                      </div>
                       <SearchableFilterSelect
                         label="Payment Method"
                         placeholder="All Payment Methods"
@@ -800,7 +1059,6 @@ const Transactions: React.FC = () => {
                               (a) => a.id === pm.accountId
                             );
 
-                            // If an account is selected, only show payment methods for that account
                             if (selectedAccountId !== undefined) {
                               return (
                                 pm.accountId === selectedAccountId &&
@@ -809,7 +1067,6 @@ const Transactions: React.FC = () => {
                               );
                             }
 
-                            // Otherwise show all payment methods with transactions
                             return (
                               pmsWithTxns.includes(pm.id || 0) && account?.name
                             );
@@ -834,6 +1091,16 @@ const Transactions: React.FC = () => {
                   </IonRow>
                   <IonRow>
                     <IonCol size="12" sizeMd="6">
+                      <div
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: "500",
+                          opacity: 0.7,
+                          marginBottom: "8px",
+                        }}
+                      >
+                        Bucket
+                      </div>
                       <SearchableFilterSelect
                         label="Bucket"
                         placeholder="All Buckets"
@@ -853,6 +1120,16 @@ const Transactions: React.FC = () => {
                       />
                     </IonCol>
                     <IonCol size="12" sizeMd="6">
+                      <div
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: "500",
+                          opacity: 0.7,
+                          marginBottom: "8px",
+                        }}
+                      >
+                        Category
+                      </div>
                       <SearchableFilterSelect
                         label="Category"
                         placeholder="All Categories"
@@ -861,7 +1138,6 @@ const Transactions: React.FC = () => {
                           .filter((c) => {
                             const catsWithTxns = getCategoriesInTransactions();
 
-                            // If a bucket is selected, only show categories from that bucket
                             if (selectedBucketId !== undefined) {
                               return (
                                 c.bucketId === selectedBucketId &&
@@ -869,7 +1145,6 @@ const Transactions: React.FC = () => {
                               );
                             }
 
-                            // Otherwise show all categories with transactions
                             return c.name && catsWithTxns.includes(c.id || 0);
                           })
                           .map((c) => {
@@ -887,6 +1162,16 @@ const Transactions: React.FC = () => {
                   </IonRow>
                   <IonRow>
                     <IonCol size="12">
+                      <div
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: "500",
+                          opacity: 0.7,
+                          marginBottom: "8px",
+                        }}
+                      >
+                        Recipient
+                      </div>
                       <SearchableFilterSelect
                         label="Recipient"
                         placeholder="All Recipients"
@@ -907,7 +1192,7 @@ const Transactions: React.FC = () => {
                             const countB = getRecipientTransactionCount(
                               b.id || 0
                             );
-                            return countB - countA; // Most used first
+                            return countB - countA;
                           })}
                         onIonChange={setSelectedRecipientId}
                       />
@@ -915,56 +1200,150 @@ const Transactions: React.FC = () => {
                   </IonRow>
                   <IonRow>
                     <IonCol size="12" sizeMd="6">
-                      <label
+                      <div
                         style={{
                           fontSize: "0.75rem",
                           fontWeight: "500",
                           opacity: 0.7,
-                          display: "block",
-                          marginBottom: "4px",
+                          marginBottom: "8px",
                         }}
                       >
                         Date From
-                      </label>
-                      <input
-                        type="date"
-                        value={selectedDateFrom}
-                        onChange={(e) => setSelectedDateFrom(e.target.value)}
+                      </div>
+                      <div
                         style={{
-                          width: "100%",
-                          padding: "10px",
-                          border: "1px solid var(--ion-color-medium)",
-                          borderRadius: "4px",
-                          backgroundColor: "transparent",
-                          color: "inherit",
+                          position: "relative",
+                          display: "flex",
+                          alignItems: "center",
                         }}
-                      />
+                      >
+                        <input
+                          type="date"
+                          value={selectedDateFrom}
+                          onChange={(e) => setSelectedDateFrom(e.target.value)}
+                          max={selectedDateTo || undefined}
+                          style={{
+                            width: "100%",
+                            padding: "10px",
+                            border: "1px solid var(--ion-color-medium)",
+                            borderRadius: "4px",
+                            backgroundColor: "transparent",
+                            color: "inherit",
+                          }}
+                        />
+                        {selectedDateFrom && (
+                          <button
+                            onClick={(e: React.MouseEvent) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setSelectedDateFrom("");
+                            }}
+                            style={{
+                              position: "absolute",
+                              right: "32px",
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              color: "var(--ion-color-dark)",
+                              fontSize: "1.2rem",
+                              opacity: 0.7,
+                              transition: "opacity 0.2s",
+                              width: "18px",
+                              height: "18px",
+                              padding: "0",
+                            }}
+                            onMouseEnter={(e) => {
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.opacity = "1";
+                            }}
+                            onMouseLeave={(e) => {
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.opacity = "0.7";
+                            }}
+                            title="Clear Date From filter"
+                          >
+                            <IonIcon icon={closeCircle} />
+                          </button>
+                        )}
+                      </div>
                     </IonCol>
                     <IonCol size="12" sizeMd="6">
-                      <label
+                      <div
                         style={{
                           fontSize: "0.75rem",
                           fontWeight: "500",
                           opacity: 0.7,
-                          display: "block",
-                          marginBottom: "4px",
+                          marginBottom: "8px",
                         }}
                       >
                         Date To
-                      </label>
-                      <input
-                        type="date"
-                        value={selectedDateTo}
-                        onChange={(e) => setSelectedDateTo(e.target.value)}
+                      </div>
+                      <div
                         style={{
-                          width: "100%",
-                          padding: "10px",
-                          border: "1px solid var(--ion-color-medium)",
-                          borderRadius: "4px",
-                          backgroundColor: "transparent",
-                          color: "inherit",
+                          position: "relative",
+                          display: "flex",
+                          alignItems: "center",
                         }}
-                      />
+                      >
+                        <input
+                          type="date"
+                          value={selectedDateTo}
+                          onChange={(e) => setSelectedDateTo(e.target.value)}
+                          min={selectedDateFrom || undefined}
+                          style={{
+                            width: "100%",
+                            padding: "10px",
+                            border: "1px solid var(--ion-color-medium)",
+                            borderRadius: "4px",
+                            backgroundColor: "transparent",
+                            color: "inherit",
+                          }}
+                        />
+                        {selectedDateTo && (
+                          <button
+                            onClick={(e: React.MouseEvent) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setSelectedDateTo("");
+                            }}
+                            style={{
+                              position: "absolute",
+                              right: "32px",
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              color: "var(--ion-color-dark)",
+                              fontSize: "1.2rem",
+                              opacity: 0.7,
+                              transition: "opacity 0.2s",
+                              width: "18px",
+                              height: "18px",
+                              padding: "0",
+                            }}
+                            onMouseEnter={(e) => {
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.opacity = "1";
+                            }}
+                            onMouseLeave={(e) => {
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.opacity = "0.7";
+                            }}
+                            title="Clear Date To filter"
+                          >
+                            <IonIcon icon={closeCircle} />
+                          </button>
+                        )}
+                      </div>
                     </IonCol>
                   </IonRow>
                   {hasActiveFilters() && (
@@ -977,7 +1356,7 @@ const Transactions: React.FC = () => {
                           onClick={clearFilters}
                         >
                           <IonIcon icon={closeCircleOutline} />
-                          Clear Filters
+                          Clear All Filters
                         </IonButton>
                       </IonCol>
                     </IonRow>
@@ -1049,7 +1428,7 @@ const Transactions: React.FC = () => {
                                 </div>
                               </h2>
                             </IonCol>
-                            <IonCol size="11">
+                            <IonCol size="7">
                               <IonRow>
                                 {txn.description && (
                                   <h2
@@ -1061,7 +1440,7 @@ const Transactions: React.FC = () => {
                                 )}
                               </IonRow>
                               <IonRow>
-                                <IonCol size="1">
+                                <IonCol size="1.5">
                                   <IonAvatar
                                     style={{
                                       width: "40px",
@@ -1100,7 +1479,7 @@ const Transactions: React.FC = () => {
                                     )}
                                   </IonAvatar>
                                 </IonCol>
-                                <IonCol size="5">
+                                <IonCol>
                                   <div
                                     style={{
                                       color: "#666",
@@ -1122,7 +1501,7 @@ const Transactions: React.FC = () => {
                                           txn.amount +
                                             (txn.transactionCost || 0) <
                                           0
-                                            ? "#D44619"
+                                            ? "#eb445c"
                                             : "#009688",
                                         fontSize: "1.2rem",
                                       }}
@@ -1156,43 +1535,47 @@ const Transactions: React.FC = () => {
                                     </IonChip>
                                   </div>
                                 </IonCol>
-                                <IonCol size="4">
-                                  <div
-                                    className={`item-amount ${
-                                      txn.amount + (txn.transactionCost || 0) <
-                                      0
-                                        ? "expense"
-                                        : "income"
-                                    }`}
-                                    style={{ textAlign: "right" }}
-                                  >
-                                    {(
-                                      txn.amount + (txn.transactionCost || 0)
-                                    ).toLocaleString(undefined, {
-                                      minimumFractionDigits: 2,
-                                      maximumFractionDigits: 2,
-                                    })}
-                                  </div>
-                                </IonCol>
-                                <IonCol size="2">
+                              </IonRow>
+                            </IonCol>
+
+                            <IonCol size="4" style={{ textAlign: "right" }}>
+                              <div
+                                className={`item-amount ${
+                                  txn.amount + (txn.transactionCost || 0) < 0
+                                    ? "expense"
+                                    : "income"
+                                }`}
+                                style={{ textAlign: "right" }}
+                              >
+                                {(
+                                  txn.amount + (txn.transactionCost || 0)
+                                ).toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </div>
+                              <p style={{ margin: "0" }}>&nbsp;</p>
+                              {/* Edit/Delete/Link buttons below progress bar */}
+                              <IonRow className="item-actions">
+                                <IonCol className="item-actions-container">
                                   <IonButton
                                     fill="clear"
+                                    size="small"
+                                    style={{ marginRight: "0" }}
                                     onClick={() => handleEdit(txn.id)}
+                                    title="Edit Transaction"
                                   >
-                                    <IonIcon
-                                      slot="icon-only"
-                                      icon={createOutline}
-                                    />
+                                    <IonIcon slot="end" icon={createOutline} />
                                   </IonButton>
                                   <IonButton
                                     fill="clear"
+                                    size="small"
+                                    style={{ marginRight: "0" }}
                                     color="danger"
                                     onClick={() => handleDeleteClick(txn.id)}
+                                    title="Delete Transaction"
                                   >
-                                    <IonIcon
-                                      slot="icon-only"
-                                      icon={trashOutline}
-                                    />
+                                    <IonIcon slot="end" icon={trashOutline} />
                                   </IonButton>
                                 </IonCol>
                               </IonRow>

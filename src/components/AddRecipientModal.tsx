@@ -29,7 +29,7 @@ interface AddRecipientModalProps {
     paybill?: string,
     accountNumber?: string,
     excludeId?: number
-  ) => Promise<Recipient | null>; // NEW
+  ) => Promise<Recipient | null>;
 }
 
 export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
@@ -38,7 +38,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
   onRecipientAdded,
   editingRecipient,
   onDuplicateFound,
-  checkForDuplicate, // NEW
+  checkForDuplicate,
 }) => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -64,17 +64,34 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
   };
 
   useEffect(() => {
-    if (isOpen && editingRecipient) {
-      setName(editingRecipient.name);
-      setEmail(editingRecipient.email || "");
-      setPhone(editingRecipient.phone || "");
-      setTill(editingRecipient.tillNumber || "");
-      setPaybill(editingRecipient.paybill || "");
-      setAccountNumber(editingRecipient.accountNumber || "");
-      setDescription(editingRecipient.description || "");
-      setErrorMsg("");
-    } else if (isOpen) {
-      resetForm();
+    if (isOpen) {
+      if (editingRecipient) {
+        // EDIT MODE: Load existing recipient data
+        setName(editingRecipient.name);
+        setEmail(editingRecipient.email || "");
+        setPhone(editingRecipient.phone || "");
+        setTill(editingRecipient.tillNumber || "");
+        setPaybill(editingRecipient.paybill || "");
+        setAccountNumber(editingRecipient.accountNumber || "");
+        setDescription(editingRecipient.description || "");
+        setErrorMsg("");
+      } else {
+        // ADD MODE: Check for SMS recipient data
+        const smsData = sessionStorage.getItem("smsRecipientData");
+        if (smsData) {
+          try {
+            const parsed = JSON.parse(smsData);
+            setName(parsed.name || "");
+            setPhone(parsed.phone || "");
+            sessionStorage.removeItem("smsRecipientData"); // Clear after using
+          } catch (err) {
+            console.error("Failed to parse SMS recipient data:", err);
+            resetForm();
+          }
+        } else {
+          resetForm();
+        }
+      }
     }
   }, [isOpen, editingRecipient]);
 

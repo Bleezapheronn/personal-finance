@@ -6,7 +6,7 @@ import {
   IonLabel,
   IonIcon,
 } from "@ionic/react";
-import { chevronDown } from "ionicons/icons";
+import { chevronDown, closeCircle } from "ionicons/icons";
 import "./SearchableFilterSelect.css";
 
 interface SearchableFilterSelectProps {
@@ -76,6 +76,14 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
     setSearchText("");
   };
 
+  // NEW: Handle clear button click
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onIonChange(undefined);
+    setSearchText("");
+    // Keep dropdown open if it was already open
+  };
+
   return (
     <div ref={containerRef} style={{ position: "relative" }}>
       {/* Closed State - Looks like a native select */}
@@ -97,15 +105,59 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
           }}
         >
           <span>{selectedOption ? selectedOption.name : placeholder}</span>
-          <IonIcon
-            icon={chevronDown}
+          <div
             style={{
-              fontSize: "1.2rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
               opacity: 0.7,
-              transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
-              transition: "transform 0.2s",
+              position: "relative", // ADD THIS
             }}
-          />
+          >
+            {/* NEW: Clear button - only show if value is selected */}
+            {selectedOption && (
+              <button
+                onClick={handleClear}
+                style={{
+                  position: "absolute", // ADD THIS - remove from flex flow
+                  left: "-20px",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--ion-color-dark)",
+                  fontSize: "1.2rem",
+                  opacity: 0.7,
+                  transition: "opacity 0.2s",
+                  width: "18px", // CHANGE: explicit width to match chevron area
+                  height: "18px", // CHANGE: explicit height to match chevron area
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.opacity = "1";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.opacity = "0.7";
+                }}
+                title="Clear selection"
+              >
+                <IonIcon icon={closeCircle} />
+              </button>
+            )}
+            <div style={{ width: "24px" }}>
+              {" "}
+              {/* ADD THIS spacer to keep chevron position consistent */}
+              <IonIcon
+                icon={chevronDown}
+                style={{
+                  fontSize: "1.2rem",
+                  transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.2s",
+                }}
+              />
+            </div>
+          </div>
         </div>
       )}
 
