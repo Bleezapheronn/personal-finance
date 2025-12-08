@@ -71,10 +71,11 @@ export const importTransactionsFromCSV = async (
     }
 
     // Fetch lookup data
-    const [categories, recipients, paymentMethods] = await Promise.all([
+    const [categories, recipients, accounts, budgets] = await Promise.all([
       db.categories.toArray(),
       db.recipients.toArray(),
-      db.paymentMethods.toArray(),
+      db.accounts.toArray(),
+      db.budgets.toArray(),
     ]);
 
     // Process each data row
@@ -82,7 +83,7 @@ export const importTransactionsFromCSV = async (
       const row = rows[rowIndex];
 
       try {
-        // Map CSV columns
+        // Map CSV columns - CHANGED: Added budgetDescription and occurrenceDate
         const [
           ,
           date,
@@ -93,8 +94,9 @@ export const importTransactionsFromCSV = async (
           recipientName,
           categoryName,
           ,
-          paymentMethodName,
-          ,
+          accountName,
+          budgetDescription, // NEW: Budget description for linking
+          occurrenceDateStr, // NEW: Occurrence date
         ] = row;
 
         // Validation
@@ -103,12 +105,12 @@ export const importTransactionsFromCSV = async (
           !amount ||
           !recipientName ||
           !categoryName ||
-          !paymentMethodName
+          !accountName
         ) {
           result.errors.push({
             row: rowIndex,
             reason:
-              "Missing required fields (Date, Amount, Recipient, Category, Payment Method)",
+              "Missing required fields (Date, Amount, Recipient, Category, Account)",
           });
           result.failed++;
           continue;
@@ -159,14 +161,14 @@ export const importTransactionsFromCSV = async (
           continue;
         }
 
-        // Find payment method
-        const paymentMethod = paymentMethods.find(
-          (pm) => pm.name?.toLowerCase() === paymentMethodName.toLowerCase()
+        // Find account
+        const account = accounts.find(
+          (a) => a.name?.toLowerCase() === accountName.toLowerCase()
         );
-        if (!paymentMethod) {
+        if (!account) {
           result.errors.push({
             row: rowIndex,
-            reason: `Payment method not found: ${paymentMethodName}`,
+            reason: `Account not found: ${accountName}`,
           });
           result.failed++;
           continue;
@@ -188,19 +190,41 @@ export const importTransactionsFromCSV = async (
         const parsedAmount = parseFloat(amount);
         const recipientId = recipient.id;
         const categoryId = category.id;
-        const paymentChannelId = paymentMethod.id;
+        const accountId = account.id;
 
         if (
           typeof recipientId !== "number" ||
           typeof categoryId !== "number" ||
-          typeof paymentChannelId !== "number"
+          typeof accountId !== "number"
         ) {
           result.errors.push({
             row: rowIndex,
-            reason: "Invalid recipient, category, or payment method ID",
+            reason: "Invalid recipient, category, or account ID",
           });
           result.failed++;
           continue;
+        }
+
+        // NEW: Find budget by description if provided
+        let budgetId: number | undefined;
+        let occurrenceDate: Date | undefined;
+
+        if (budgetDescription) {
+          const budget = budgets.find(
+            (b) =>
+              b.description?.toLowerCase() === budgetDescription.toLowerCase()
+          );
+          if (budget) {
+            budgetId = budget.id;
+
+            // Parse occurrence date if provided
+            if (occurrenceDateStr) {
+              occurrenceDate = new Date(`${occurrenceDateStr}T00:00:00`);
+              if (isNaN(occurrenceDate.getTime())) {
+                occurrenceDate = undefined;
+              }
+            }
+          }
         }
 
         // Create transaction
@@ -210,8 +234,10 @@ export const importTransactionsFromCSV = async (
           amount: parsedAmount,
           recipientId,
           categoryId,
-          paymentChannelId,
+          accountId,
           transactionCost: 0,
+          budgetId, // NEW: Include budgetId
+          occurrenceDate, // NEW: Include occurrenceDate
         };
 
         // Check if transaction already exists (by date, amount, recipient, description)

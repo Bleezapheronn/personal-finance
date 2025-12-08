@@ -3,23 +3,17 @@ import { db } from "../db";
 export const exportTransactionsToCSV = async (): Promise<string> => {
   try {
     // Fetch all data
-    const [
-      transactions,
-      categories,
-      recipients,
-      paymentMethods,
-      accounts,
-      buckets,
-    ] = await Promise.all([
-      db.transactions.toArray(),
-      db.categories.toArray(),
-      db.recipients.toArray(),
-      db.paymentMethods.toArray(),
-      db.accounts.toArray(),
-      db.buckets.toArray(),
-    ]);
+    const [transactions, categories, recipients, accounts, buckets, budgets] =
+      await Promise.all([
+        db.transactions.toArray(),
+        db.categories.toArray(),
+        db.recipients.toArray(),
+        db.accounts.toArray(),
+        db.buckets.toArray(),
+        db.budgets.toArray(),
+      ]);
 
-    // CSV Header
+    // CSV Header - CHANGED: Added budgetId and occurrenceDate
     const headers = [
       "Transaction ID",
       "Date",
@@ -30,8 +24,9 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
       "Recipient",
       "Category",
       "Bucket",
-      "Payment Method",
       "Account",
+      "Budget ID",
+      "Occurrence Date",
     ];
 
     // Helper function to escape CSV values (handle commas, quotes, newlines)
@@ -53,10 +48,10 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
       const recipient = recipients.find((r) => r.id === txn.recipientId);
       const category = categories.find((c) => c.id === txn.categoryId);
       const bucket = buckets.find((b) => b.id === category?.bucketId);
-      const paymentMethod = paymentMethods.find(
-        (pm) => pm.id === txn.paymentChannelId
-      );
-      const account = accounts.find((a) => a.id === paymentMethod?.accountId);
+      const account = accounts.find((a) => a.id === txn.accountId);
+      const budget = txn.budgetId
+        ? budgets.find((b) => b.id === txn.budgetId)
+        : null;
 
       // Split date and time
       const dateObj = new Date(txn.date);
@@ -65,6 +60,11 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
 
       // Determine transaction type based on amount
       const type = txn.amount > 0 ? "Income" : "Expense";
+
+      // CHANGED: Added budgetId and occurrenceDate
+      const occurrenceDateStr = txn.occurrenceDate
+        ? new Date(txn.occurrenceDate).toISOString().split("T")[0]
+        : "";
 
       return [
         escapeCSV(txn.id),
@@ -76,8 +76,9 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
         escapeCSV(recipient?.name),
         escapeCSV(category?.name),
         escapeCSV(bucket?.name),
-        escapeCSV(paymentMethod?.name),
         escapeCSV(account?.name),
+        escapeCSV(budget?.description), // Use budget description instead of ID for export
+        escapeCSV(occurrenceDateStr),
       ]
         .map((v) => v)
         .join(",");

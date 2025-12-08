@@ -23,15 +23,7 @@ import {
   IonToast,
   IonCheckbox,
 } from "@ionic/react";
-import {
-  db,
-  Budget,
-  Category,
-  Bucket,
-  Account,
-  PaymentMethod,
-  Recipient,
-} from "../db";
+import { db, Budget, Category, Bucket, Account, Recipient } from "../db";
 import { addOutline } from "ionicons/icons";
 import {
   validateBudgetForm,
@@ -41,9 +33,7 @@ import {
 } from "../utils/budgetValidation";
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
-import { AddPaymentMethodModal } from "../components/AddPaymentMethodModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
-import { SelectableDropdown } from "../components/SelectableDropdown";
 
 type BudgetType = "expense" | "income";
 
@@ -62,9 +52,7 @@ const AddBudget: React.FC = () => {
   const [amount, setAmount] = useState("");
   const [transactionCost, setTransactionCost] = useState("");
   const [categoryId, setCategoryId] = useState<number | undefined>(undefined);
-  const [paymentMethodId, setPaymentMethodId] = useState<number | undefined>(
-    undefined
-  );
+  const [accountId, setAccountId] = useState<number | undefined>(undefined);
   const [recipientId, setRecipientId] = useState<number | undefined>(undefined);
   const [dueDate, setDueDate] = useState<string>("");
   const [frequency, setFrequency] = useState<
@@ -73,21 +61,18 @@ const AddBudget: React.FC = () => {
   const [dayOfMonth, setDayOfMonth] = useState<string>("");
   const [intervalDays, setIntervalDays] = useState<string>("");
   const [isGoal, setIsGoal] = useState(false);
-  const [isFlexible, setIsFlexible] = useState(false); // NEW: Default to false (strict)
+  const [isFlexible, setIsFlexible] = useState(false);
 
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
 
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [sortedCategories, setSortedCategories] = useState<Category[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [sortedPaymentMethods, setSortedPaymentMethods] = useState<
-    PaymentMethod[]
-  >([]);
+  const [sortedAccounts, setSortedAccounts] = useState<Account[]>([]);
   const [sortedRecipients, setSortedRecipients] = useState<Recipient[]>([]);
 
   const [showRecipientModal, setShowRecipientModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
+  // REMOVED: showPaymentMethodModal
 
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [successToastMessage, setSuccessToastMessage] = useState("");
@@ -103,6 +88,8 @@ const AddBudget: React.FC = () => {
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const descriptionInputRef = useRef<HTMLIonInputElement>(null);
 
+  const [hasLinkedTransactions, setHasLinkedTransactions] = useState(false);
+
   // Clear messages when entering page
   useIonViewWillEnter(() => {
     setErrorMsg("");
@@ -116,11 +103,10 @@ const AddBudget: React.FC = () => {
 
   const loadLookupData = async () => {
     try {
-      const [b, c, a, pm, r] = await Promise.all([
+      const [b, c, a, r] = await Promise.all([
         db.buckets.toArray(),
         db.categories.toArray(),
         db.accounts.toArray(),
-        db.paymentMethods.toArray(),
         db.recipients.toArray(),
       ]);
 
@@ -143,24 +129,13 @@ const AddBudget: React.FC = () => {
               return cat.isActive !== false && bucket?.isActive !== false;
             });
 
-      const activePaymentMethods = (
-        isEditMode || isFromTransaction
-          ? pm
-          : pm.filter((pmeth) => pmeth.isActive !== false)
-      ).filter((pmeth) => {
-        const accountExists = activeAccounts.some(
-          (acc) => acc.id === pmeth.accountId
-        );
-        return accountExists;
-      });
-
       const activeRecipients =
         isEditMode || isFromTransaction
           ? r
           : r.filter((rec) => rec.isActive !== false);
 
       setBuckets(activeBuckets);
-      setAccounts(activeAccounts);
+      setSortedAccounts(activeAccounts); // CHANGED
 
       // Sort by usage frequency
       const budgets = await db.budgets.toArray();
@@ -191,17 +166,7 @@ const AddBudget: React.FC = () => {
       });
       setSortedCategories(sortedCats);
 
-      const paymentMethodCounts = new Map<number, number>();
-      budgets.forEach((budget) => {
-        const count = paymentMethodCounts.get(budget.paymentChannelId) || 0;
-        paymentMethodCounts.set(budget.paymentChannelId, count + 1);
-      });
-      const sortedPMs = [...activePaymentMethods].sort((a, b) => {
-        const countA = paymentMethodCounts.get(a.id!) || 0;
-        const countB = paymentMethodCounts.get(b.id!) || 0;
-        return countB - countA;
-      });
-      setSortedPaymentMethods(sortedPMs);
+      // REMOVED: account count logic for payment methods
 
       // Load descriptions sorted by frequency from TRANSACTIONS
       const transactions = await db.transactions.toArray();
@@ -253,7 +218,7 @@ const AddBudget: React.FC = () => {
     };
   }, [showDescriptionSuggestions]);
 
-  // Fuzzy match function - matches if all characters from query appear in order in the target
+  // Fuzzy match function
   const fuzzyMatch = (query: string, target: string): boolean => {
     const queryLower = query.toLowerCase();
     const targetLower = target.toLowerCase();
@@ -330,7 +295,6 @@ const AddBudget: React.FC = () => {
     setSelectedSuggestionIndex(-1);
 
     try {
-      // Populate fields from the most recent transaction with this description
       await populateFromLastTransaction(text);
     } catch (err) {
       console.error("Failed to populate from last transaction:", err);
@@ -364,9 +328,9 @@ const AddBudget: React.FC = () => {
         setCategoryId(latest.categoryId);
         setFieldErrors((prev) => ({ ...prev, category: false }));
       }
-      if (paymentMethodId == null && latest.paymentChannelId != null) {
-        setPaymentMethodId(latest.paymentChannelId);
-        setFieldErrors((prev) => ({ ...prev, paymentMethod: false }));
+      if (accountId == null && latest.accountId != null) {
+        setAccountId(latest.accountId); // CHANGED from paymentChannelId
+        setFieldErrors((prev) => ({ ...prev, account: false }));
       }
     } catch (err) {
       console.error("Failed to load last transaction for description:", err);
@@ -378,24 +342,19 @@ const AddBudget: React.FC = () => {
     const nextMonth = new Date(txnDate);
     nextMonth.setMonth(nextMonth.getMonth() + 1);
 
-    // Get the original day
     const originalDay = txnDate.getDate();
-
-    // Get the last day of the next month
     const lastDayOfNextMonth = new Date(
       nextMonth.getFullYear(),
       nextMonth.getMonth() + 1,
       0
     ).getDate();
 
-    // If original day is greater than last day of next month, use last day
     if (originalDay > lastDayOfNextMonth) {
       nextMonth.setDate(lastDayOfNextMonth);
     } else {
       nextMonth.setDate(originalDay);
     }
 
-    // Format as YYYY-MM-DD
     const year = nextMonth.getFullYear();
     const month = String(nextMonth.getMonth() + 1).padStart(2, "0");
     const day = String(nextMonth.getDate()).padStart(2, "0");
@@ -420,12 +379,11 @@ const AddBudget: React.FC = () => {
                 : ""
             );
             setCategoryId(budget.categoryId);
-            setPaymentMethodId(budget.paymentChannelId);
+            setAccountId(budget.accountId); // CHANGED from paymentChannelId
             setRecipientId(budget.recipientId);
             setIsGoal(budget.isGoal);
-            setIsFlexible(budget.isFlexible ?? false); // NEW: Load isFlexible, default to false
+            setIsFlexible(budget.isFlexible ?? false);
 
-            // Format due date as YYYY-MM-DD
             const dueDateObj = new Date(budget.dueDate);
             const year = dueDateObj.getFullYear();
             const month = String(dueDateObj.getMonth() + 1).padStart(2, "0");
@@ -453,12 +411,10 @@ const AddBudget: React.FC = () => {
           const transaction = await db.transactions.get(Number(transactionId));
 
           if (transaction) {
-            // Pre-populate from transaction
             setBudgetType(transaction.amount < 0 ? "expense" : "income");
             setDescription(transaction.description || "");
             setAmount(Math.abs(transaction.amount).toString());
 
-            // Include transaction cost if it exists
             if (transaction.transactionCost) {
               setTransactionCost(
                 Math.abs(transaction.transactionCost).toString()
@@ -466,22 +422,20 @@ const AddBudget: React.FC = () => {
             }
 
             setCategoryId(transaction.categoryId);
-            setPaymentMethodId(transaction.paymentChannelId);
+            setAccountId(transaction.accountId); // CHANGED from paymentChannelId
             setRecipientId(transaction.recipientId);
 
-            // Set frequency to monthly with next month's due date
             setFrequency("monthly");
             const nextMonthDate = getNextMonthDueDate(
               new Date(transaction.date)
             );
             setDueDate(nextMonthDate);
 
-            // Set day of month for recurring monthly budget
             const dayOfMonthValue = new Date(transaction.date).getDate();
             setDayOfMonth(dayOfMonthValue.toString());
 
             setIsGoal(false);
-            setIsFlexible(false); // NEW: Default to strict for new budgets
+            setIsFlexible(false);
           }
         } catch (err) {
           console.error("Failed to load transaction:", err);
@@ -491,15 +445,11 @@ const AddBudget: React.FC = () => {
 
       loadTransactionData();
     } else {
-      // Clear form in add mode
       resetForm();
     }
   }, [id, transactionId, isEditMode, isFromTransaction]);
 
-  // Add this state near the top with other state variables
-  const [hasLinkedTransactions, setHasLinkedTransactions] = useState(false);
-
-  // Add this effect to check for linked transactions when loading a budget for editing
+  // Check for linked transactions when loading a budget for editing
   useEffect(() => {
     if (isEditMode && id) {
       const checkLinkedTransactions = async () => {
@@ -524,14 +474,14 @@ const AddBudget: React.FC = () => {
     setAmount("");
     setTransactionCost("");
     setCategoryId(undefined);
-    setPaymentMethodId(undefined);
+    setAccountId(undefined); // CHANGED
     setRecipientId(undefined);
     setDueDate("");
     setFrequency("once");
     setDayOfMonth("");
     setIntervalDays("");
     setIsGoal(false);
-    setIsFlexible(false); // NEW: Reset to false (strict)
+    setIsFlexible(false);
     setEditingBudget(null);
   };
 
@@ -541,13 +491,13 @@ const AddBudget: React.FC = () => {
     setShowSuccessToast(false);
     setFieldErrors({});
 
-    // Validate form
+    // Validate form - CHANGED validation to use accountId
     const formValidation = validateBudgetForm({
       description,
       amount,
       dueDate,
       categoryId,
-      paymentMethodId,
+      accountId, // CHANGED from paymentMethodId
       recipientId,
       frequency,
       dayOfMonth: frequency === "monthly" ? dayOfMonth : undefined,
@@ -604,7 +554,7 @@ const AddBudget: React.FC = () => {
         amount: numericAmount,
         transactionCost: numericCost,
         categoryId: categoryId!,
-        paymentChannelId: paymentMethodId!,
+        accountId: accountId!, // CHANGED from paymentChannelId
         recipientId: recipientId,
         dueDate: dueDateObj,
         frequency: frequency,
@@ -620,13 +570,10 @@ const AddBudget: React.FC = () => {
       };
 
       if (isEditMode && id) {
-        // Get the old budget to check if due date changed
         const oldBudget = await db.budgets.get(Number(id));
 
-        // Update the budget
         await db.budgets.update(Number(id), budgetData);
 
-        // If due date changed and there are linked transactions, update them
         if (
           oldBudget &&
           oldBudget.dueDate.getTime() !== dueDateObj.getTime() &&
@@ -637,7 +584,6 @@ const AddBudget: React.FC = () => {
             .equals(Number(id))
             .toArray();
 
-          // Update all linked transactions with the new occurrence date
           for (const txn of linkedTransactions) {
             await db.transactions.update(txn.id!, {
               occurrenceDate: dueDateObj,
@@ -657,7 +603,6 @@ const AddBudget: React.FC = () => {
         setShowSuccessToast(true);
       }
 
-      // Reset form (add mode only)
       if (!isEditMode) {
         resetForm();
         setTimeout(() => {
@@ -872,40 +817,33 @@ const AddBudget: React.FC = () => {
               </IonCol>
             </IonRow>
 
-            {/* Payment Method */}
+            {/* Account - CHANGED from Payment Method */}
             <IonRow>
               <IonCol size="11">
                 <div className="form-input-wrapper">
-                  <label className="form-label">Payment Method</label>
+                  <label className="form-label">Account</label>
                   <SearchableFilterSelect
                     label=""
-                    placeholder="Select payment method"
-                    value={paymentMethodId}
-                    options={sortedPaymentMethods
-                      .filter((pm) => pm.name)
-                      .map((pm) => {
-                        const account = accounts.find(
-                          (a) => a.id === pm.accountId
-                        );
-                        const currency = account?.currency
-                          ? `(${account.currency})`
-                          : "(—)";
+                    placeholder="Select account"
+                    value={accountId}
+                    options={sortedAccounts
+                      .filter((a) => a.name)
+                      .map((a) => {
+                        const currency = a.currency ? `(${a.currency})` : "(—)";
                         return {
-                          id: pm.id,
-                          name: `${account?.name || "Unknown"} - ${
-                            pm.name as string
-                          } ${currency}`,
+                          id: a.id,
+                          name: `${a.name} ${currency}`,
                         };
                       })}
                     onIonChange={(v) => {
-                      setPaymentMethodId(v);
+                      setAccountId(v);
                       setFieldErrors((prev) => ({
                         ...prev,
-                        paymentMethod: false,
+                        account: false,
                       }));
                     }}
                   />
-                  {fieldErrors.paymentMethod && (
+                  {fieldErrors.account && (
                     <IonText
                       color="danger"
                       style={{
@@ -918,20 +856,6 @@ const AddBudget: React.FC = () => {
                     </IonText>
                   )}
                 </div>
-              </IonCol>
-              <IonCol size="1">
-                <IonButton
-                  style={{ marginTop: "23px" }}
-                  color="primary"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowPaymentMethodModal(true);
-                  }}
-                  aria-label="Add Payment Method"
-                  title="Add Payment Method"
-                >
-                  <IonIcon icon={addOutline} />
-                </IonButton>
               </IonCol>
             </IonRow>
 
@@ -1019,7 +943,7 @@ const AddBudget: React.FC = () => {
               </IonCol>
             </IonRow>
 
-            {/* Due Date */}
+            {/* Due Date and Frequency */}
             <IonRow>
               <IonCol size="3">
                 <div className="form-input-wrapper">
@@ -1056,22 +980,12 @@ const AddBudget: React.FC = () => {
                       </span>
                     )}
                   </label>
-                  <SelectableDropdown
-                    label="Frequency"
-                    placeholder="Select frequency"
+                  <select
                     value={frequency}
-                    options={[
-                      { value: "once", label: "Once" },
-                      { value: "daily", label: "Daily" },
-                      { value: "weekly", label: "Weekly" },
-                      { value: "monthly", label: "Monthly (Fixed Day)" },
-                      { value: "custom", label: "Custom (Every N Days)" },
-                      { value: "yearly", label: "Yearly" },
-                    ]}
-                    onValueChange={(freqValue) => {
+                    onChange={(e) => {
                       if (!hasLinkedTransactions) {
                         setFrequency(
-                          freqValue as
+                          e.target.value as
                             | "once"
                             | "daily"
                             | "weekly"
@@ -1083,7 +997,25 @@ const AddBudget: React.FC = () => {
                         setIntervalDays("");
                       }
                     }}
-                  />
+                    disabled={hasLinkedTransactions}
+                    style={{
+                      padding: "12px",
+                      border: "1px solid var(--ion-color-medium)",
+                      borderRadius: "4px",
+                      backgroundColor: "var(--ion-background-color)",
+                      color: "inherit",
+                      fontSize: "0.95rem",
+                      opacity: hasLinkedTransactions ? 0.5 : 1,
+                      cursor: hasLinkedTransactions ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <option value="once">Once</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly (Fixed Day)</option>
+                    <option value="custom">Custom (Every N Days)</option>
+                    <option value="yearly">Yearly</option>
+                  </select>
                   {hasLinkedTransactions && (
                     <IonText
                       color="medium"
@@ -1198,15 +1130,7 @@ const AddBudget: React.FC = () => {
         buckets={buckets}
       />
 
-      <AddPaymentMethodModal
-        isOpen={showPaymentMethodModal}
-        onClose={() => setShowPaymentMethodModal(false)}
-        onPaymentMethodAdded={(paymentMethod) => {
-          setSortedPaymentMethods((prev) => [paymentMethod, ...prev]);
-          setPaymentMethodId(paymentMethod.id);
-        }}
-        accounts={accounts}
-      />
+      {/* REMOVED: AddPaymentMethodModal */}
 
       {/* Toast */}
       <IonToast

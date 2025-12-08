@@ -20,7 +20,7 @@ import {
   IonListHeader,
 } from "@ionic/react";
 import { IonReactRouter } from "@ionic/react-router";
-import { list, barChart, calendar } from "ionicons/icons";
+import { list, barChart, calendar, settingsOutline } from "ionicons/icons";
 
 import Transactions from "./pages/Transactions";
 import AddTransaction from "./pages/AddTransaction";
@@ -32,8 +32,9 @@ import AccountsManagement from "./pages/AccountsManagement";
 import RecipientsManagement from "./pages/RecipientsManagement";
 import SmsImportTemplatesManagement from "./pages/SmsImportTemplatesManagement";
 import Reports from "./pages/Reports";
+import Settings from "./pages/Settings"; // NEW
 
-import { migrateIsActiveStates } from "./db"; // NEW: Import migration function
+import { migrateIsActiveStates, migratePaymentMethodsToAccounts } from "./db";
 
 /* Core CSS required for Ionic components to work properly */
 import "@ionic/react/css/core.css";
@@ -92,6 +93,20 @@ const InnerApp: React.FC = () => {
                 </IonItem>
               </IonMenuToggle>
             </IonList>
+            {/* NEW: Settings section */}
+            <IonList>
+              <IonListHeader>System</IonListHeader>
+              <IonMenuToggle autoHide={true}>
+                <IonItem button routerLink="/settings">
+                  <IonIcon
+                    aria-hidden="true"
+                    icon={settingsOutline}
+                    slot="start"
+                  />
+                  <IonLabel>Settings & Debug</IonLabel>
+                </IonItem>
+              </IonMenuToggle>
+            </IonList>
           </IonContent>
         </IonMenu>
 
@@ -140,6 +155,10 @@ const InnerApp: React.FC = () => {
             <Route path="/reports">
               <Reports />
             </Route>
+            {/* NEW: Settings route */}
+            <Route path="/settings">
+              <Settings />
+            </Route>
             <Route exact path="/">
               <Redirect to="/transactions" />
             </Route>
@@ -165,17 +184,29 @@ const InnerApp: React.FC = () => {
 };
 
 const App: React.FC = () => {
-  // NEW: Run migration on app startup
+  // Run migrations on app startup
   useEffect(() => {
-    const runMigration = async () => {
+    const runMigrations = async () => {
       try {
+        console.log("🚀 Starting database migrations...");
+
+        // Run Payment Methods migration first (Phase 7)
+        console.log("📋 Running Phase 7: PaymentMethod → Account migration...");
+        await migratePaymentMethodsToAccounts();
+
+        // Then run isActive migration (Phase 5)
+        console.log("📋 Running Phase 5: Fixing isActive states...");
         await migrateIsActiveStates();
+
+        console.log("✨ All migrations completed successfully!");
       } catch (error) {
-        console.error("Failed to run migration:", error);
+        console.error("❌ Migration error:", error);
+        // Don't block app startup if migrations fail
+        // Users can manually trigger from Settings/Debug page
       }
     };
 
-    runMigration();
+    runMigrations();
   }, []); // Run once on mount
 
   return (

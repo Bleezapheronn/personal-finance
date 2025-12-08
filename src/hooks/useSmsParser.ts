@@ -15,7 +15,7 @@ export interface ParsedSmsData {
 
 export const useSmsParser = (
   smsTemplates: SmsImportTemplate[],
-  paymentMethodId?: number
+  accountId?: number // CHANGED from paymentMethodId
 ) => {
   const [parsedPreview, setParsedPreview] = useState<ParsedSmsData | null>(
     null
@@ -144,24 +144,22 @@ export const useSmsParser = (
   // Parse SMS using database templates
   const parseSms = async (sms: string): Promise<ParsedSmsData | null> => {
     try {
-      // If we have a selected payment method, try its template first
-      if (paymentMethodId) {
-        const pmTemplate = smsTemplates.find(
-          (t) => t.paymentMethodId === paymentMethodId
+      // If we have a selected account, try its template first - CHANGED from paymentMethodId
+      if (accountId) {
+        const accountTemplate = smsTemplates.find(
+          (t) => t.accountId === accountId // CHANGED
         );
-        if (pmTemplate) {
-          const result = tryParseWithTemplate(sms, pmTemplate);
-          if (result) return { ...result, templateId: pmTemplate.id };
+        if (accountTemplate) {
+          const result = tryParseWithTemplate(sms, accountTemplate);
+          if (result) return { ...result, templateId: accountTemplate.id };
         }
       }
 
       // Try all active templates
       for (const template of smsTemplates) {
-        // Skip if this is a payment-method-specific template and doesn't match
-        if (
-          template.paymentMethodId &&
-          template.paymentMethodId !== paymentMethodId
-        ) {
+        // Skip if this is an account-specific template and doesn't match - CHANGED
+        if (template.accountId && template.accountId !== accountId) {
+          // CHANGED
           continue;
         }
 

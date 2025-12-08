@@ -28,7 +28,6 @@ import {
   Category,
   Bucket,
   Account,
-  PaymentMethod,
   Recipient,
   SmsImportTemplate,
 } from "../db";
@@ -44,7 +43,6 @@ import {
 } from "../utils/transactionValidation";
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
-import { AddPaymentMethodModal } from "../components/AddPaymentMethodModal";
 import { SmsImportModal } from "../components/SmsImportModal";
 import { ParsedSmsData } from "../hooks/useSmsParser";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
@@ -71,14 +69,14 @@ const AddTransaction: React.FC = () => {
   const [exchangeRate, setExchangeRate] = useState("");
   const [exchangeRateOverride, setExchangeRateOverride] = useState(false);
   const [categoryId, setCategoryId] = useState<number | undefined>(undefined);
-  const [paymentMethodId, setPaymentMethodId] = useState<number | undefined>(
-    undefined
-  );
+
+  const [accountId, setAccountId] = useState<number | undefined>(undefined);
+
   const [recipientId, setRecipientId] = useState<number | undefined>(undefined);
   const [description, setDescription] = useState("");
 
   // Transfer-specific state
-  const [transferToPaymentMethodId, setTransferToPaymentMethodId] = useState<
+  const [transferToAccountId, setTransferToAccountId] = useState<
     number | undefined
   >(undefined);
   const [editingTransaction, setEditingTransaction] =
@@ -89,15 +87,11 @@ const AddTransaction: React.FC = () => {
 
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [sortedCategories, setSortedCategories] = useState<Category[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [sortedPaymentMethods, setSortedPaymentMethods] = useState<
-    PaymentMethod[]
-  >([]);
+  const [sortedAccounts, setSortedAccounts] = useState<Account[]>([]);
   const [sortedRecipients, setSortedRecipients] = useState<Recipient[]>([]);
   const [smsTemplates, setSmsTemplates] = useState<SmsImportTemplate[]>([]);
   const [showRecipientModal, setShowRecipientModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
 
   const [successMsg, setSuccessMsg] = useState("");
   const [showSuccessToast, setShowSuccessToast] = useState(false);
@@ -120,7 +114,9 @@ const AddTransaction: React.FC = () => {
   // derive list of currencies available from accounts
   const currencies = Array.from(
     new Set(
-      accounts.map((a) => a.currency).filter((c): c is string => Boolean(c))
+      sortedAccounts
+        .map((a) => a.currency)
+        .filter((c): c is string => Boolean(c))
     )
   );
 
@@ -133,7 +129,7 @@ const AddTransaction: React.FC = () => {
 
   // Auto-calculate exchange rate when amount and original amount change
   useEffect(() => {
-    if (exchangeRateOverride) return; // user has manually set the rate
+    if (exchangeRateOverride) return;
 
     const numAmount = parseFloat(amount);
     const numOriginal = parseFloat(originalAmount);
@@ -155,11 +151,10 @@ const AddTransaction: React.FC = () => {
   // Helper function to load all lookup data
   const loadLookupData = async () => {
     try {
-      const [b, c, a, pm, r, allTemplates] = await Promise.all([
+      const [b, c, a, r, allTemplates] = await Promise.all([
         db.buckets.toArray(),
         db.categories.toArray(),
         db.accounts.toArray(),
-        db.paymentMethods.toArray(),
         db.recipients.toArray(),
         db.smsImportTemplates.toArray(),
       ]);
@@ -174,37 +169,24 @@ const AddTransaction: React.FC = () => {
         ? b
         : b.filter((bkt) => bkt.isActive !== false);
 
-      // FIXED: Filter categories - check against ALL buckets, then verify bucket is active
       const activeCategories = isEditMode
         ? c
         : c.filter((cat) => {
-            // Find the bucket (from ALL buckets, not just active ones)
             const bucket = b.find((bucket) => bucket.id === cat.bucketId);
-            // Only show category if BOTH: category is active AND bucket is active
             return cat.isActive !== false && bucket?.isActive !== false;
           });
-
-      // Filter payment methods: active AND account exists
-      const activePaymentMethods = (
-        isEditMode ? pm : pm.filter((pmeth) => pmeth.isActive !== false)
-      ).filter((pmeth) => {
-        const accountExists = activeAccounts.some(
-          (acc) => acc.id === pmeth.accountId
-        );
-        return accountExists;
-      });
 
       const activeRecipients = isEditMode
         ? r
         : r.filter((rec) => rec.isActive !== false);
 
       setBuckets(activeBuckets);
-      setAccounts(activeAccounts);
+      setSortedAccounts(activeAccounts);
       setSmsTemplates(allTemplates.filter((t) => t.isActive !== false));
 
       const transactions = await db.transactions.toArray();
 
-      // Count transactions per recipient (use only active for sorting)
+      // Count transactions per recipient
       const recipientCounts = new Map<number, number>();
       transactions.forEach((txn) => {
         const count = recipientCounts.get(txn.recipientId) || 0;
@@ -213,7 +195,7 @@ const AddTransaction: React.FC = () => {
       const sortedRecips = [...activeRecipients].sort((a, b) => {
         const countA = recipientCounts.get(a.id!) || 0;
         const countB = recipientCounts.get(b.id!) || 0;
-        return countB - countA; // Most transactions first
+        return countB - countA;
       });
       setSortedRecipients(sortedRecips);
 
@@ -226,22 +208,9 @@ const AddTransaction: React.FC = () => {
       const sortedCats = [...activeCategories].sort((a, b) => {
         const countA = categoryCounts.get(a.id!) || 0;
         const countB = categoryCounts.get(b.id!) || 0;
-        return countB - countA; // Most transactions first
+        return countB - countA;
       });
       setSortedCategories(sortedCats);
-
-      // Count transactions per payment method
-      const paymentMethodCounts = new Map<number, number>();
-      transactions.forEach((txn) => {
-        const count = paymentMethodCounts.get(txn.paymentChannelId) || 0;
-        paymentMethodCounts.set(txn.paymentChannelId, count + 1);
-      });
-      const sortedPMs = [...activePaymentMethods].sort((a, b) => {
-        const countA = paymentMethodCounts.get(a.id!) || 0;
-        const countB = paymentMethodCounts.get(b.id!) || 0;
-        return countB - countA; // Most transactions first
-      });
-      setSortedPaymentMethods(sortedPMs);
     } catch (err) {
       console.error("Failed to load lookup data:", err);
     }
@@ -250,7 +219,6 @@ const AddTransaction: React.FC = () => {
   // Load transaction data in edit mode OR clear form in add mode when id changes
   useEffect(() => {
     if (isEditMode && id) {
-      // EDIT MODE: Load transaction
       const loadTransaction = async () => {
         try {
           const txn = await db.transactions.get(Number(id));
@@ -266,28 +234,27 @@ const AddTransaction: React.FC = () => {
               // Determine which is outgoing and which is incoming
               if (txn.amount < 0) {
                 // This is the outgoing transaction
-                setPaymentMethodId(txn.paymentChannelId);
-                setTransferToPaymentMethodId(pairedTxn?.paymentChannelId);
-                setRecipientId(txn.recipientId); // Payer (source)
-                setTransferRecipientId(pairedTxn?.recipientId); // Recipient (destination)
+                setAccountId(txn.accountId);
+                setTransferToAccountId(pairedTxn?.accountId);
+                setRecipientId(txn.recipientId);
+                setTransferRecipientId(pairedTxn?.recipientId);
               } else {
                 // This is the incoming transaction
-                setPaymentMethodId(pairedTxn?.paymentChannelId);
-                setTransferToPaymentMethodId(txn.paymentChannelId);
-                setRecipientId(pairedTxn?.recipientId); // Payer (source)
-                setTransferRecipientId(txn.recipientId); // Recipient (destination)
+                setAccountId(pairedTxn?.accountId);
+                setTransferToAccountId(txn.accountId);
+                setRecipientId(pairedTxn?.recipientId);
+                setTransferRecipientId(txn.recipientId);
               }
 
-              // Set category from the transaction (both should have same category)
               setCategoryId(txn.categoryId);
             } else {
               setTransactionType(txn.amount < 0 ? "expense" : "income");
               setCategoryId(txn.categoryId);
-              setPaymentMethodId(txn.paymentChannelId);
+              setAccountId(txn.accountId);
               setRecipientId(txn.recipientId);
             }
 
-            // Format datetime for datetime-local input (YYYY-MM-DDTHH:mm)
+            // Format datetime for datetime-local input
             const txnDate = new Date(txn.date);
             const year = txnDate.getFullYear();
             const month = String(txnDate.getMonth() + 1).padStart(2, "0");
@@ -332,10 +299,10 @@ const AddTransaction: React.FC = () => {
       setExchangeRate("");
       setExchangeRateOverride(false);
       setCategoryId(undefined);
-      setPaymentMethodId(undefined);
+      setAccountId(undefined);
       setRecipientId(undefined);
       setTransferRecipientId(undefined);
-      setTransferToPaymentMethodId(undefined);
+      setTransferToAccountId(undefined);
       setDescription("");
       setEditingTransaction(null);
     }
@@ -348,7 +315,6 @@ const AddTransaction: React.FC = () => {
     const loadDescriptions = async () => {
       const transactions = await db.transactions.toArray();
 
-      // Count occurrences of each description
       const descriptionCounts = new Map<string, number>();
       transactions.forEach((txn) => {
         if (txn.description) {
@@ -357,7 +323,6 @@ const AddTransaction: React.FC = () => {
         }
       });
 
-      // Convert to array and sort by count (descending)
       const sortedDescriptions = Array.from(descriptionCounts.entries())
         .map(([text, count]) => ({ text, count }))
         .sort((a, b) => b.count - a.count);
@@ -490,7 +455,7 @@ const AddTransaction: React.FC = () => {
     setShowSuccessToast(false);
     setFieldErrors({});
 
-    // Updated validation to use transactionDateTime
+    // UPDATED: Validation now uses accountId instead of paymentMethodId
     const formValidation = validateTransactionForm({
       selectedDate: transactionDateTime
         ? transactionDateTime.split("T")[0]
@@ -501,10 +466,10 @@ const AddTransaction: React.FC = () => {
       amount,
       description,
       categoryId,
-      paymentMethodId,
+      accountId, // CHANGED from paymentMethodId
       recipientId,
       transferRecipientId,
-      transferToPaymentMethodId,
+      transferToAccountId, // CHANGED from transferToPaymentMethodId
       transactionType,
     });
 
@@ -518,7 +483,6 @@ const AddTransaction: React.FC = () => {
 
     // Validate date/time
     const dateTimeValidation = validateDateTime(transactionDateTime);
-
     if (!dateTimeValidation.isValid) {
       setFieldErrors(dateTimeValidation.errors);
       setErrorMsg(dateTimeValidation.errorMessage || "Invalid date/time.");
@@ -527,7 +491,6 @@ const AddTransaction: React.FC = () => {
 
     // Validate amount
     const amountValidation = validateAmount(amount);
-
     if (!amountValidation.isValid) {
       setFieldErrors(amountValidation.errors);
       setErrorMsg(amountValidation.errorMessage || "Invalid amount.");
@@ -536,7 +499,6 @@ const AddTransaction: React.FC = () => {
 
     // Validate description
     const descriptionValidation = validateDescription(description);
-
     if (!descriptionValidation.isValid) {
       setFieldErrors(descriptionValidation.errors);
       setErrorMsg(descriptionValidation.errorMessage || "Invalid description.");
@@ -572,10 +534,10 @@ const AddTransaction: React.FC = () => {
 
     try {
       if (transactionType === "transfer") {
-        // Outgoing transaction (negative amount from source payment method)
+        // Outgoing transaction
         const outgoingTx: Omit<Transaction, "id"> = {
           date: selectedDateTime,
-          amount: -Math.abs(numericAmountRaw), // negative (outgoing)
+          amount: -Math.abs(numericAmountRaw),
           transactionCost: numericCost,
           originalAmount: numericOriginalAmountRaw
             ? -Math.abs(numericOriginalAmountRaw)
@@ -584,18 +546,18 @@ const AddTransaction: React.FC = () => {
           exchangeRate: numericExchangeRate,
           transactionReference: txReference,
           categoryId: categoryId!,
-          paymentChannelId: paymentMethodId!, // FROM payment method
-          recipientId: recipientId!, // Payer
+          accountId: accountId!, // CHANGED from paymentChannelId
+          recipientId: recipientId!,
           description: description || undefined,
           isTransfer: true,
           transferPairId: editingTransaction?.transferPairId || undefined,
         };
 
-        // Incoming transaction (positive amount to destination payment method)
+        // Incoming transaction
         const incomingTx: Omit<Transaction, "id"> = {
           date: selectedDateTime,
-          amount: Math.abs(numericAmountRaw), // positive (incoming)
-          transactionCost: undefined, // costs only on outgoing
+          amount: Math.abs(numericAmountRaw),
+          transactionCost: undefined,
           originalAmount: numericOriginalAmountRaw
             ? Math.abs(numericOriginalAmountRaw)
             : undefined,
@@ -603,8 +565,8 @@ const AddTransaction: React.FC = () => {
           exchangeRate: numericExchangeRate,
           transactionReference: txReference,
           categoryId: categoryId!,
-          paymentChannelId: transferToPaymentMethodId!, // TO payment method
-          recipientId: transferRecipientId!, // Recipient
+          accountId: transferToAccountId!, // CHANGED from paymentChannelId
+          recipientId: transferRecipientId!,
           description: description || undefined,
           isTransfer: true,
           transferPairId: editingTransaction?.id || undefined,
@@ -615,7 +577,6 @@ const AddTransaction: React.FC = () => {
           editingTransaction?.id &&
           editingTransaction?.transferPairId
         ) {
-          // UPDATE MODE: Update both transactions in the pair
           const outgoingTxId =
             editingTransaction.amount < 0
               ? editingTransaction.id
@@ -632,11 +593,9 @@ const AddTransaction: React.FC = () => {
           setSuccessToastMessage("Transfer transaction updated successfully!");
           setShowSuccessToast(true);
         } else {
-          // CREATE MODE: Create new pair of transactions
           const outgoingId = await db.transactions.add(outgoingTx);
           const incomingId = await db.transactions.add(incomingTx);
 
-          // Update both transactions to reference each other
           await db.transactions.update(outgoingId, {
             transferPairId: incomingId,
           });
@@ -648,7 +607,7 @@ const AddTransaction: React.FC = () => {
           setShowSuccessToast(true);
         }
       } else {
-        // REGULAR TRANSACTION (income/expense)
+        // REGULAR TRANSACTION
         const numericAmount =
           transactionType === "expense"
             ? -Math.abs(numericAmountRaw)
@@ -670,7 +629,7 @@ const AddTransaction: React.FC = () => {
           exchangeRate: numericExchangeRate,
           transactionReference: txReference,
           categoryId: categoryId!,
-          paymentChannelId: paymentMethodId!,
+          accountId: accountId!, // CHANGED from paymentChannelId
           recipientId: recipientId!,
           description: description || undefined,
           isTransfer: false,
@@ -700,10 +659,10 @@ const AddTransaction: React.FC = () => {
         setExchangeRate("");
         setExchangeRateOverride(false);
         setCategoryId(undefined);
-        setPaymentMethodId(undefined);
+        setAccountId(undefined);
         setRecipientId(undefined);
         setTransferRecipientId(undefined);
-        setTransferToPaymentMethodId(undefined);
+        setTransferToAccountId(undefined);
         setDescription("");
 
         // Redirect to transactions list after successful add (with brief delay for toast)
@@ -721,7 +680,6 @@ const AddTransaction: React.FC = () => {
     }
   };
 
-  // add helper to populate fields from the most recent transaction for a description
   const populateFromLastTransaction = async (description: string) => {
     if (!description || !description.trim()) return;
     try {
@@ -746,18 +704,17 @@ const AddTransaction: React.FC = () => {
         setCategoryId(latest.categoryId);
         setFieldErrors((prev) => ({ ...prev, category: false }));
       }
-      if (paymentMethodId == null && latest.paymentChannelId != null) {
-        setPaymentMethodId(latest.paymentChannelId);
-        setFieldErrors((prev) => ({ ...prev, paymentMethod: false }));
+      if (accountId == null && latest.accountId != null) {
+        setAccountId(latest.accountId); // CHANGED from paymentMethodId
+        setFieldErrors((prev) => ({ ...prev, account: false }));
       }
     } catch (err) {
       console.error("Failed to load last transaction for description:", err);
     }
   };
 
-  // Handle SMS import
+  // Handle SMS import - UPDATED to use accountId
   const handleSmsImport = async (parsedData: ParsedSmsData) => {
-    // Combine date and time into datetime-local format
     if (parsedData.date && parsedData.time) {
       const dateParts = parsedData.date.split("-");
       if (dateParts.length === 3) {
@@ -784,34 +741,29 @@ const AddTransaction: React.FC = () => {
       setTransactionCost(parsedData.cost);
     }
 
-    // Set transaction type based on parsed data
     if (parsedData.isIncome !== undefined) {
       setTransactionType(parsedData.isIncome ? "income" : "expense");
     }
 
-    // Auto-populate payment method from the template that was used
     const usedTemplateId = parsedData.templateId;
     if (usedTemplateId) {
       const template = smsTemplates.find((t) => t.id === usedTemplateId);
-      if (template?.paymentMethodId) {
-        setPaymentMethodId(template.paymentMethodId);
+      if (template?.accountId) {
+        // CHANGED from paymentMethodId
+        setAccountId(template.accountId);
       }
     }
 
     // Handle recipient
     if (parsedData.recipientName) {
-      // Search for existing recipient (case-insensitive by name only)
       const existingRecipient = sortedRecipients.find(
         (r) => r.name?.toLowerCase() === parsedData.recipientName?.toLowerCase()
       );
 
       if (existingRecipient) {
-        // Recipient exists - prepopulate the field
         setRecipientId(existingRecipient.id);
       } else {
-        // Recipient doesn't exist - open AddRecipientModal with pre-filled data
         setShowRecipientModal(true);
-        // Store parsed data temporarily to pass to modal
         sessionStorage.setItem(
           "smsRecipientData",
           JSON.stringify({
@@ -826,7 +778,6 @@ const AddTransaction: React.FC = () => {
   // Clear error message when all required fields are filled
   useEffect(() => {
     if (errorMsg && errorMsg === "Please fill in all required fields.") {
-      // Re-validate to check if all fields are now filled
       const formValidation = validateTransactionForm({
         selectedDate: transactionDateTime
           ? transactionDateTime.split("T")[0]
@@ -837,33 +788,32 @@ const AddTransaction: React.FC = () => {
         amount,
         description,
         categoryId,
-        paymentMethodId,
+        accountId,
         recipientId,
         transferRecipientId,
-        transferToPaymentMethodId,
+        transferToAccountId,
         transactionType,
       });
 
-      // Only clear the error if validation passes
       if (formValidation.isValid) {
         setErrorMsg("");
         setFieldErrors({});
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     transactionDateTime,
     amount,
     description,
     categoryId,
-    paymentMethodId,
+    accountId,
     recipientId,
     transferRecipientId,
-    transferToPaymentMethodId,
+    transferToAccountId,
     transactionType,
+    errorMsg,
   ]);
 
-  // Real-time validation feedback
+  // Real-time validation
   useEffect(() => {
     if (fieldErrors.amount && amount) {
       const validation = validateAmount(amount);
@@ -957,7 +907,7 @@ const AddTransaction: React.FC = () => {
               </IonCol>
             </IonRow>
 
-            {/* Transaction Date/Time - UPDATED: Single datetime-local field */}
+            {/* Transaction Date/Time */}
             <IonRow>
               <IonCol size="4">
                 <div className="form-input-wrapper">
@@ -981,7 +931,7 @@ const AddTransaction: React.FC = () => {
                 </div>
               </IonCol>
 
-              {/* Transaction Reference (optional) */}
+              {/* Transaction Reference */}
               <IonCol size="7">
                 <div className="form-input-wrapper">
                   <label className="form-label">
@@ -1097,7 +1047,7 @@ const AddTransaction: React.FC = () => {
 
             {transactionType === "transfer" ? (
               <>
-                {/* Payer (Source) - Using SearchableFilterSelect */}
+                {/* Payer */}
                 <IonRow>
                   <IonCol size="11">
                     <div className="form-input-wrapper">
@@ -1150,7 +1100,7 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                 </IonRow>
 
-                {/* Recipient (Destination) - Using SearchableFilterSelect */}
+                {/* Recipient */}
                 <IonRow>
                   <IonCol size="11">
                     <div className="form-input-wrapper">
@@ -1203,7 +1153,7 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                 </IonRow>
 
-                {/* Category - Using SearchableFilterSelect */}
+                {/* Category */}
                 <IonRow>
                   <IonCol size="11">
                     <div className="form-input-wrapper">
@@ -1261,40 +1211,35 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                 </IonRow>
 
-                {/* FROM Payment Method - Using SearchableFilterSelect */}
+                {/* FROM Account - CHANGED from Payment Method */}
                 <IonRow>
                   <IonCol size="11">
                     <div className="form-input-wrapper">
-                      <label className="form-label">From Payment Method</label>
+                      <label className="form-label">From Account</label>
                       <SearchableFilterSelect
                         label=""
-                        placeholder="Select source payment method"
-                        value={paymentMethodId}
-                        options={sortedPaymentMethods
-                          .filter((pm) => pm.name)
-                          .map((pm) => {
-                            const account = accounts.find(
-                              (a) => a.id === pm.accountId
-                            );
-                            const currency = account?.currency
-                              ? `(${account.currency})`
+                        placeholder="Select source account"
+                        value={accountId}
+                        options={sortedAccounts
+                          .filter((a) => a.name)
+                          .map((a) => {
+                            const currency = a.currency
+                              ? `(${a.currency})`
                               : "(—)";
                             return {
-                              id: pm.id,
-                              name: `${account?.name || "Unknown"} - ${
-                                pm.name as string
-                              } ${currency}`,
+                              id: a.id,
+                              name: `${a.name} ${currency}`,
                             };
                           })}
                         onIonChange={(v) => {
-                          setPaymentMethodId(v);
+                          setAccountId(v);
                           setFieldErrors((prev) => ({
                             ...prev,
-                            paymentMethod: false,
+                            account: false,
                           }));
                         }}
                       />
-                      {fieldErrors.paymentMethod && (
+                      {fieldErrors.account && (
                         <IonText
                           color="danger"
                           style={{
@@ -1307,57 +1252,38 @@ const AddTransaction: React.FC = () => {
                         </IonText>
                       )}
                     </div>
-                  </IonCol>
-                  <IonCol size="1">
-                    <IonButton
-                      style={{ marginTop: "23px" }}
-                      color="primary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowPaymentMethodModal(true);
-                      }}
-                      aria-label="Add Payment Method"
-                      title="Add Payment Method"
-                    >
-                      <IonIcon icon={addOutline} />
-                    </IonButton>
                   </IonCol>
                 </IonRow>
 
-                {/* TO Payment Method - Using SearchableFilterSelect */}
+                {/* TO Account - CHANGED from Payment Method */}
                 <IonRow>
                   <IonCol size="11">
                     <div className="form-input-wrapper">
-                      <label className="form-label">To Payment Method</label>
+                      <label className="form-label">To Account</label>
                       <SearchableFilterSelect
                         label=""
-                        placeholder="Select destination payment method"
-                        value={transferToPaymentMethodId}
-                        options={sortedPaymentMethods
-                          .filter((pm) => pm.name)
-                          .map((pm) => {
-                            const account = accounts.find(
-                              (a) => a.id === pm.accountId
-                            );
-                            const currency = account?.currency
-                              ? `(${account.currency})`
+                        placeholder="Select destination account"
+                        value={transferToAccountId}
+                        options={sortedAccounts
+                          .filter((a) => a.name)
+                          .map((a) => {
+                            const currency = a.currency
+                              ? `(${a.currency})`
                               : "(—)";
                             return {
-                              id: pm.id,
-                              name: `${account?.name || "Unknown"} - ${
-                                pm.name as string
-                              } ${currency}`,
+                              id: a.id,
+                              name: `${a.name} ${currency}`,
                             };
                           })}
                         onIonChange={(v) => {
-                          setTransferToPaymentMethodId(v);
+                          setTransferToAccountId(v);
                           setFieldErrors((prev) => ({
                             ...prev,
-                            transferToPaymentMethod: false,
+                            transferToAccount: false,
                           }));
                         }}
                       />
-                      {fieldErrors.transferToPaymentMethod && (
+                      {fieldErrors.transferToAccount && (
                         <IonText
                           color="danger"
                           style={{
@@ -1370,26 +1296,12 @@ const AddTransaction: React.FC = () => {
                         </IonText>
                       )}
                     </div>
-                  </IonCol>
-                  <IonCol size="1">
-                    <IonButton
-                      style={{ marginTop: "23px" }}
-                      color="primary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowPaymentMethodModal(true);
-                      }}
-                      aria-label="Add Payment Method"
-                      title="Add Payment Method"
-                    >
-                      <IonIcon icon={addOutline} />
-                    </IonButton>
                   </IonCol>
                 </IonRow>
               </>
             ) : (
               <>
-                {/* Existing Recipient field */}
+                {/* Recipient */}
                 <IonRow>
                   <IonCol size="11">
                     <label className="form-label">
@@ -1454,7 +1366,7 @@ const AddTransaction: React.FC = () => {
                   </IonCol>
                 </IonRow>
 
-                {/* Existing Category field */}
+                {/* Category */}
                 <IonRow>
                   <IonCol size="11">
                     <div className="form-input-wrapper">
@@ -1511,40 +1423,36 @@ const AddTransaction: React.FC = () => {
                     </IonButton>
                   </IonCol>
                 </IonRow>
-                {/* Existing Payment Method field - using new component */}
+
+                {/* Account - CHANGED from Payment Method */}
                 <IonRow>
                   <IonCol size="11">
                     <div className="form-input-wrapper">
-                      <label className="form-label">Payment Method</label>
+                      <label className="form-label">Account</label>
                       <SearchableFilterSelect
                         label=""
-                        placeholder="Select payment method"
-                        value={paymentMethodId}
-                        options={sortedPaymentMethods
-                          .filter((pm) => pm.name)
-                          .map((pm) => {
-                            const account = accounts.find(
-                              (a) => a.id === pm.accountId
-                            );
-                            const currency = account?.currency
-                              ? `(${account.currency})`
+                        placeholder="Select account"
+                        value={accountId}
+                        options={sortedAccounts
+                          .filter((a) => a.name)
+                          .map((a) => {
+                            const currency = a.currency
+                              ? `(${a.currency})`
                               : "(—)";
                             return {
-                              id: pm.id,
-                              name: `${account?.name || "Unknown"} - ${
-                                pm.name as string
-                              } ${currency}`,
+                              id: a.id,
+                              name: `${a.name} ${currency}`,
                             };
                           })}
                         onIonChange={(v) => {
-                          setPaymentMethodId(v);
+                          setAccountId(v);
                           setFieldErrors((prev) => ({
                             ...prev,
-                            paymentMethod: false,
+                            account: false,
                           }));
                         }}
                       />
-                      {fieldErrors.paymentMethod && (
+                      {fieldErrors.account && (
                         <IonText
                           color="danger"
                           style={{
@@ -1557,20 +1465,6 @@ const AddTransaction: React.FC = () => {
                         </IonText>
                       )}
                     </div>
-                  </IonCol>
-                  <IonCol size="1">
-                    <IonButton
-                      style={{ marginTop: "23px" }}
-                      color="primary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowPaymentMethodModal(true);
-                      }}
-                      aria-label="Add Payment Method"
-                      title="Add Payment Method"
-                    >
-                      <IonIcon icon={addOutline} />
-                    </IonButton>
                   </IonCol>
                 </IonRow>
               </>
@@ -1710,16 +1604,7 @@ const AddTransaction: React.FC = () => {
         buckets={buckets}
       />
 
-      {/* Modal: Add Payment Method */}
-      <AddPaymentMethodModal
-        isOpen={showPaymentMethodModal}
-        onClose={() => setShowPaymentMethodModal(false)}
-        onPaymentMethodAdded={(paymentMethod) => {
-          setSortedPaymentMethods((prev) => [paymentMethod, ...prev]);
-          setPaymentMethodId(paymentMethod.id);
-        }}
-        accounts={accounts}
-      />
+      {/* REMOVED: Modal: Add Payment Method */}
 
       {/* Modal: Import SMS */}
       <SmsImportModal
@@ -1727,8 +1612,8 @@ const AddTransaction: React.FC = () => {
         onClose={() => setShowSmsImportModal(false)}
         onImport={handleSmsImport}
         smsTemplates={smsTemplates}
-        paymentMethods={sortedPaymentMethods}
-        paymentMethodId={paymentMethodId}
+        accounts={sortedAccounts}
+        accountId={accountId}
       />
 
       {/* TOAST NOTIFICATIONS */}

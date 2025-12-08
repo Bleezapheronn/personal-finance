@@ -5,7 +5,8 @@ import Dexie from "dexie";
 export interface Transaction {
   id?: number;
   categoryId: number;
-  paymentChannelId: number;
+  paymentChannelId?: number; // UPDATED: Make optional (will be removed)
+  accountId?: number; // NEW: Will replace paymentChannelId
   recipientId: number;
   date: Date;
   amount: number;
@@ -15,28 +16,29 @@ export interface Transaction {
   transactionReference?: string;
   transactionCost?: number;
   description?: string;
-  transferPairId?: number; // Links the two transactions in a transfer
-  isTransfer?: boolean; // Flag to identify transfer transactions
-  budgetId?: number; // NEW: Links transaction to budget item for tracking payments
-  occurrenceDate?: Date; // NEW: Tracks which budget occurrence this transaction belongs to
+  transferPairId?: number;
+  isTransfer?: boolean;
+  budgetId?: number;
+  occurrenceDate?: Date;
 }
 
 export interface Budget {
   id?: number;
   description: string;
   categoryId: number;
-  paymentChannelId: number;
+  paymentChannelId?: number; // UPDATED: Make optional (will be removed)
+  accountId?: number; // NEW: Will replace paymentChannelId
   recipientId?: number;
   amount: number;
   transactionCost?: number;
   frequency: "once" | "daily" | "weekly" | "monthly" | "yearly" | "custom";
   frequencyDetails?: {
-    dayOfMonth?: number; // For "monthly" frequency (1-31)
-    dayOfWeek?: number; // For "weekly" frequency (0-6, where 0 = Sunday)
-    intervalDays?: number; // For "custom" frequency (every N days)
+    dayOfMonth?: number;
+    dayOfWeek?: number;
+    intervalDays?: number;
   };
-  isGoal: boolean; // NEW: Flag to identify goals (long-term budgets)
-  isFlexible: boolean; // NEW: Flag for flexible budgets (partial payment acceptable)
+  isGoal: boolean;
+  isFlexible: boolean;
   isActive: boolean;
   dueDate: Date;
   createdAt: Date;
@@ -51,8 +53,8 @@ export interface Bucket {
   maxPercentage: number;
   minFixedAmount?: number;
   isActive: boolean;
-  displayOrder: number; // NEW: controls sort order (1, 2, 3, etc.)
-  excludeFromReports: boolean; // NEW: hide from reports view
+  displayOrder: number;
+  excludeFromReports: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -74,8 +76,8 @@ export interface Account {
   currency?: string;
   imageBlob?: Blob | null;
   isActive: boolean;
-  isCredit: boolean; // NEW: Flag for credit/overdraft accounts
-  creditLimit?: number; // NEW: Maximum credit limit (optional)
+  isCredit: boolean;
+  creditLimit?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -98,7 +100,7 @@ export interface Recipient {
   tillNumber?: string;
   paybill?: string;
   accountNumber?: string;
-  description?: string; // NEW: optional description field
+  description?: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -108,7 +110,8 @@ export interface SmsImportTemplate {
   id?: number;
   name: string;
   description?: string;
-  paymentMethodId?: number;
+  paymentMethodId?: number; // UPDATED: Make optional (will be removed)
+  accountId?: number; // NEW: Will replace paymentMethodId
   referencePattern?: string;
   amountPattern?: string;
   recipientNamePattern?: string;
@@ -126,7 +129,7 @@ export interface SmsImportTemplate {
 
 export class FinanceDB extends Dexie {
   transactions: Dexie.Table<Transaction, number>;
-  budgets: Dexie.Table<Budget, number>; // NEW
+  budgets: Dexie.Table<Budget, number>;
   buckets: Dexie.Table<Bucket, number>;
   categories: Dexie.Table<Category, number>;
   accounts: Dexie.Table<Account, number>;
@@ -138,11 +141,10 @@ export class FinanceDB extends Dexie {
     super("FinanceDB");
 
     this.version(12).stores({
-      // UPDATED: version 12 for isFlexible field
       transactions:
-        "++id, categoryId, paymentChannelId, recipientId, date, amount, originalAmount, originalCurrency, exchangeRate, transactionReference, description, transferPairId, isTransfer, budgetId, occurrenceDate", // UPDATED: Added budgetId and occurrenceDate index
+        "++id, categoryId, paymentChannelId, recipientId, date, amount, originalAmount, originalCurrency, exchangeRate, transactionReference, description, transferPairId, isTransfer, budgetId, occurrenceDate",
       budgets:
-        "++id, description, categoryId, paymentChannelId, dueDate, isGoal, isFlexible, isActive, frequency, createdAt, updatedAt", // UPDATED: Added isFlexible index
+        "++id, description, categoryId, paymentChannelId, dueDate, isGoal, isFlexible, isActive, frequency, createdAt, updatedAt",
       buckets:
         "++id, name, description, minPercentage, maxPercentage, minFixedAmount, isActive, displayOrder, excludeFromReports, createdAt, updatedAt",
       categories:
@@ -158,7 +160,7 @@ export class FinanceDB extends Dexie {
     });
 
     this.transactions = this.table("transactions");
-    this.budgets = this.table("budgets"); // NEW
+    this.budgets = this.table("budgets");
     this.buckets = this.table("buckets");
     this.categories = this.table("categories");
     this.accounts = this.table("accounts");
@@ -167,6 +169,145 @@ export class FinanceDB extends Dexie {
     this.smsImportTemplates = this.table("smsImportTemplates");
   }
 }
+
+// NEW: Migration function to convert PaymentMethods to AccountIds
+export const migratePaymentMethodsToAccounts = async (): Promise<{
+  transactionsMigrated: number;
+  transactionsOrphaned: number;
+  budgetsMigrated: number;
+  budgetsOrphaned: number;
+  smsTemplatesMigrated: number;
+  smsTemplatesOrphaned: number;
+  paymentMethodsDeleted: number;
+  totalMigrated: number;
+}> => {
+  const results = {
+    transactionsMigrated: 0,
+    transactionsOrphaned: 0,
+    budgetsMigrated: 0,
+    budgetsOrphaned: 0,
+    smsTemplatesMigrated: 0,
+    smsTemplatesOrphaned: 0,
+    paymentMethodsDeleted: 0,
+    totalMigrated: 0,
+  };
+
+  try {
+    console.log(
+      "🚀 Starting Payment Methods to Accounts migration (Phase 7)..."
+    );
+
+    // Step 1: Migrate Transactions
+    console.log("📋 Migrating Transactions...");
+    const allTransactions = await db.transactions.toArray();
+    const paymentMethods = await db.paymentMethods.toArray();
+
+    for (const transaction of allTransactions) {
+      if (transaction.paymentChannelId && !transaction.accountId) {
+        const paymentMethod = paymentMethods.find(
+          (pm) => pm.id === transaction.paymentChannelId
+        );
+
+        if (paymentMethod && paymentMethod.accountId) {
+          // Update transaction: add accountId
+          await db.transactions.update(transaction.id!, {
+            accountId: paymentMethod.accountId,
+          });
+          results.transactionsMigrated++;
+        } else {
+          console.warn(
+            `⚠️ Orphaned transaction ${transaction.id}: PaymentMethod ${transaction.paymentChannelId} not found`
+          );
+          results.transactionsOrphaned++;
+        }
+      }
+    }
+    console.log(
+      `✅ Migrated ${results.transactionsMigrated} transactions (${results.transactionsOrphaned} orphaned)`
+    );
+
+    // Step 2: Migrate Budgets
+    console.log("📋 Migrating Budgets...");
+    const allBudgets = await db.budgets.toArray();
+
+    for (const budget of allBudgets) {
+      if (budget.paymentChannelId && !budget.accountId) {
+        const paymentMethod = paymentMethods.find(
+          (pm) => pm.id === budget.paymentChannelId
+        );
+
+        if (paymentMethod && paymentMethod.accountId) {
+          // Update budget: add accountId
+          await db.budgets.update(budget.id!, {
+            accountId: paymentMethod.accountId,
+          });
+          results.budgetsMigrated++;
+        } else {
+          console.warn(
+            `⚠️ Orphaned budget ${budget.id}: PaymentMethod ${budget.paymentChannelId} not found`
+          );
+          results.budgetsOrphaned++;
+        }
+      }
+    }
+    console.log(
+      `✅ Migrated ${results.budgetsMigrated} budgets (${results.budgetsOrphaned} orphaned)`
+    );
+
+    // Step 3: Migrate SMS Import Templates
+    console.log("📋 Migrating SMS Import Templates...");
+    const allSmsTemplates = await db.smsImportTemplates.toArray();
+
+    for (const template of allSmsTemplates) {
+      if (template.paymentMethodId && !template.accountId) {
+        const paymentMethod = paymentMethods.find(
+          (pm) => pm.id === template.paymentMethodId
+        );
+
+        if (paymentMethod && paymentMethod.accountId) {
+          // Update template: add accountId
+          await db.smsImportTemplates.update(template.id!, {
+            accountId: paymentMethod.accountId,
+          });
+          results.smsTemplatesMigrated++;
+        } else {
+          console.warn(
+            `⚠️ Orphaned SMS template ${template.id}: PaymentMethod ${template.paymentMethodId} not found`
+          );
+          results.smsTemplatesOrphaned++;
+        }
+      }
+    }
+    console.log(
+      `✅ Migrated ${results.smsTemplatesMigrated} SMS templates (${results.smsTemplatesOrphaned} orphaned)`
+    );
+
+    // Step 4: Delete all PaymentMethod records
+    console.log("🗑️ Deleting PaymentMethod records...");
+    results.paymentMethodsDeleted = await db.paymentMethods.count();
+    await db.paymentMethods.clear();
+    console.log(`✅ Deleted ${results.paymentMethodsDeleted} payment methods`);
+
+    results.totalMigrated =
+      results.transactionsMigrated +
+      results.budgetsMigrated +
+      results.smsTemplatesMigrated;
+
+    console.log("🎉 Payment Methods migration complete!");
+    console.log(
+      `📊 Summary: ${results.totalMigrated} records migrated, ${
+        results.transactionsOrphaned +
+        results.budgetsOrphaned +
+        results.smsTemplatesOrphaned
+      } orphaned`
+    );
+
+    return results;
+  } catch (error) {
+    console.error("❌ Error during Payment Methods migration:", error);
+    throw error;
+  }
+};
 
 // NEW: Migration function to fix undefined isActive states
 export const migrateIsActiveStates = async (): Promise<{
@@ -191,7 +332,7 @@ export const migrateIsActiveStates = async (): Promise<{
   try {
     console.log("🔄 Starting isActive migration...");
 
-    // Migrate Accounts - use toArray() and filter instead of equals()
+    // Migrate Accounts
     const allAccounts = await db.accounts.toArray();
     const accountsWithUndefinedActive = allAccounts.filter(
       (acc) => acc.isActive === undefined

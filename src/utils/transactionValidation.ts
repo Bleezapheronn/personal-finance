@@ -4,10 +4,10 @@ export interface TransactionFormData {
   amount: string;
   description: string;
   categoryId?: number;
-  paymentMethodId?: number;
+  accountId?: number; // CHANGED from paymentMethodId
   recipientId?: number;
   transferRecipientId?: number;
-  transferToPaymentMethodId?: number;
+  transferToAccountId?: number; // CHANGED from transferToPaymentMethodId
   transactionType: "expense" | "income" | "transfer";
 }
 
@@ -18,9 +18,9 @@ export interface ValidationErrors {
   description?: boolean;
   recipient?: boolean;
   category?: boolean;
-  paymentMethod?: boolean;
+  account?: boolean; // CHANGED from paymentMethod
   transferRecipient?: boolean;
-  transferToPaymentMethod?: boolean;
+  transferToAccount?: boolean; // CHANGED from transferToPaymentMethod
 }
 
 export interface ValidationResult {
@@ -38,10 +38,10 @@ export const validateTransactionForm = (data: {
   amount: string;
   description: string;
   categoryId: number | undefined;
-  paymentMethodId: number | undefined;
+  accountId: number | undefined; // CHANGED from paymentMethodId
   recipientId: number | undefined;
   transferRecipientId?: number | undefined;
-  transferToPaymentMethodId?: number | undefined;
+  transferToAccountId?: number | undefined; // CHANGED from transferToPaymentMethodId
   transactionType: "income" | "expense" | "transfer";
 }): ValidationResult => {
   const errors: ValidationErrors = {};
@@ -76,9 +76,9 @@ export const validateTransactionForm = (data: {
     errors.category = true;
   }
 
-  // Payment method validation
-  if (!data.paymentMethodId) {
-    errors.paymentMethod = true;
+  // Account validation - CHANGED from paymentMethod
+  if (!data.accountId) {
+    errors.account = true;
   }
 
   // Recipient validation
@@ -92,22 +92,22 @@ export const validateTransactionForm = (data: {
       errors.transferRecipient = true;
     }
 
-    if (!data.transferToPaymentMethodId) {
-      errors.transferToPaymentMethod = true;
+    if (!data.transferToAccountId) {
+      errors.transferToAccount = true;
     }
 
-    // Ensure different payment methods for transfer
+    // Ensure different accounts for transfer - CHANGED from paymentMethods
     if (
-      data.paymentMethodId &&
-      data.transferToPaymentMethodId &&
-      data.paymentMethodId === data.transferToPaymentMethodId
+      data.accountId &&
+      data.transferToAccountId &&
+      data.accountId === data.transferToAccountId
     ) {
-      errors.transferToPaymentMethod = true;
+      errors.transferToAccount = true;
       return {
         isValid: false,
         errors,
         errorMessage:
-          "Transfer must use different payment methods for source and destination.",
+          "Transfer must use different accounts for source and destination.",
       };
     }
 

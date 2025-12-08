@@ -2,24 +2,20 @@
  * AccountsManagement Component
  *
  * This page allows users to:
- * - View all bank accounts/payment methods
+ * - View all bank accounts
  * - Add new accounts with name, currency, and optional image
  * - Edit existing account details
  * - Delete accounts with confirmation
- * - Add/edit/delete payment methods for each account
+ * - Activate/deactivate accounts
  *
  * State Management:
  * - accounts: Array of all accounts from the database
- * - paymentMethods: Array of all payment methods (filtered by account in render)
- * - accountName, currency: Form input values for accounts
- * - editingAccountId: Tracks which account is being edited (null if adding new)
- * - paymentMethodName: Form input for new payment method
- * - editingPaymentMethodId: Tracks which payment method is being edited
- * - selectedAccountForPaymentMethod: Account ID for which we're adding/editing payment method
+ * - editingAccount: Tracks which account is being edited (null if adding new)
  * - loading: Shows spinner while database operations are in progress
- * - showAlert: Controls visibility of success/error messages
- * - deleteAccountId: Tracks which account user wants to delete
- * - deletePaymentMethodId: Tracks which payment method user wants to delete
+ * - showAddAccountModal: Controls visibility of add/edit account modal
+ * - deleteState: Tracks account deletion state and type
+ * - showToast: Controls visibility of success messages
+ * - toastMessage: Message to display in toast
  */
 
 import React, { useEffect, useState, useRef } from "react";
@@ -32,23 +28,19 @@ import {
   IonToolbar,
   IonButtons,
   IonMenuButton,
-  IonList,
-  IonItem,
   IonCard,
   IonCardContent,
-  IonCardHeader,
-  IonCardTitle,
   IonAlert,
   IonSpinner,
   IonGrid,
   IonRow,
   IonCol,
   IonIcon,
-  IonAccordion,
-  IonAccordionGroup,
   IonFab,
   IonFabButton,
   IonToast,
+  IonItem,
+  IonList,
 } from "@ionic/react";
 import {
   add,
@@ -59,9 +51,8 @@ import {
 } from "ionicons/icons";
 import { db } from "../db";
 import { AddAccountModal } from "../components/AddAccountModal";
-import { AddPaymentMethodModal } from "../components/AddPaymentMethodModal";
 
-import type { Account, PaymentMethod } from "../db";
+import type { Account } from "../db";
 
 type LocalAccount = Account & { previewUrl?: string };
 
@@ -69,12 +60,6 @@ type DeleteState =
   | { type: "none" }
   | { type: "used"; accountId: number; accountName: string }
   | { type: "used_deactivated"; accountId: number; accountName: string }
-  | {
-      type: "unused_with_pm";
-      accountId: number;
-      accountName: string;
-      pmCount: number;
-    }
   | { type: "empty"; accountId: number; accountName: string };
 
 const AccountsManagement: React.FC = () => {
@@ -83,24 +68,9 @@ const AccountsManagement: React.FC = () => {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
 
-  // Payment Method state
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [editingPaymentMethod, setEditingPaymentMethod] =
-    useState<PaymentMethod | null>(null);
-  const [showAddPaymentMethodModal, setShowAddPaymentMethodModal] =
-    useState(false);
-  const [selectedAccountForPaymentMethod, setSelectedAccountForPaymentMethod] =
-    useState<number | undefined>(undefined);
-
   // UI state
   const [loading, setLoading] = useState(false);
   const [deleteState, setDeleteState] = useState<DeleteState>({ type: "none" });
-  const [deletePaymentMethodId, setDeletePaymentMethodId] = useState<
-    number | null
-  >(null);
-  const [deletePaymentMethodState, setDeletePaymentMethodState] = useState<
-    "none" | "used" | "delete"
-  >("none");
 
   // Toast state
   const [showToast, setShowToast] = useState(false);
@@ -111,7 +81,6 @@ const AccountsManagement: React.FC = () => {
 
   useEffect(() => {
     fetchAccounts();
-    fetchPaymentMethods();
 
     // Capture current blob URLs for cleanup
     const blobUrls = blobUrlsRef.current;
@@ -155,18 +124,6 @@ const AccountsManagement: React.FC = () => {
   };
 
   /**
-   * fetchPaymentMethods - Retrieves all payment methods from the database
-   */
-  const fetchPaymentMethods = async () => {
-    try {
-      const fetched: PaymentMethod[] = await db.paymentMethods.toArray();
-      setPaymentMethods(fetched);
-    } catch (error) {
-      console.error("Error fetching payment methods:", error);
-    }
-  };
-
-  /**
    * handleAccountSaved - Called when account is added/updated via modal
    */
   const handleAccountSaved = async (isEdit: boolean) => {
@@ -191,23 +148,8 @@ const AccountsManagement: React.FC = () => {
    */
   const checkAccountUsage = async (accountId: number): Promise<boolean> => {
     try {
-      const paymentMethodsForAccount = paymentMethods.filter(
-        (pm) => pm.accountId === accountId
-      );
-
-      if (paymentMethodsForAccount.length === 0) {
-        return false; // No payment methods, so no transactions possible
-      }
-
-      const pmIds = paymentMethodsForAccount.map((pm) => pm.id!);
       const transactions = await db.transactions.toArray();
-
-      // Check if any transaction uses these payment methods
-      const hasTransactions = transactions.some((txn) =>
-        pmIds.includes(txn.paymentChannelId)
-      );
-
-      return hasTransactions;
+      return transactions.some((txn) => txn.accountId === accountId);
     } catch (error) {
       console.error("Error checking account usage:", error);
       return false;
@@ -222,9 +164,6 @@ const AccountsManagement: React.FC = () => {
       setLoading(true);
 
       const isUsed = await checkAccountUsage(account.id!);
-      const accountPaymentMethods = paymentMethods.filter(
-        (pm) => pm.accountId === account.id
-      );
       const isDeactivated = account.isActive === false;
 
       if (isUsed && !isDeactivated) {
@@ -241,14 +180,6 @@ const AccountsManagement: React.FC = () => {
           type: "used_deactivated",
           accountId: account.id!,
           accountName: account.name,
-        });
-      } else if (accountPaymentMethods.length > 0) {
-        // Account has payment methods but unused
-        setDeleteState({
-          type: "unused_with_pm",
-          accountId: account.id!,
-          accountName: account.name,
-          pmCount: accountPaymentMethods.length,
         });
       } else {
         // Account is completely empty
@@ -273,6 +204,8 @@ const AccountsManagement: React.FC = () => {
       setLoading(true);
       await db.accounts.update(accountId, { isActive: false });
       setDeleteState({ type: "none" });
+      setToastMessage("Account deactivated successfully!");
+      setShowToast(true);
       await fetchAccounts();
     } catch (error) {
       console.error("Error deactivating account:", error);
@@ -282,30 +215,17 @@ const AccountsManagement: React.FC = () => {
   };
 
   /**
-   * handleDeleteAccount - Removes an account and its unused payment methods
+   * handleDeleteAccount - Removes an account from the database
    */
   const handleDeleteAccount = async (accountId: number) => {
     try {
       setLoading(true);
-
-      // Get all payment methods for this account
-      const accountPaymentMethods = paymentMethods.filter(
-        (pm) => pm.accountId === accountId
-      );
-
-      // Delete all payment methods
-      for (const pm of accountPaymentMethods) {
-        if (pm.id) {
-          await db.paymentMethods.delete(pm.id);
-        }
-      }
-
-      // Delete the account
       await db.accounts.delete(accountId);
 
       setDeleteState({ type: "none" });
+      setToastMessage("Account deleted successfully!");
+      setShowToast(true);
       await fetchAccounts();
-      await fetchPaymentMethods();
     } catch (error) {
       console.error("Error deleting account:", error);
     } finally {
@@ -321,6 +241,10 @@ const AccountsManagement: React.FC = () => {
       setLoading(true);
       const newStatus = account.isActive === false ? true : false;
       await db.accounts.update(account.id!, { isActive: newStatus });
+      setToastMessage(
+        newStatus ? "Account activated!" : "Account deactivated!"
+      );
+      setShowToast(true);
       await fetchAccounts();
     } catch (error) {
       console.error("Error toggling account status:", error);
@@ -328,147 +252,6 @@ const AccountsManagement: React.FC = () => {
       setLoading(false);
     }
   };
-  /**
-   * handleTogglePaymentMethodActive - Toggles payment method active/inactive status
-   */
-  const handleTogglePaymentMethodActive = async (
-    paymentMethod: PaymentMethod
-  ) => {
-    try {
-      setLoading(true);
-      const newStatus = paymentMethod.isActive === false ? true : false;
-      await db.paymentMethods.update(paymentMethod.id!, {
-        isActive: newStatus,
-      });
-      await fetchPaymentMethods();
-    } catch (error) {
-      console.error("Error toggling payment method status:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-  /**
-   * handlePaymentMethodSaved - Called when payment method is added/updated via modal
-   */
-  const handlePaymentMethodSaved = async (isEdit: boolean) => {
-    setEditingPaymentMethod(null);
-    setToastMessage(
-      isEdit
-        ? "Payment method updated successfully!"
-        : "Payment method added successfully!"
-    );
-    setShowToast(true);
-    await fetchPaymentMethods();
-  };
-
-  /**
-   * handleEditPaymentMethod - Opens modal with payment method data
-   */
-  const handleEditPaymentMethod = (paymentMethod: PaymentMethod) => {
-    setEditingPaymentMethod(paymentMethod);
-    setShowAddPaymentMethodModal(true);
-  };
-
-  /**
-   * handleAddPaymentMethod - Opens modal to add payment method for specific account
-   */
-  const handleAddPaymentMethod = (accountId: number) => {
-    setEditingPaymentMethod(null);
-    setSelectedAccountForPaymentMethod(accountId);
-    setShowAddPaymentMethodModal(true);
-  };
-
-  /**
-   * checkPaymentMethodUsage - Determines if payment method has been used in transactions
-   */
-  const checkPaymentMethodUsage = async (
-    paymentMethodId: number
-  ): Promise<boolean> => {
-    try {
-      const transactions = await db.transactions.toArray();
-      return transactions.some(
-        (txn) => txn.paymentChannelId === paymentMethodId
-      );
-    } catch (error) {
-      console.error("Error checking payment method usage:", error);
-      return false;
-    }
-  };
-
-  /**
-   * initiateDeletePaymentMethod - Check payment method usage and set appropriate state
-   */
-  const initiateDeletePaymentMethod = async (paymentMethodId: number) => {
-    try {
-      setLoading(true);
-      const isUsed = await checkPaymentMethodUsage(paymentMethodId);
-
-      if (isUsed) {
-        setDeletePaymentMethodId(paymentMethodId);
-        setDeletePaymentMethodState("used");
-      } else {
-        setDeletePaymentMethodId(paymentMethodId);
-        setDeletePaymentMethodState("delete");
-      }
-    } catch (error) {
-      console.error("Error checking payment method usage:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * handleDeactivatePaymentMethod - Deactivates payment method instead of deleting
-   */
-  const handleDeactivatePaymentMethod = async (paymentMethodId: number) => {
-    try {
-      setLoading(true);
-      await db.paymentMethods.update(paymentMethodId, { isActive: false });
-      setDeletePaymentMethodId(null);
-      setDeletePaymentMethodState("none");
-      await fetchPaymentMethods();
-      setToastMessage("Payment method deactivated successfully!");
-      setShowToast(true);
-    } catch (error) {
-      console.error("Error deactivating payment method:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * handleDeletePaymentMethod - Removes a payment method from the database
-   */
-  const handleDeletePaymentMethod = async (paymentMethodId: number) => {
-    try {
-      setLoading(true);
-      await db.paymentMethods.delete(paymentMethodId);
-      setDeletePaymentMethodId(null);
-      setDeletePaymentMethodState("none");
-      await fetchPaymentMethods();
-      setToastMessage("Payment method deleted successfully!");
-      setShowToast(true);
-    } catch (error) {
-      console.error("Error deleting payment method:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * getPaymentMethodsForAccount - Filters payment methods by account ID
-   */
-  const getPaymentMethodsForAccount = (accountId: number) => {
-    return paymentMethods.filter((pm) => pm.accountId === accountId);
-  };
-
-  /**
-   * unlinkedPaymentMethods - Payment methods with no matching account
-   */
-  const unlinkedPaymentMethods = paymentMethods.filter((pm) => {
-    const accountExists = accounts.some((a) => a.id === pm.accountId);
-    return !accountExists;
-  });
 
   return (
     <IonPage>
@@ -484,267 +267,85 @@ const AccountsManagement: React.FC = () => {
       <IonContent className="ion-padding">
         {loading && <IonSpinner />}
 
-        {/* ACCOUNTS LIST WITH NESTED PAYMENT METHODS */}
+        {/* ACCOUNTS LIST */}
         <IonCard>
           <IonCardContent>
             {accounts.length === 0 ? (
               <p>No accounts yet. Tap the + button to add one.</p>
             ) : (
-              <IonAccordionGroup>
+              <IonList>
                 {accounts.map((account: LocalAccount) => {
-                  const accountPaymentMethods = getPaymentMethodsForAccount(
-                    account.id!
-                  );
                   const isInactive = account.isActive === false;
 
                   return (
-                    <IonAccordion
-                      key={account.id}
-                      value={`account-${account.id}`}
-                    >
-                      <IonItem slot="header">
-                        <IonGrid className="ion-no-padding">
-                          <IonRow>
-                            <IonCol size="auto">
-                              {account.previewUrl && (
-                                <img
-                                  src={account.previewUrl}
-                                  alt={account.name}
-                                  style={{
-                                    width: 40,
-                                    height: 40,
-                                    objectFit: "cover",
-                                    borderRadius: 4,
-                                    marginRight: 8,
-                                    opacity: isInactive ? 0.5 : 1,
-                                  }}
-                                />
-                              )}
-                            </IonCol>
-                            <IonCol>
-                              <strong style={{ opacity: isInactive ? 0.6 : 1 }}>
-                                {account.name}
-                              </strong>
-                              {account.currency && (
-                                <span
-                                  style={{
-                                    marginLeft: "10px",
-                                    opacity: isInactive ? 0.6 : 1,
-                                  }}
-                                >
-                                  ({account.currency})
-                                </span>
-                              )}
-                              <p
+                    <IonItem key={account.id}>
+                      <IonGrid className="ion-no-padding">
+                        <IonRow>
+                          <IonCol size="auto">
+                            {account.previewUrl && (
+                              <img
+                                src={account.previewUrl}
+                                alt={account.name}
                                 style={{
-                                  fontSize: "0.85rem",
-                                  color: "#666",
+                                  width: 40,
+                                  height: 40,
+                                  objectFit: "cover",
+                                  borderRadius: 4,
+                                  marginRight: 8,
+                                  opacity: isInactive ? 0.5 : 1,
+                                }}
+                              />
+                            )}
+                          </IonCol>
+                          <IonCol>
+                            <strong style={{ opacity: isInactive ? 0.6 : 1 }}>
+                              {account.name}
+                            </strong>
+                            {account.currency && (
+                              <span
+                                style={{
+                                  marginLeft: "10px",
                                   opacity: isInactive ? 0.6 : 1,
                                 }}
                               >
-                                {accountPaymentMethods.length} payment method
-                                {accountPaymentMethods.length !== 1 ? "s" : ""}
-                              </p>
-                            </IonCol>
-                            <IonCol size="auto">
-                              {/* ADD PAYMENT METHOD BUTTON - Only show for active accounts */}
-                              {!isInactive && (
-                                <IonButton
-                                  fill="clear"
-                                  size="small"
-                                  color="secondary"
-                                  title="Add Payment Method"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleAddPaymentMethod(account.id!);
-                                  }}
-                                >
-                                  <IonIcon icon={add} />
-                                </IonButton>
-                              )}
-                              <IonButton
-                                fill="clear"
-                                size="small"
-                                color="secondary"
-                                title="Edit Account"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleEditAccount(account);
+                                ({account.currency})
+                              </span>
+                            )}
+                            {account.isCredit && (
+                              <div
+                                style={{
+                                  fontSize: "0.85rem",
+                                  color: "var(--ion-color-warning)",
+                                  marginTop: "4px",
+                                  opacity: isInactive ? 0.6 : 1,
                                 }}
                               >
-                                <IonIcon icon={createOutline} />
-                              </IonButton>
-                              <IonButton
-                                fill="clear"
-                                size="small"
-                                title={
-                                  isInactive
-                                    ? "Activate account"
-                                    : "Deactivate account"
-                                }
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleToggleAccountActive(account);
-                                }}
-                                color={isInactive ? "medium" : "success"}
-                              >
-                                <IonIcon
-                                  icon={
-                                    isInactive
-                                      ? closeCircleOutline
-                                      : checkmarkCircleOutline
-                                  }
-                                />
-                              </IonButton>
-
-                              <IonButton
-                                fill="clear"
-                                size="small"
-                                color="danger"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  initiateDeleteAccount(account);
-                                }}
-                              >
-                                <IonIcon icon={trashOutline} />
-                              </IonButton>
-                            </IonCol>
-                          </IonRow>
-                        </IonGrid>
-                      </IonItem>
-
-                      <div slot="content">
-                        {accountPaymentMethods.length === 0 ? (
-                          <p style={{ padding: "16px" }}>
-                            No payment methods for this account.
-                          </p>
-                        ) : (
-                          <IonList>
-                            {accountPaymentMethods.map((pm) => {
-                              const isInactivePM = pm.isActive === false;
-                              return (
-                                <IonItem key={pm.id}>
-                                  <IonGrid className="ion-no-padding">
-                                    <IonRow>
-                                      <IonCol>
-                                        <strong
-                                          style={{
-                                            opacity: isInactivePM ? 0.6 : 1,
-                                          }}
-                                        >
-                                          {pm.name}
-                                        </strong>
-                                        {pm.description && (
-                                          <p
-                                            style={{
-                                              fontSize: "0.85rem",
-                                              color: "#999",
-                                              margin: "4px 0 0 0",
-                                              opacity: isInactivePM ? 0.6 : 1,
-                                            }}
-                                          >
-                                            {pm.description}
-                                          </p>
-                                        )}
-                                      </IonCol>
-                                      <IonCol size="auto">
-                                        <IonButton
-                                          fill="clear"
-                                          size="small"
-                                          color="secondary"
-                                          onClick={() =>
-                                            handleEditPaymentMethod(pm)
-                                          }
-                                        >
-                                          <IonIcon icon={createOutline} />
-                                        </IonButton>
-
-                                        <IonButton
-                                          fill="clear"
-                                          size="small"
-                                          title={
-                                            isInactivePM
-                                              ? "Activate payment method"
-                                              : "Deactivate payment method"
-                                          }
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleTogglePaymentMethodActive(pm);
-                                          }}
-                                          color={
-                                            isInactivePM ? "medium" : "success"
-                                          }
-                                        >
-                                          <IonIcon
-                                            icon={
-                                              isInactivePM
-                                                ? closeCircleOutline
-                                                : checkmarkCircleOutline
-                                            }
-                                          />
-                                        </IonButton>
-
-                                        <IonButton
-                                          fill="clear"
-                                          size="small"
-                                          color="danger"
-                                          onClick={() =>
-                                            initiateDeletePaymentMethod(
-                                              pm.id ?? 0
-                                            )
-                                          }
-                                        >
-                                          <IonIcon icon={trashOutline} />
-                                        </IonButton>
-                                      </IonCol>
-                                    </IonRow>
-                                  </IonGrid>
-                                </IonItem>
-                              );
-                            })}
-                          </IonList>
-                        )}
-                      </div>
-                    </IonAccordion>
-                  );
-                })}
-              </IonAccordionGroup>
-            )}
-          </IonCardContent>
-        </IonCard>
-
-        {/* UNLINKED PAYMENT METHODS */}
-        {unlinkedPaymentMethods.length > 0 && (
-          <IonCard>
-            <IonCardHeader>
-              <IonCardTitle>Unlinked Payment Methods</IonCardTitle>
-            </IonCardHeader>
-            <IonCardContent>
-              <IonList>
-                {unlinkedPaymentMethods.map((pm) => {
-                  const isInactivePM = pm.isActive === false;
-                  return (
-                    <IonItem key={pm.id}>
-                      <IonGrid className="ion-no-padding">
-                        <IonRow>
-                          <IonCol>
-                            <strong
-                              style={{
-                                opacity: isInactivePM ? 0.6 : 1,
-                              }}
-                            >
-                              {pm.name}
-                            </strong>
-                            {pm.description && (
+                                Credit Account
+                                {account.creditLimit && (
+                                  <span>
+                                    {" "}
+                                    - Limit:{" "}
+                                    {account.creditLimit.toLocaleString(
+                                      undefined,
+                                      {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2,
+                                      }
+                                    )}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            {account.description && (
                               <p
                                 style={{
                                   fontSize: "0.85rem",
                                   color: "#999",
                                   margin: "4px 0 0 0",
-                                  opacity: isInactivePM ? 0.6 : 1,
+                                  opacity: isInactive ? 0.6 : 1,
                                 }}
                               >
-                                {pm.description}
+                                {account.description}
                               </p>
                             )}
                           </IonCol>
@@ -752,27 +353,26 @@ const AccountsManagement: React.FC = () => {
                             <IonButton
                               fill="clear"
                               size="small"
-                              onClick={() => handleEditPaymentMethod(pm)}
+                              color="secondary"
+                              title="Edit Account"
+                              onClick={() => handleEditAccount(account)}
                             >
                               <IonIcon icon={createOutline} />
                             </IonButton>
-
                             <IonButton
                               fill="clear"
                               size="small"
                               title={
-                                isInactivePM
-                                  ? "Activate payment method"
-                                  : "Deactivate payment method"
+                                isInactive
+                                  ? "Activate account"
+                                  : "Deactivate account"
                               }
-                              onClick={() =>
-                                handleTogglePaymentMethodActive(pm)
-                              }
-                              color={isInactivePM ? "medium" : "success"}
+                              onClick={() => handleToggleAccountActive(account)}
+                              color={isInactive ? "medium" : "success"}
                             >
                               <IonIcon
                                 icon={
-                                  isInactivePM
+                                  isInactive
                                     ? closeCircleOutline
                                     : checkmarkCircleOutline
                                 }
@@ -783,9 +383,7 @@ const AccountsManagement: React.FC = () => {
                               fill="clear"
                               size="small"
                               color="danger"
-                              onClick={() =>
-                                setDeletePaymentMethodId(pm.id ?? null)
-                              }
+                              onClick={() => initiateDeleteAccount(account)}
                             >
                               <IonIcon icon={trashOutline} />
                             </IonButton>
@@ -796,9 +394,9 @@ const AccountsManagement: React.FC = () => {
                   );
                 })}
               </IonList>
-            </IonCardContent>
-          </IonCard>
-        )}
+            )}
+          </IonCardContent>
+        </IonCard>
 
         {/* ALERT: Deactivated account has been used in transactions */}
         <IonAlert
@@ -843,37 +441,6 @@ const AccountsManagement: React.FC = () => {
           ]}
         />
 
-        {/* ALERT: Delete unused account with payment methods */}
-        <IonAlert
-          isOpen={deleteState.type === "unused_with_pm"}
-          onDidDismiss={() => setDeleteState({ type: "none" })}
-          header="Confirm Delete"
-          message={`Delete "${
-            deleteState.type === "unused_with_pm" ? deleteState.accountName : ""
-          }" and its ${
-            deleteState.type === "unused_with_pm" ? deleteState.pmCount : 0
-          } payment method${
-            deleteState.type === "unused_with_pm" && deleteState.pmCount !== 1
-              ? "s"
-              : ""
-          }? This action cannot be undone.`}
-          buttons={[
-            {
-              text: "Cancel",
-              role: "cancel",
-            },
-            {
-              text: "Delete",
-              role: "destructive",
-              handler: () => {
-                if (deleteState.type === "unused_with_pm") {
-                  handleDeleteAccount(deleteState.accountId);
-                }
-              },
-            },
-          ]}
-        />
-
         {/* ALERT: Delete empty account */}
         <IonAlert
           isOpen={deleteState.type === "empty"}
@@ -899,64 +466,6 @@ const AccountsManagement: React.FC = () => {
           ]}
         />
 
-        {/* ALERT: Payment method is used in transactions */}
-        <IonAlert
-          isOpen={
-            deletePaymentMethodId !== null &&
-            deletePaymentMethodState === "used"
-          }
-          onDidDismiss={() => {
-            setDeletePaymentMethodId(null);
-            setDeletePaymentMethodState("none");
-          }}
-          header="Cannot Delete Used Payment Method"
-          message="This payment method has been used in transactions and cannot be deleted. Would you like to deactivate it instead? Deactivated payment methods will no longer appear in dropdowns but will remain in your records."
-          buttons={[
-            {
-              text: "Cancel",
-              role: "cancel",
-            },
-            {
-              text: "Deactivate",
-              role: "destructive",
-              handler: () => {
-                if (deletePaymentMethodId) {
-                  handleDeactivatePaymentMethod(deletePaymentMethodId);
-                }
-              },
-            },
-          ]}
-        />
-
-        {/* DELETE PAYMENT METHOD ALERT */}
-        <IonAlert
-          isOpen={
-            deletePaymentMethodId !== null &&
-            deletePaymentMethodState === "delete"
-          }
-          onDidDismiss={() => {
-            setDeletePaymentMethodId(null);
-            setDeletePaymentMethodState("none");
-          }}
-          header="Confirm Delete"
-          message="Are you sure you want to delete this payment method?"
-          buttons={[
-            {
-              text: "Cancel",
-              role: "cancel",
-            },
-            {
-              text: "Delete",
-              role: "destructive",
-              handler: () => {
-                if (deletePaymentMethodId) {
-                  handleDeletePaymentMethod(deletePaymentMethodId);
-                }
-              },
-            },
-          ]}
-        />
-
         {/* MODALS */}
         <AddAccountModal
           isOpen={showAddAccountModal}
@@ -966,21 +475,6 @@ const AccountsManagement: React.FC = () => {
           }}
           onAccountAdded={() => handleAccountSaved(!!editingAccount)}
           editingAccount={editingAccount}
-        />
-
-        <AddPaymentMethodModal
-          isOpen={showAddPaymentMethodModal}
-          onClose={() => {
-            setShowAddPaymentMethodModal(false);
-            setEditingPaymentMethod(null);
-            setSelectedAccountForPaymentMethod(undefined);
-          }}
-          onPaymentMethodAdded={() =>
-            handlePaymentMethodSaved(!!editingPaymentMethod)
-          }
-          accounts={accounts}
-          editingPaymentMethod={editingPaymentMethod}
-          preSelectedAccountId={selectedAccountForPaymentMethod}
         />
 
         {/* FAB BUTTON FOR ADDING ACCOUNTS */}

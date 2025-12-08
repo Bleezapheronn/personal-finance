@@ -33,13 +33,12 @@ import {
   checkmarkCircleOutline,
   closeCircleOutline,
 } from "ionicons/icons";
-import { db, SmsImportTemplate, PaymentMethod, Account } from "../db";
+import { db, SmsImportTemplate, Account } from "../db";
 
 type LocalAccount = Account & { previewUrl?: string };
 
 const SmsImportTemplatesManagement: React.FC = () => {
   const [templates, setTemplates] = useState<SmsImportTemplate[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [accounts, setAccounts] = useState<LocalAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -54,9 +53,9 @@ const SmsImportTemplatesManagement: React.FC = () => {
   // Form state
   const [formName, setFormName] = useState("");
   const [formDescription, setFormDescription] = useState("");
-  const [formPaymentMethodId, setFormPaymentMethodId] = useState<
-    number | undefined
-  >(undefined);
+  const [formAccountId, setFormAccountId] = useState<number | undefined>(
+    undefined
+  );
   const [formReferencePattern, setFormReferencePattern] = useState("");
   const [formAmountPattern, setFormAmountPattern] = useState("");
   const [formRecipientNamePattern, setFormRecipientNamePattern] = useState("");
@@ -97,9 +96,8 @@ const SmsImportTemplatesManagement: React.FC = () => {
       });
       blobUrlsRef.current.clear();
 
-      const [temps, pms, accs] = await Promise.all([
+      const [temps, accs] = await Promise.all([
         db.smsImportTemplates.toArray(),
-        db.paymentMethods.toArray(),
         db.accounts.toArray(),
       ]);
 
@@ -114,7 +112,6 @@ const SmsImportTemplatesManagement: React.FC = () => {
       });
 
       setTemplates(temps);
-      setPaymentMethods(pms);
       setAccounts(accountsWithPreview);
     } catch (err) {
       console.error("Failed to load SMS import templates:", err);
@@ -135,7 +132,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
   const resetForm = useCallback(() => {
     setFormName("");
     setFormDescription("");
-    setFormPaymentMethodId(undefined);
+    setFormAccountId(undefined); // CHANGED
     setFormReferencePattern("");
     setFormAmountPattern("");
     setFormRecipientNamePattern("");
@@ -155,7 +152,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
     setEditingTemplate(template);
     setFormName(template.name);
     setFormDescription(template.description || "");
-    setFormPaymentMethodId(template.paymentMethodId);
+    setFormAccountId(template.accountId); // CHANGED
     setFormReferencePattern(template.referencePattern || "");
     setFormAmountPattern(template.amountPattern || "");
     setFormRecipientNamePattern(template.recipientNamePattern || "");
@@ -188,7 +185,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
         await db.smsImportTemplates.update(editingTemplate.id, {
           name: formName.trim(),
           description: formDescription.trim() || undefined,
-          paymentMethodId: formPaymentMethodId,
+          accountId: formAccountId, // CHANGED
           referencePattern: formReferencePattern.trim() || undefined,
           amountPattern: formAmountPattern.trim() || undefined,
           recipientNamePattern: formRecipientNamePattern.trim() || undefined,
@@ -205,7 +202,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
         const newTemplate: Omit<SmsImportTemplate, "id"> = {
           name: formName.trim(),
           description: formDescription.trim() || undefined,
-          paymentMethodId: formPaymentMethodId,
+          accountId: formAccountId, // CHANGED
           referencePattern: formReferencePattern.trim() || undefined,
           amountPattern: formAmountPattern.trim() || undefined,
           recipientNamePattern: formRecipientNamePattern.trim() || undefined,
@@ -214,7 +211,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
           costPattern: formCostPattern.trim() || undefined,
           incomePattern: formIncomePattern.trim() || undefined,
           expensePattern: formExpensePattern.trim() || undefined,
-          isActive: true, // NEW: Default to active
+          isActive: true,
           createdAt: now,
           updatedAt: now,
         };
@@ -304,12 +301,9 @@ const SmsImportTemplatesManagement: React.FC = () => {
               <IonList>
                 {templates.map((template) => {
                   const isInactive = !template.isActive;
-                  const paymentMethod = paymentMethods.find(
-                    (pm) => pm.id === template.paymentMethodId
-                  );
-                  const account = paymentMethod
-                    ? accounts.find((a) => a.id === paymentMethod.accountId)
-                    : null;
+                  const account = accounts.find(
+                    (a) => a.id === template.accountId
+                  ); // CHANGED
 
                   return (
                     <IonItem key={template.id}>
@@ -332,7 +326,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
                               />
                             ) : (
                               <div
-                                title={account?.name || "No Account"}
+                                title={account?.name || "All Accounts"}
                                 style={{
                                   width: 40,
                                   height: 40,
@@ -348,7 +342,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
                                   marginRight: 8,
                                 }}
                               >
-                                {account?.name?.charAt(0).toUpperCase() || "?"}
+                                {account?.name?.charAt(0).toUpperCase() || "*"}
                               </div>
                             )}
                           </IonCol>
@@ -370,8 +364,8 @@ const SmsImportTemplatesManagement: React.FC = () => {
                                 opacity: isInactive ? 0.6 : 1,
                               }}
                             >
-                              <strong>Payment Method:</strong>{" "}
-                              {paymentMethod?.name || "All Payment Methods"}
+                              <strong>Account:</strong>{" "}
+                              {account?.name || "All Accounts"}
                             </p>
                           </IonCol>
 
@@ -527,15 +521,11 @@ const SmsImportTemplatesManagement: React.FC = () => {
               <IonRow>
                 <IonCol>
                   <div className="form-input-wrapper">
-                    <label className="form-label">
-                      Payment Method (optional)
-                    </label>
+                    <label className="form-label">Account (optional)</label>
                     <select
-                      value={formPaymentMethodId ?? ""}
+                      value={formAccountId ?? ""}
                       onChange={(e) =>
-                        setFormPaymentMethodId(
-                          parseInt(e.target.value) || undefined
-                        )
+                        setFormAccountId(parseInt(e.target.value) || undefined)
                       }
                       disabled={loading}
                       style={{
@@ -547,22 +537,14 @@ const SmsImportTemplatesManagement: React.FC = () => {
                         fontSize: "0.95rem",
                       }}
                     >
-                      <option value="">All Payment Methods</option>
-                      {accounts.map((account) => {
-                        const methods = paymentMethods.filter(
-                          (pm) => pm.accountId === account.id
-                        );
-                        if (methods.length === 0) return null;
-                        return (
-                          <optgroup key={account.id} label={account.name}>
-                            {methods.map((pm) => (
-                              <option key={pm.id} value={pm.id}>
-                                {pm.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        );
-                      })}
+                      <option value="">All Accounts</option>
+                      {accounts
+                        .filter((a) => a.name)
+                        .map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.name}
+                          </option>
+                        ))}
                     </select>
                   </div>
                 </IonCol>

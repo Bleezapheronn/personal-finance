@@ -38,7 +38,7 @@ import {
   arrowUpCircle,
   arrowDownCircle,
   linkOutline,
-  bag, // NEW: Add this import
+  bag,
   chevronBack,
   chevronForward,
 } from "ionicons/icons";
@@ -47,7 +47,6 @@ import {
   Budget,
   Category,
   Bucket,
-  PaymentMethod,
   Recipient,
   Transaction,
   Account,
@@ -74,7 +73,6 @@ const BudgetPage: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountImages, setAccountImages] = useState<Map<number, string>>(
@@ -172,12 +170,11 @@ const BudgetPage: React.FC = () => {
       // Run migration on first load
       await migrateTransactionOccurrenceDates();
 
-      const [b, txns, cats, bkts, pms, recs, accs] = await Promise.all([
+      const [b, txns, cats, bkts, recs, accs] = await Promise.all([
         db.budgets.toArray(),
         db.transactions.toArray(),
         db.categories.toArray(),
         db.buckets.toArray(),
-        db.paymentMethods.toArray(),
         db.recipients.toArray(),
         db.accounts.toArray(),
       ]);
@@ -186,7 +183,6 @@ const BudgetPage: React.FC = () => {
       setTransactions(txns);
       setCategories(cats);
       setBuckets(bkts);
-      setPaymentMethods(pms);
       setRecipients(recs);
       setAccounts(accs);
 
@@ -430,7 +426,7 @@ const BudgetPage: React.FC = () => {
         return;
       }
 
-      // NEW: Skip flexible budgets in the Overdue group
+      // Skip flexible budgets in the Overdue group
       if (occ.timeGroup === "Overdue" && occ.budget.isFlexible) {
         return;
       }
@@ -571,13 +567,13 @@ const BudgetPage: React.FC = () => {
 
     setMatchingTransactionsForLink(matching);
     setBudgetIdForLinking(budgetOccurrence.budgetId);
-    setBudgetOccurrenceDateForLinking(budgetOccurrence.dueDate); // NEW
+    setBudgetOccurrenceDateForLinking(budgetOccurrence.dueDate);
     setShowLinkModal(true);
   };
 
   const handleLinkTransactions = async (
     transactionIds: number[],
-    occurrenceDate: Date // NEW: Receive occurrence date
+    occurrenceDate: Date
   ) => {
     if (budgetIdForLinking === undefined) return;
 
@@ -586,7 +582,7 @@ const BudgetPage: React.FC = () => {
       for (const txnId of transactionIds) {
         await db.transactions.update(txnId, {
           budgetId: budgetIdForLinking,
-          occurrenceDate, // NEW: Set the occurrence date
+          occurrenceDate,
         });
       }
 
@@ -599,7 +595,7 @@ const BudgetPage: React.FC = () => {
       loadData();
       setShowLinkModal(false);
       setBudgetIdForLinking(undefined);
-      setBudgetOccurrenceDateForLinking(undefined); // NEW
+      setBudgetOccurrenceDateForLinking(undefined);
       setMatchingTransactionsForLink([]);
     } catch (err) {
       console.error("Error linking transactions:", err);
@@ -616,20 +612,20 @@ const BudgetPage: React.FC = () => {
     return buckets.find((b) => b.id === cat?.bucketId)?.name || "";
   };
 
-  const getPaymentMethodName = (paymentMethodId: number) =>
-    paymentMethods.find((p) => p.id === paymentMethodId)?.name || "—";
-
-  const getAccountName = (paymentMethodId: number) => {
-    const pm = paymentMethods.find((p) => p.id === paymentMethodId);
-    return accounts.find((a) => a.id === pm?.accountId)?.name || "—";
+  // CHANGED: Simplified to get account directly from accountId
+  const getAccountName = (accountId: number | undefined): string => {
+    if (!accountId) return "—";
+    return accounts.find((a) => a.id === accountId)?.name || "—";
   };
 
-  const getAccountImage = (paymentMethodId: number) => {
-    const pm = paymentMethods.find((p) => p.id === paymentMethodId);
-    if (pm?.accountId && accountImages.has(pm.accountId)) {
-      return accountImages.get(pm.accountId);
+  // CHANGED: Simplified to get account image directly from accountId
+  const getAccountImage = (
+    accountId: number | undefined
+  ): string | undefined => {
+    if (!accountId || !accountImages.has(accountId)) {
+      return undefined;
     }
-    return undefined;
+    return accountImages.get(accountId);
   };
 
   const getRecipientName = (recipientId?: number) =>
@@ -655,10 +651,6 @@ const BudgetPage: React.FC = () => {
     }
   };
 
-  // Add imports
-  // import { chevronBack, chevronForward } from "ionicons/icons";
-
-  // Add this helper function to get period boundaries
   const getBudgetPeriodBoundaries = (
     period: "month" | "quarter" | "year"
   ): { start: Date; end: Date; label: string } => {
@@ -693,7 +685,6 @@ const BudgetPage: React.FC = () => {
     }
   };
 
-  // Update the calculateBudgetedAmounts function signature:
   const calculateBudgetedAmounts = (
     period: "month" | "quarter" | "year"
   ): {
@@ -736,7 +727,6 @@ const BudgetPage: React.FC = () => {
     return { totalExpense, totalIncome, expensePaid, incomePaid };
   };
 
-  // Add these handlers BEFORE the BudgetSummaryCard component definition
   const handleBudgetPeriodPrevious = () => {
     if (budgetSummaryPeriod === "quarter") {
       setBudgetSummaryPeriod("month");
@@ -753,7 +743,6 @@ const BudgetPage: React.FC = () => {
     }
   };
 
-  // Define BudgetSummaryCard AFTER all helper functions and handlers
   const BudgetSummaryCard = () => {
     const { label } = getBudgetPeriodBoundaries(budgetSummaryPeriod);
     const { totalExpense, totalIncome, expensePaid, incomePaid } =
@@ -902,24 +891,20 @@ const BudgetPage: React.FC = () => {
     );
   };
 
-  // Find the first incomplete goal index
   const getInitialGoalIndex = (): number => {
     const allGoals = getAllGoals();
     const firstIncompleteIndex = allGoals.findIndex(
       (goal) => !goal.isCompleted
     );
 
-    // If all goals are completed, show the first one
     return firstIncompleteIndex >= 0 ? firstIncompleteIndex : 0;
   };
 
-  // Reset goal index when component mounts or data loads
   useEffect(() => {
     setCurrentGoalIndex(getInitialGoalIndex());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
-  // Add this helper function to get all goals (active + completed) sorted by due date
   const getAllGoals = (): BudgetOccurrence[] => {
     const occurrences = generateBudgetOccurrences();
 
@@ -930,7 +915,6 @@ const BudgetPage: React.FC = () => {
     return allGoals.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
   };
 
-  // Add these handlers for goal navigation
   const handleGoalPrevious = () => {
     setCurrentGoalIndex((prev) => Math.max(0, prev - 1));
   };
@@ -1342,21 +1326,15 @@ const BudgetPage: React.FC = () => {
                                       width: "40px",
                                       height: "40px",
                                     }}
-                                    title={`${getAccountName(
-                                      occ.budget.paymentChannelId
-                                    )} - ${getPaymentMethodName(
-                                      occ.budget.paymentChannelId
-                                    )}`}
+                                    title={getAccountName(occ.budget.accountId)}
                                   >
-                                    {getAccountImage(
-                                      occ.budget.paymentChannelId
-                                    ) ? (
+                                    {getAccountImage(occ.budget.accountId) ? (
                                       <IonImg
                                         src={getAccountImage(
-                                          occ.budget.paymentChannelId
+                                          occ.budget.accountId
                                         )}
-                                        alt={getPaymentMethodName(
-                                          occ.budget.paymentChannelId
+                                        alt={getAccountName(
+                                          occ.budget.accountId
                                         )}
                                       />
                                     ) : (
@@ -1371,8 +1349,8 @@ const BudgetPage: React.FC = () => {
                                           fontSize: "0.8rem",
                                         }}
                                       >
-                                        {getPaymentMethodName(
-                                          occ.budget.paymentChannelId
+                                        {getAccountName(
+                                          occ.budget.accountId
                                         ).charAt(0)}
                                       </div>
                                     )}
@@ -1470,7 +1448,7 @@ const BudgetPage: React.FC = () => {
                                     style={{ marginRight: "0" }}
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleOpenLinkModal(occ); // Pass full occurrence object
+                                      handleOpenLinkModal(occ);
                                     }}
                                     title="Link Transaction"
                                   >
@@ -1551,14 +1529,14 @@ const BudgetPage: React.FC = () => {
         onClose={() => {
           setShowLinkModal(false);
           setBudgetIdForLinking(undefined);
-          setBudgetOccurrenceDateForLinking(undefined); // NEW
+          setBudgetOccurrenceDateForLinking(undefined);
           setMatchingTransactionsForLink([]);
         }}
         matchingTransactions={matchingTransactionsForLink}
         onLinkTransactions={handleLinkTransactions}
         categories={categories}
         recipients={recipients}
-        occurrenceDate={budgetOccurrenceDateForLinking || new Date()} // NEW
+        occurrenceDate={budgetOccurrenceDateForLinking || new Date()}
       />
     </IonPage>
   );

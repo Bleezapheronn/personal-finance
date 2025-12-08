@@ -16,7 +16,7 @@ export const validateBudgetForm = (data: {
   amount: string;
   dueDate: string;
   categoryId?: number;
-  paymentMethodId?: number;
+  accountId?: number; // CHANGED from paymentMethodId
   recipientId?: number;
   frequency: string;
   dayOfMonth?: string;
@@ -55,10 +55,10 @@ export const validateBudgetForm = (data: {
     errorMessages.push("Category is required");
   }
 
-  // Validate paymentMethodId
-  if (!data.paymentMethodId) {
-    errors.paymentMethod = true;
-    errorMessages.push("Payment method is required");
+  // Validate accountId - CHANGED from paymentMethodId
+  if (!data.accountId) {
+    errors.account = true;
+    errorMessages.push("Account is required");
   }
 
   // Validate frequency-specific fields

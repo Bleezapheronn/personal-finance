@@ -26,7 +26,7 @@ import {
   IonAlert,
   IonAccordion,
   IonAccordionGroup,
-  IonInput, // ADD THIS
+  IonInput,
   IonFab,
   IonFabButton,
   IonToast,
@@ -48,7 +48,6 @@ import {
   db,
   Transaction,
   Category,
-  PaymentMethod,
   Recipient,
   Bucket,
   Account,
@@ -62,7 +61,6 @@ const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountImages, setAccountImages] = useState<Map<number, string>>(
@@ -79,7 +77,7 @@ const Transactions: React.FC = () => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
-  // Filter states
+  // Filter states - CHANGED: accountId instead of paymentMethodId
   const [selectedAccountId, setSelectedAccountId] = useState<
     number | undefined
   >(undefined);
@@ -94,9 +92,7 @@ const Transactions: React.FC = () => {
   >(undefined);
   const [selectedDateFrom, setSelectedDateFrom] = useState<string>("");
   const [selectedDateTo, setSelectedDateTo] = useState<string>("");
-  const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<
-    number | undefined
-  >(undefined);
+  // REMOVED: selectedPaymentMethodId
   const [selectedDescription, setSelectedDescription] = useState<string>("");
 
   const history = useHistory();
@@ -105,18 +101,18 @@ const Transactions: React.FC = () => {
     setLoading(true);
 
     try {
-      const [allTransactions, cats, bkts, pms, recs, accs] = await Promise.all([
+      const [allTransactions, cats, bkts, recs, accs] = await Promise.all([
         db.transactions.toArray(),
         db.categories.toArray(),
         db.buckets.toArray(),
-        db.paymentMethods.toArray(),
         db.recipients.toArray(),
         db.accounts.toArray(),
       ]);
 
+      // REMOVED: paymentMethods fetch - no longer needed
+
       setCategories(cats);
       setBuckets(bkts);
-      setPaymentMethods(pms);
       setRecipients(recs);
       setAccounts(accs);
 
@@ -247,32 +243,24 @@ const Transactions: React.FC = () => {
     return "";
   };
 
-  // Helper to get payment method name
-  const getPaymentMethodName = (paymentChannelId: number) => {
-    const pm = paymentMethods.find((p) => p.id === paymentChannelId);
-    return pm?.name || "—";
-  };
-
   // Helper to get recipient name
   const getRecipientName = (recipientId: number) => {
     const rec = recipients.find((r) => r.id === recipientId);
     return rec?.name || "—";
   };
 
-  // Helper to get account image for a transaction
-  const getAccountImage = (paymentChannelId: number) => {
-    const pm = paymentMethods.find((p) => p.id === paymentChannelId);
-    if (pm?.accountId && accountImages.has(pm.accountId)) {
-      return accountImages.get(pm.accountId);
+  // CHANGED: Get account image and name directly from accountId
+  const getAccountImage = (accountId: number | undefined): string | undefined => {
+    if (!accountId || !accountImages.has(accountId)) {
+      return undefined;
     }
-    return undefined;
+    return accountImages.get(accountId);
   };
 
-  const getTransactionAccountId = (
-    paymentChannelId: number
-  ): number | undefined => {
-    const pm = paymentMethods.find((p) => p.id === paymentChannelId);
-    return pm?.accountId;
+  const getAccountName = (accountId: number | undefined): string => {
+    if (!accountId) return "—";
+    const account = accounts.find((a) => a.id === accountId);
+    return account?.name || "—";
   };
 
   // Apply all filters
@@ -280,15 +268,9 @@ const Transactions: React.FC = () => {
     if (!transactions) return [];
 
     return transactions.filter((txn) => {
-      // Account filter
+      // Account filter - CHANGED: Direct accountId check
       if (selectedAccountId !== undefined) {
-        const accountId = getTransactionAccountId(txn.paymentChannelId);
-        if (accountId !== selectedAccountId) return false;
-      }
-
-      // Payment Method filter
-      if (selectedPaymentMethodId !== undefined) {
-        if (txn.paymentChannelId !== selectedPaymentMethodId) return false;
+        if (txn.accountId !== selectedAccountId) return false;
       }
 
       // Recipient filter
@@ -336,7 +318,7 @@ const Transactions: React.FC = () => {
 
   const clearFilters = () => {
     setSelectedAccountId(undefined);
-    setSelectedPaymentMethodId(undefined);
+    // REMOVED: setSelectedPaymentMethodId(undefined);
     setSelectedRecipientId(undefined);
     setSelectedBucketId(undefined);
     setSelectedCategoryId(undefined);
@@ -345,16 +327,12 @@ const Transactions: React.FC = () => {
     setSelectedDescription("");
   };
 
-  // ADD THESE NEW HELPER FUNCTIONS after clearFilters():
-
   const clearIndividualFilter = (filterName: string) => {
     switch (filterName) {
       case "account":
         setSelectedAccountId(undefined);
         break;
-      case "paymentMethod":
-        setSelectedPaymentMethodId(undefined);
-        break;
+      // REMOVED: paymentMethod case
       case "recipient":
         setSelectedRecipientId(undefined);
         break;
@@ -399,16 +377,7 @@ const Transactions: React.FC = () => {
       });
     }
 
-    if (selectedPaymentMethodId !== undefined) {
-      const pm = paymentMethods.find((p) => p.id === selectedPaymentMethodId);
-      const account = accounts.find((a) => a.id === pm?.accountId);
-      chips.push({
-        label: `${account?.name} - ${pm?.name}`,
-        displayLabel: `${account?.name} - ${pm?.name}`,
-        tooltip: "Clear Payment Method filter",
-        filterName: "paymentMethod",
-      });
-    }
+    // REMOVED: Payment Method chip
 
     if (selectedRecipientId !== undefined) {
       const recipient = recipients.find((r) => r.id === selectedRecipientId);
@@ -473,7 +442,6 @@ const Transactions: React.FC = () => {
   const hasActiveFilters = () => {
     return (
       selectedAccountId !== undefined ||
-      selectedPaymentMethodId !== undefined ||
       selectedRecipientId !== undefined ||
       selectedBucketId !== undefined ||
       selectedCategoryId !== undefined ||
@@ -483,6 +451,7 @@ const Transactions: React.FC = () => {
     );
   };
 
+  // CHANGED: Calculate totals using accountId directly
   const calculateAccountTotals = () => {
     const transactionsToUse = getFilteredTransactions();
 
@@ -497,11 +466,10 @@ const Transactions: React.FC = () => {
     const accountTotalsMap = new Map<number, number>();
 
     transactionsToUse.forEach((txn) => {
-      const pm = paymentMethods.find((p) => p.id === txn.paymentChannelId);
-      if (pm?.accountId) {
+      if (txn.accountId) {
         const netAmount = txn.amount + (txn.transactionCost || 0);
-        const currentTotal = accountTotalsMap.get(pm.accountId) || 0;
-        accountTotalsMap.set(pm.accountId, currentTotal + netAmount);
+        const currentTotal = accountTotalsMap.get(txn.accountId) || 0;
+        accountTotalsMap.set(txn.accountId, currentTotal + netAmount);
       }
     });
 
@@ -515,7 +483,7 @@ const Transactions: React.FC = () => {
           imageUrl: accountImages.get(accountId),
         };
       })
-      // NEW: Filter out credit accounts unless balance is negative (i.e., overdraft used)
+      // Filter out credit accounts unless balance is negative (i.e., overdraft used)
       .filter((account) => {
         const acct = accounts.find((a) => a.id === account.accountId);
         if (acct?.isCredit) {
@@ -626,20 +594,11 @@ const Transactions: React.FC = () => {
   const getAccountsInTransactions = (): number[] => {
     const accountIds = new Set<number>();
     transactions?.forEach((txn) => {
-      const pm = paymentMethods.find((p) => p.id === txn.paymentChannelId);
-      if (pm?.accountId) {
-        accountIds.add(pm.accountId);
+      if (txn.accountId) {
+        accountIds.add(txn.accountId);
       }
     });
     return Array.from(accountIds);
-  };
-
-  const getPaymentMethodsInTransactions = (): number[] => {
-    const pmIds = new Set<number>();
-    transactions?.forEach((txn) => {
-      pmIds.add(txn.paymentChannelId);
-    });
-    return Array.from(pmIds);
   };
 
   const getBucketsInTransactions = (): number[] => {
@@ -670,14 +629,10 @@ const Transactions: React.FC = () => {
   };
 
   useEffect(() => {
-    // Clear payment method filter when account filter changes
-    // (to prevent showing incompatible payment method)
-    if (selectedAccountId !== undefined) {
-      setSelectedPaymentMethodId(undefined);
-    }
+    // REMOVED: Clear payment method filter when account filter changes
+    // No longer needed since payment methods are gone
   }, [selectedAccountId]);
 
-  // ADD THIS NEW useEffect:
   useEffect(() => {
     // Clear category filter when bucket filter changes
     // (to prevent showing incompatible category)
@@ -874,7 +829,7 @@ const Transactions: React.FC = () => {
           </IonCard>
         )}
 
-        {/* Filters Accordion - UPDATED HEADER WITH CHIPS ON SAME LINE */}
+        {/* Filters Accordion */}
         {!loading && transactions && transactions.length > 0 && (
           <IonAccordionGroup style={{ marginBottom: "16px" }}>
             <IonAccordion value="filters">
@@ -1036,6 +991,7 @@ const Transactions: React.FC = () => {
                         onIonChange={setSelectedAccountId}
                       />
                     </IonCol>
+                    {/* REMOVED: Payment Method filter section */}
                     <IonCol size="12" sizeMd="6">
                       <div
                         style={{
@@ -1045,47 +1001,31 @@ const Transactions: React.FC = () => {
                           marginBottom: "8px",
                         }}
                       >
-                        Payment Method
+                        Recipient
                       </div>
                       <SearchableFilterSelect
-                        label="Payment Method"
-                        placeholder="All Payment Methods"
-                        value={selectedPaymentMethodId}
-                        options={paymentMethods
-                          .filter((pm) => {
-                            const pmsWithTxns =
-                              getPaymentMethodsInTransactions();
-                            const account = accounts.find(
-                              (a) => a.id === pm.accountId
-                            );
-
-                            if (selectedAccountId !== undefined) {
-                              return (
-                                pm.accountId === selectedAccountId &&
-                                pmsWithTxns.includes(pm.id || 0) &&
-                                account?.name
-                              );
-                            }
-
-                            return (
-                              pmsWithTxns.includes(pm.id || 0) && account?.name
-                            );
+                        label="Recipient"
+                        placeholder="All Recipients"
+                        value={selectedRecipientId}
+                        options={recipients
+                          .filter((r) => {
+                            const recsWithTxns = getRecipientsInTransactions();
+                            return r.name && recsWithTxns.includes(r.id || 0);
                           })
-                          .map((pm) => {
-                            const account = accounts.find(
-                              (a) => a.id === pm.accountId
+                          .map((r) => ({
+                            id: r.id,
+                            name: r.name,
+                          }))
+                          .sort((a, b) => {
+                            const countA = getRecipientTransactionCount(
+                              a.id || 0
                             );
-                            const currency = account?.currency
-                              ? `(${account.currency})`
-                              : "(—)";
-                            return {
-                              id: pm.id,
-                              name: `${account?.name || "Unknown"} - ${
-                                pm.name
-                              } ${currency}`,
-                            };
+                            const countB = getRecipientTransactionCount(
+                              b.id || 0
+                            );
+                            return countB - countA;
                           })}
-                        onIonChange={setSelectedPaymentMethodId}
+                        onIonChange={setSelectedRecipientId}
                       />
                     </IonCol>
                   </IonRow>
@@ -1157,44 +1097,6 @@ const Transactions: React.FC = () => {
                             };
                           })}
                         onIonChange={setSelectedCategoryId}
-                      />
-                    </IonCol>
-                  </IonRow>
-                  <IonRow>
-                    <IonCol size="12">
-                      <div
-                        style={{
-                          fontSize: "0.75rem",
-                          fontWeight: "500",
-                          opacity: 0.7,
-                          marginBottom: "8px",
-                        }}
-                      >
-                        Recipient
-                      </div>
-                      <SearchableFilterSelect
-                        label="Recipient"
-                        placeholder="All Recipients"
-                        value={selectedRecipientId}
-                        options={recipients
-                          .filter((r) => {
-                            const recsWithTxns = getRecipientsInTransactions();
-                            return r.name && recsWithTxns.includes(r.id || 0);
-                          })
-                          .map((r) => ({
-                            id: r.id,
-                            name: r.name,
-                          }))
-                          .sort((a, b) => {
-                            const countA = getRecipientTransactionCount(
-                              a.id || 0
-                            );
-                            const countB = getRecipientTransactionCount(
-                              b.id || 0
-                            );
-                            return countB - countA;
-                          })}
-                        onIonChange={setSelectedRecipientId}
                       />
                     </IonCol>
                   </IonRow>
@@ -1447,18 +1349,12 @@ const Transactions: React.FC = () => {
                                       height: "40px",
                                       cursor: "pointer",
                                     }}
-                                    title={getPaymentMethodName(
-                                      txn.paymentChannelId
-                                    )}
+                                    title={getAccountName(txn.accountId)}
                                   >
-                                    {getAccountImage(txn.paymentChannelId) ? (
+                                    {getAccountImage(txn.accountId) ? (
                                       <IonImg
-                                        src={getAccountImage(
-                                          txn.paymentChannelId
-                                        )}
-                                        alt={getPaymentMethodName(
-                                          txn.paymentChannelId
-                                        )}
+                                        src={getAccountImage(txn.accountId)}
+                                        alt={getAccountName(txn.accountId)}
                                       />
                                     ) : (
                                       <div
@@ -1472,9 +1368,7 @@ const Transactions: React.FC = () => {
                                           fontSize: "0.8rem",
                                         }}
                                       >
-                                        {getPaymentMethodName(
-                                          txn.paymentChannelId
-                                        ).charAt(0)}
+                                        {getAccountName(txn.accountId).charAt(0)}
                                       </div>
                                     )}
                                   </IonAvatar>
@@ -1555,7 +1449,7 @@ const Transactions: React.FC = () => {
                                 })}
                               </div>
                               <p style={{ margin: "0" }}>&nbsp;</p>
-                              {/* Edit/Delete/Link buttons below progress bar */}
+                              {/* Edit/Delete buttons */}
                               <IonRow className="item-actions">
                                 <IonCol className="item-actions-container">
                                   <IonButton

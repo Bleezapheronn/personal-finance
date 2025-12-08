@@ -16,7 +16,7 @@ import {
   IonCheckbox,
 } from "@ionic/react";
 import { close } from "ionicons/icons";
-import { SmsImportTemplate, PaymentMethod } from "../db";
+import { SmsImportTemplate, Account } from "../db";
 import { useSmsParser, ParsedSmsData } from "../hooks/useSmsParser";
 import { SelectableDropdown } from "./SelectableDropdown";
 
@@ -25,8 +25,8 @@ interface SmsImportModalProps {
   onClose: () => void;
   onImport: (parsedData: ParsedSmsData) => void;
   smsTemplates: SmsImportTemplate[];
-  paymentMethods: PaymentMethod[];
-  paymentMethodId?: number;
+  accounts: Account[]; // CHANGED: from paymentMethods to accounts
+  accountId?: number; // CHANGED: from paymentMethodId to accountId
 }
 
 export const SmsImportModal: React.FC<SmsImportModalProps> = ({
@@ -34,8 +34,8 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
   onClose,
   onImport,
   smsTemplates,
-  paymentMethods,
-  paymentMethodId,
+  accounts, // CHANGED
+  accountId, // CHANGED
 }) => {
   const [smsText, setSmsText] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<
@@ -61,7 +61,7 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
     parseError: smsParseError,
     previewParse,
     clearParsedData,
-  } = useSmsParser(smsTemplates, paymentMethodId);
+  } = useSmsParser(smsTemplates, accountId); // CHANGED: accountId
 
   const handleClose = () => {
     setSmsText("");
@@ -143,15 +143,15 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
                       label: "Auto-detect from all templates",
                     },
                     ...smsTemplates.map((template) => {
-                      const paymentMethodName = template.paymentMethodId
-                        ? paymentMethods.find(
-                            (pm) => pm.id === template.paymentMethodId
-                          )?.name
+                      // CHANGED: Get account name directly from accountId
+                      const accountName = template.accountId
+                        ? accounts.find((a) => a.id === template.accountId)
+                            ?.name
                         : null;
                       return {
                         value: template.id!.toString(),
-                        label: paymentMethodName
-                          ? `${template.name} (${paymentMethodName})`
+                        label: accountName
+                          ? `${template.name} (${accountName})`
                           : template.name,
                       };
                     }),
