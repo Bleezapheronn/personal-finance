@@ -20,14 +20,7 @@ import {
   IonCardContent,
 } from "@ionic/react";
 import { close, trash } from "ionicons/icons";
-import {
-  db,
-  Budget,
-  Category,
-  Bucket,
-  PaymentMethod,
-  Transaction,
-} from "../db";
+import { db, Budget, Category, Bucket, Account, Transaction } from "../db";
 
 interface BudgetOccurrence {
   budgetId: number;
@@ -63,7 +56,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
 
   // Load lookup data when modal opens
   useEffect(() => {
@@ -74,15 +67,15 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
 
   const loadLookupData = async () => {
     try {
-      const [cats, bkts, pms] = await Promise.all([
+      const [cats, bkts, accts] = await Promise.all([
         db.categories.toArray(),
         db.buckets.toArray(),
-        db.paymentMethods.toArray(),
+        db.accounts.toArray(),
       ]);
 
       setCategories(cats);
       setBuckets(bkts);
-      setPaymentMethods(pms);
+      setAccounts(accts);
     } catch (err) {
       console.error("Failed to load lookup data:", err);
     }
@@ -109,14 +102,29 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
     budgetOccurrence.amountPaid,
   ]);
 
+  const getRemainingBudgetAmount = useCallback((): number => {
+    // Calculate remaining based on budget amount ONLY (excluding transaction cost)
+    const budgetAmountAbsolute = Math.abs(budgetOccurrence.budget.amount);
+    const amountPaid = budgetOccurrence.amountPaid;
+    const paidAbsAmount = Math.abs(amountPaid);
+
+    // Calculate remaining as positive value
+    const remainingAbs = budgetAmountAbsolute - paidAbsAmount;
+
+    // Return the remaining amount (positive means still need to pay)
+    return remainingAbs;
+  }, [budgetOccurrence.budget.amount, budgetOccurrence.amountPaid]);
+
   // Reset form when modal opens
   useEffect(() => {
     if (isOpen) {
       setTransactionReference("");
       setTransactionTime("");
-      // Pre-fill with remaining amount (use absolute value)
-      const remaining = getRemainingAmount();
-      setTransactionAmount(Math.abs(remaining).toString());
+      // Pre-fill with remaining budget amount ONLY if remaining > 0
+      const remainingBudget = getRemainingBudgetAmount();
+      setTransactionAmount(
+        remainingBudget > 0 ? Math.abs(remainingBudget).toString() : ""
+      );
       // Pre-fill transaction cost with budget's transaction cost if available
       setTransactionCost(
         budgetOccurrence.budget.transactionCost
@@ -126,15 +134,21 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
       setErrorMsg("");
       setSuccessMsg("");
     }
-  }, [isOpen, getRemainingAmount, budgetOccurrence.budget.transactionCost]);
+  }, [
+    isOpen,
+    getRemainingBudgetAmount,
+    budgetOccurrence.budget.transactionCost,
+  ]);
 
   const getBucketName = (categoryId: number) => {
     const cat = categories.find((c) => c.id === categoryId);
     return buckets.find((b) => b.id === cat?.bucketId)?.name || "";
   };
 
-  const getPaymentMethodName = (paymentMethodId: number) =>
-    paymentMethods.find((p) => p.id === paymentMethodId)?.name || "—";
+  const getAccountName = (accountId: number | undefined) => {
+    if (!accountId) return "—";
+    return accounts.find((a) => a.id === accountId)?.name || "—";
+  };
 
   const handleAddTransaction = async () => {
     setErrorMsg("");
@@ -199,16 +213,16 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
           budgetOccurrence.budget.amount < 0 ? -Math.abs(cost) : Math.abs(cost);
       }
 
-      // Create transaction with occurrenceDate and description from budget
+      // Create transaction with accountId from budget
       const newTransaction: Omit<Transaction, "id"> = {
         categoryId: budgetOccurrence.budget.categoryId,
-        paymentChannelId: budgetOccurrence.budget.paymentChannelId,
+        accountId: budgetOccurrence.budget.accountId,
         recipientId: budgetOccurrence.budget.recipientId || 0,
         date: transactionDate,
         amount: signedAmount,
         transactionCost: signedCost,
         transactionReference: transactionReference.trim() || undefined,
-        description: budgetOccurrence.budget.description, // NEW: Copy budget description
+        description: budgetOccurrence.budget.description,
         budgetId: budgetOccurrence.budgetId,
         occurrenceDate: budgetOccurrence.dueDate,
       };
@@ -282,9 +296,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                   >
                     <span>
                       {getBucketName(budgetOccurrence.budget.categoryId)} •{" "}
-                      {getPaymentMethodName(
-                        budgetOccurrence.budget.paymentChannelId
-                      )}
+                      {getAccountName(budgetOccurrence.budget.accountId)}
                     </span>
                     <span>{budgetOccurrence.dueDate.toLocaleDateString()}</span>
                   </div>

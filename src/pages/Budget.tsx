@@ -146,9 +146,17 @@ const BudgetPage: React.FC = () => {
               let currentDueDate = new Date(budget.dueDate);
               currentDueDate.setHours(0, 0, 0, 0);
 
+              let occurrenceCount = 0;
               while (currentDueDate <= txnDate) {
+                occurrenceCount++;
+
                 occurrenceDate = new Date(currentDueDate);
                 currentDueDate = getNextOccurrence(currentDueDate, budget);
+
+                // Safety check to prevent infinite loops
+                if (occurrenceCount > 50) {
+                  break;
+                }
               }
             }
 
@@ -749,6 +757,7 @@ const BudgetPage: React.FC = () => {
       calculateBudgetedAmounts(budgetSummaryPeriod);
 
     const netBudgeted = totalIncome - totalExpense;
+    const netPaid = incomePaid - expensePaid;
 
     const expensePercentage =
       totalExpense > 0 ? Math.min((expensePaid / totalExpense) * 100, 100) : 0;
@@ -819,6 +828,13 @@ const BudgetPage: React.FC = () => {
                     Net Total
                   </IonText>
                   <IonText className={`metric-value ${netColor}`}>
+                    {Math.abs(netPaid).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </IonText>
+                  <IonText color="medium" className="metric-subtext">
+                    of{" "}
                     {Math.abs(netBudgeted).toLocaleString(undefined, {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
