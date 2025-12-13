@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { SmsImportTemplate } from "../db";
+import { SmsImportTemplate, db, Recipient } from "../db";
 
 export interface ParsedSmsData {
   reference?: string;
@@ -11,11 +11,12 @@ export interface ParsedSmsData {
   cost?: string;
   isIncome?: boolean;
   templateId?: number;
+  recipientId?: number; // NEW: Resolved recipient ID if matched by name/alias
 }
 
 export const useSmsParser = (
   smsTemplates: SmsImportTemplate[],
-  accountId?: number // CHANGED from paymentMethodId
+  accountId?: number
 ) => {
   const [parsedPreview, setParsedPreview] = useState<ParsedSmsData | null>(
     null
@@ -49,11 +50,46 @@ export const useSmsParser = (
       .join(" ");
   };
 
+  // NEW: Find recipient by name or alias (case-insensitive)
+  const findRecipientByNameOrAlias = async (
+    recipientName: string
+  ): Promise<Recipient | null> => {
+    if (!recipientName) return null;
+
+    try {
+      const allRecipients = await db.recipients.toArray();
+      const searchName = recipientName.toLowerCase().trim();
+
+      // First check exact name match
+      const exactMatch = allRecipients.find(
+        (r) => r.name.toLowerCase() === searchName
+      );
+      if (exactMatch) return exactMatch;
+
+      // Then check aliases
+      for (const recipient of allRecipients) {
+        if (recipient.aliases) {
+          const aliasesList = recipient.aliases
+            .split(";")
+            .map((alias) => alias.toLowerCase().trim());
+          if (aliasesList.includes(searchName)) {
+            return recipient;
+          }
+        }
+      }
+
+      return null;
+    } catch (err) {
+      console.error("Error finding recipient by name/alias:", err);
+      return null;
+    }
+  };
+
   // Try to parse SMS with a specific template
-  const tryParseWithTemplate = (
+  const tryParseWithTemplate = async (
     sms: string,
     template: SmsImportTemplate
-  ): ParsedSmsData | null => {
+  ): Promise<ParsedSmsData | null> => {
     try {
       const result: ParsedSmsData = {};
 
@@ -80,7 +116,18 @@ export const useSmsParser = (
 
       // Extract recipient/sender name (convert to title case)
       const recipientName = applyPattern(sms, template.recipientNamePattern);
-      if (recipientName) result.recipientName = toTitleCase(recipientName);
+      if (recipientName) {
+        const titleCaseRecipientName = toTitleCase(recipientName);
+        result.recipientName = titleCaseRecipientName;
+
+        // NEW: Try to match against existing recipients and aliases
+        const matchedRecipient = await findRecipientByNameOrAlias(
+          titleCaseRecipientName
+        );
+        if (matchedRecipient) {
+          result.recipientId = matchedRecipient.id;
+        }
+      }
 
       // Extract phone number
       const recipientPhone = applyPattern(sms, template.recipientPhonePattern);
@@ -133,41 +180,83 @@ export const useSmsParser = (
       // Add template ID
       result.templateId = template.id;
 
+      // Add logging for debugging
+      console.log(`[${template.name}] Parsed:`, {
+        isIncome: result.isIncome,
+        reference: result.reference,
+        amount: result.amount,
+        recipientName: result.recipientName,
+        recipientPhone: result.recipientPhone,
+        cost: result.cost,
+        date: result.date,
+        time: result.time,
+        fieldCount: Object.keys(result).length - 1, // Exclude templateId
+      });
+
       // Only return if we extracted at least some data (more than just templateId)
-      return Object.keys(result).length > 1 ? result : null;
+      const hasData = Object.keys(result).length > 1;
+      if (!hasData) {
+        console.log(`[${template.name}] Rejected: No fields parsed`);
+      }
+      return hasData ? result : null;
     } catch (err) {
       console.error("Error parsing with template:", template.name, err);
       return null;
     }
   };
 
-  // Parse SMS using database templates
+  // Parse SMS using database templates with scoring
   const parseSms = async (sms: string): Promise<ParsedSmsData | null> => {
     try {
-      // If we have a selected account, try its template first - CHANGED from paymentMethodId
+      let bestResult: (ParsedSmsData & { score: number }) | null = null;
+
+      // If we have a selected account, try its template first
       if (accountId) {
         const accountTemplate = smsTemplates.find(
-          (t) => t.accountId === accountId // CHANGED
+          (t) => t.accountId === accountId
         );
         if (accountTemplate) {
-          const result = tryParseWithTemplate(sms, accountTemplate);
-          if (result) return { ...result, templateId: accountTemplate.id };
+          const result = await tryParseWithTemplate(sms, accountTemplate);
+          if (result && result.amount) {
+            // Amount is required to be considered a valid match
+            return { ...result, templateId: accountTemplate.id };
+          }
         }
       }
 
-      // Try all active templates
+      // Try all templates and score each one
       for (const template of smsTemplates) {
-        // Skip if this is an account-specific template and doesn't match - CHANGED
-        if (template.accountId && template.accountId !== accountId) {
-          // CHANGED
+        const result = await tryParseWithTemplate(sms, template);
+
+        // Amount is required - skip if not present
+        if (!result || !result.amount) {
           continue;
         }
 
-        const result = tryParseWithTemplate(sms, template);
-        if (result) return { ...result, templateId: template.id };
+        // Calculate score based on number of parsed fields
+        let score = 0;
+        if (result.isIncome !== undefined) score++;
+        if (result.reference) score++;
+        if (result.amount) score++;
+        if (result.cost) score++;
+        if (result.recipientName) score++;
+        if (result.recipientPhone) score++;
+        if (result.date) score++;
+        if (result.time) score++;
+
+        // Keep track of the best result (first one wins on tie)
+        if (bestResult === null || score > bestResult.score) {
+          bestResult = { ...result, templateId: template.id, score };
+        }
       }
 
-      // No template matched
+      // Return best result without the score property
+      if (bestResult) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { score, ...resultWithoutScore } = bestResult;
+        return resultWithoutScore;
+      }
+
       return null;
     } catch (err) {
       console.error("Error parsing SMS:", err);
@@ -191,7 +280,7 @@ export const useSmsParser = (
     if (selectedTemplateId) {
       const template = smsTemplates.find((t) => t.id === selectedTemplateId);
       if (template) {
-        result = tryParseWithTemplate(smsText, template);
+        result = await tryParseWithTemplate(smsText, template);
       }
     } else {
       // Try all templates (existing behavior)

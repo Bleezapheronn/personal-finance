@@ -120,6 +120,18 @@ export const importTransactionsFromCSV = async (
         let recipient = recipients.find(
           (r) => r.name?.toLowerCase() === recipientName.toLowerCase()
         );
+
+        // NEW: Also check aliases
+        if (!recipient) {
+          recipient = recipients.find((r) => {
+            if (!r.aliases) return false;
+            const aliasesList = r.aliases
+              .split(";")
+              .map((alias) => alias.toLowerCase().trim());
+            return aliasesList.includes(recipientName.toLowerCase());
+          });
+        }
+
         if (!recipient) {
           const now = new Date();
           const newRecipientId = await db.recipients.add({

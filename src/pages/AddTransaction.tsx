@@ -754,8 +754,12 @@ const AddTransaction: React.FC = () => {
       }
     }
 
-    // Handle recipient
-    if (parsedData.recipientName) {
+    // Handle recipient - NEW: Check recipientId first (from alias matching)
+    if (parsedData.recipientId) {
+      // Recipient was already matched by name or alias in useSmsParser
+      setRecipientId(parsedData.recipientId);
+    } else if (parsedData.recipientName) {
+      // Fallback: Check if recipient exists by name
       const existingRecipient = sortedRecipients.find(
         (r) => r.name?.toLowerCase() === parsedData.recipientName?.toLowerCase()
       );
@@ -763,6 +767,7 @@ const AddTransaction: React.FC = () => {
       if (existingRecipient) {
         setRecipientId(existingRecipient.id);
       } else {
+        // No match found, open modal to create new recipient
         setShowRecipientModal(true);
         sessionStorage.setItem(
           "smsRecipientData",

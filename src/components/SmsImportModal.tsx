@@ -169,7 +169,7 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
             <IonCol>
               <IonLabel position="stacked">Paste SMS Message</IonLabel>
               <textarea
-                rows={8}
+                rows={5}
                 style={{
                   width: "100%",
                   padding: "8px",
@@ -345,40 +345,12 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
                             {parsedPreview.isIncome ? "Sender" : "Recipient"}:
                           </strong>{" "}
                           {parsedPreview.recipientName}
-                          {parsedPreview.recipientPhone &&
-                            checkedFields.recipientPhone && (
-                              <> ({parsedPreview.recipientPhone})</>
-                            )}
+                          {parsedPreview.recipientPhone && (
+                            <> ({parsedPreview.recipientPhone})</>
+                          )}
                         </span>
                       </div>
                     )}
-                    {parsedPreview.recipientPhone &&
-                      parsedPreview.recipientName && (
-                        <div
-                          style={{
-                            marginBottom: "8px",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "8px",
-                            marginLeft: "32px",
-                          }}
-                        >
-                          <IonCheckbox
-                            checked={checkedFields.recipientPhone}
-                            onIonChange={(e) =>
-                              handleCheckboxChange(
-                                "recipientPhone",
-                                e.detail.checked
-                              )
-                            }
-                            aria-label="Include phone number"
-                          />
-                          <span>
-                            <strong>Phone:</strong>{" "}
-                            {parsedPreview.recipientPhone}
-                          </span>
-                        </div>
-                      )}
                     {parsedPreview.date && (
                       <div
                         style={{
@@ -393,24 +365,21 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
                           onIonChange={(e) =>
                             handleCheckboxChange("date", e.detail.checked)
                           }
-                          aria-label="Include date"
+                          aria-label="Include date and time"
                         />
                         <span>
-                          <strong>Date:</strong> {parsedPreview.date}
-                          {parsedPreview.time && checkedFields.time && (
-                            <> at {parsedPreview.time}</>
-                          )}
+                          <strong>Date/Time:</strong> {parsedPreview.date}
+                          {parsedPreview.time && <> at {parsedPreview.time}</>}
                         </span>
                       </div>
                     )}
-                    {parsedPreview.time && parsedPreview.date && (
+                    {parsedPreview.time && !parsedPreview.date && (
                       <div
                         style={{
                           marginBottom: "8px",
                           display: "flex",
                           alignItems: "center",
                           gap: "8px",
-                          marginLeft: "32px",
                         }}
                       >
                         <IonCheckbox

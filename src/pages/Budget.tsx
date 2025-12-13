@@ -41,6 +41,8 @@ import {
   bag,
   chevronBack,
   chevronForward,
+  downloadOutline,
+  cloudUploadOutline,
 } from "ionicons/icons";
 import {
   db,
@@ -54,6 +56,11 @@ import {
 import { CompleteBudgetModal } from "../components/CompleteBudgetModal";
 import { LinkPastTransactionsModal } from "../components/LinkPastTransactionsModal";
 import { findMatchingTransactions } from "../utils/transactionMatching";
+import {
+  exportBudgetsToCSV,
+  downloadBudgetsCSV,
+} from "../utils/budgetCsvExport";
+import { ImportModal } from "../components/ImportModal";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -82,6 +89,7 @@ const BudgetPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [showImportModal, setShowImportModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -952,6 +960,33 @@ const BudgetPage: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Budget</IonTitle>
+          <IonButtons slot="end">
+            <IonButton
+              onClick={async () => {
+                try {
+                  const csv = await exportBudgetsToCSV();
+                  const filename = `budgets-${
+                    new Date().toISOString().split("T")[0]
+                  }.csv`;
+                  downloadBudgetsCSV(csv, filename);
+                  setSuccessMsg("Budgets exported successfully!");
+                  setShowSuccessToast(true);
+                } catch (err) {
+                  console.error("Export failed:", err);
+                  setError("Failed to export budgets");
+                }
+              }}
+              title="Export Budgets to CSV"
+            >
+              <IonIcon icon={downloadOutline} />
+            </IonButton>
+            <IonButton
+              onClick={() => setShowImportModal(true)}
+              title="Import budgets from CSV"
+            >
+              <IonIcon icon={cloudUploadOutline} />
+            </IonButton>
+          </IonButtons>
         </IonToolbar>
       </IonHeader>
 
@@ -1553,6 +1588,17 @@ const BudgetPage: React.FC = () => {
         categories={categories}
         recipients={recipients}
         occurrenceDate={budgetOccurrenceDateForLinking || new Date()}
+      />
+
+      {/* Import Modal */}
+      <ImportModal
+        isOpen={showImportModal}
+        onDidDismiss={() => setShowImportModal(false)}
+        onImportComplete={() => {
+          setShowImportModal(false);
+          // Reload budgets
+          window.location.reload();
+        }}
       />
     </IonPage>
   );

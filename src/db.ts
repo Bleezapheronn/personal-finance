@@ -95,6 +95,7 @@ export interface PaymentMethod {
 export interface Recipient {
   id?: number;
   name: string;
+  aliases?: string; // NEW: Semi-colon separated list of aliases
   email?: string;
   phone?: string;
   tillNumber?: string;

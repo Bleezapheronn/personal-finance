@@ -41,9 +41,10 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
   checkForDuplicate,
 }) => {
   const [name, setName] = useState("");
+  const [aliases, setAliases] = useState(""); // NEW: Aliases field
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [till, setTill] = useState("");
+  const [tillNumber, setTillNumber] = useState("");
   const [paybill, setPaybill] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [description, setDescription] = useState("");
@@ -54,9 +55,10 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
 
   const resetForm = () => {
     setName("");
+    setAliases(""); // NEW
     setEmail("");
     setPhone("");
-    setTill("");
+    setTillNumber("");
     setPaybill("");
     setAccountNumber("");
     setDescription("");
@@ -68,9 +70,10 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
       if (editingRecipient) {
         // EDIT MODE: Load existing recipient data
         setName(editingRecipient.name);
+        setAliases(editingRecipient.aliases || ""); // NEW
         setEmail(editingRecipient.email || "");
         setPhone(editingRecipient.phone || "");
-        setTill(editingRecipient.tillNumber || "");
+        setTillNumber(editingRecipient.tillNumber || "");
         setPaybill(editingRecipient.paybill || "");
         setAccountNumber(editingRecipient.accountNumber || "");
         setDescription(editingRecipient.description || "");
@@ -95,7 +98,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
     }
   }, [isOpen, editingRecipient]);
 
-  const handleSave = async () => {
+  const handleSaveRecipient = async () => {
     setErrorMsg("");
 
     if (!name.trim()) {
@@ -133,9 +136,10 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
         // UPDATE MODE
         await db.recipients.update(editingRecipient.id, {
           name: name.trim(),
+          aliases: aliases.trim() || undefined, // NEW: Store aliases or undefined
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
-          tillNumber: till.trim() || undefined,
+          tillNumber: tillNumber.trim() || undefined,
           paybill: paybill.trim() || undefined,
           accountNumber: accountNumber.trim() || undefined,
           description: description.trim() || undefined,
@@ -150,9 +154,10 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
         // ADD MODE
         const newRecipient: Omit<Recipient, "id"> = {
           name: name.trim(),
+          aliases: aliases.trim() || undefined, // NEW: Store aliases or undefined
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
-          tillNumber: till.trim() || undefined,
+          tillNumber: tillNumber.trim() || undefined,
           paybill: paybill.trim() || undefined,
           accountNumber: accountNumber.trim() || undefined,
           description: description.trim() || undefined,
@@ -258,15 +263,18 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
               </IonCol>
             </IonRow>
 
+            {/* NEW: Aliases field */}
             <IonRow>
               <IonCol>
                 <div className="form-input-wrapper">
-                  <label className="form-label">Phone (optional)</label>
+                  <label className="form-label">
+                    Aliases (optional, separated by semicolon)
+                  </label>
                   <input
-                    type="tel"
-                    placeholder="e.g., 0712345678"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    type="text"
+                    placeholder="e.g. Paypal Withdraw 841272; PP Account"
+                    value={aliases}
+                    onChange={(e) => setAliases(e.target.value)}
                     disabled={loading}
                     style={{
                       padding: "12px",
@@ -277,8 +285,22 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
                       fontSize: "0.95rem",
                     }}
                   />
+                  <p
+                    style={{
+                      fontSize: "0.75rem",
+                      color: "#999",
+                      marginTop: "4px",
+                      marginBottom: "0",
+                    }}
+                  >
+                    Use semicolons to separate multiple aliases. These will
+                    match during SMS import.
+                  </p>
                 </div>
               </IonCol>
+            </IonRow>
+
+            <IonRow>
               <IonCol>
                 <div className="form-input-wrapper">
                   <label className="form-label">Email (optional)</label>
@@ -304,12 +326,32 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
             <IonRow>
               <IonCol>
                 <div className="form-input-wrapper">
+                  <label className="form-label">Phone (optional)</label>
+                  <input
+                    type="tel"
+                    placeholder="e.g., 0712345678"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    disabled={loading}
+                    style={{
+                      padding: "12px",
+                      border: "1px solid var(--ion-color-medium)",
+                      borderRadius: "4px",
+                      backgroundColor: "var(--ion-background-color)",
+                      color: "inherit",
+                      fontSize: "0.95rem",
+                    }}
+                  />
+                </div>
+              </IonCol>
+              <IonCol>
+                <div className="form-input-wrapper">
                   <label className="form-label">Till Number (optional)</label>
                   <input
                     type="text"
                     placeholder="e.g., 123456"
-                    value={till}
-                    onChange={(e) => setTill(e.target.value)}
+                    value={tillNumber}
+                    onChange={(e) => setTillNumber(e.target.value)}
                     disabled={loading}
                     style={{
                       padding: "12px",
@@ -379,7 +421,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
               <IonCol>
                 <IonButton
                   expand="block"
-                  onClick={handleSave}
+                  onClick={handleSaveRecipient}
                   disabled={loading}
                 >
                   {editingRecipient ? "Update Recipient" : "Add Recipient"}
