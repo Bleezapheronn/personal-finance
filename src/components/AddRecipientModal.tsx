@@ -114,7 +114,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
     try {
       setLoading(true);
 
-      // Check for duplicates only when adding new recipient
+      // Check for duplicate name when adding NEW recipient
       if (!editingRecipient?.id && checkForDuplicate) {
         const duplicate = await checkForDuplicate(
           name.trim(),
@@ -130,13 +130,61 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
         }
       }
 
+      // NEW: When EDITING, check if new name duplicates another recipient
+      if (editingRecipient?.id && checkForDuplicate) {
+        const duplicate = await checkForDuplicate(
+          name.trim(),
+          phone.trim(),
+          paybill.trim(),
+          accountNumber.trim(),
+          editingRecipient.id // Exclude current recipient from check
+        );
+
+        if (duplicate) {
+          setErrorMsg(
+            `A recipient named "${duplicate.name}" already exists. Please use a different name.`
+          );
+          return;
+        }
+      }
+
+      // NEW: Check for duplicate aliases (don't allow same alias across recipients)
+      if (aliases.trim()) {
+        const aliasesList = aliases
+          .split(";")
+          .map((alias) => alias.toLowerCase().trim())
+          .filter((alias) => alias.length > 0);
+
+        const allRecipients = await db.recipients.toArray();
+
+        for (const alias of aliasesList) {
+          for (const recipient of allRecipients) {
+            // Skip checking against self when editing
+            if (editingRecipient?.id === recipient.id) continue;
+
+            if (recipient.aliases) {
+              const existingAliases = recipient.aliases
+                .split(";")
+                .map((a) => a.toLowerCase().trim());
+
+              if (existingAliases.includes(alias)) {
+                setErrorMsg(
+                  `The alias "${alias}" is already used by "${recipient.name}". Please use a different alias.`
+                );
+                return;
+              }
+            }
+          }
+        }
+      }
+
       const now = new Date();
 
       if (editingRecipient?.id) {
         // UPDATE MODE
         await db.recipients.update(editingRecipient.id, {
           name: name.trim(),
-          aliases: aliases.trim() || undefined, // NEW: Store aliases or undefined
+          aliases: aliases.trim() || undefined,
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
           tillNumber: tillNumber.trim() || undefined,
@@ -154,7 +202,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
         // ADD MODE
         const newRecipient: Omit<Recipient, "id"> = {
           name: name.trim(),
-          aliases: aliases.trim() || undefined, // NEW: Store aliases or undefined
+          aliases: aliases.trim() || undefined,
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
           tillNumber: tillNumber.trim() || undefined,

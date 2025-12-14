@@ -29,9 +29,12 @@ import {
   checkmarkCircleOutline,
   closeCircleOutline,
   closeOutline,
+  warningOutline,
 } from "ionicons/icons";
 import { db } from "../db";
 import { AddRecipientModal } from "../components/AddRecipientModal";
+import { findAllDuplicatePairs } from "../utils/recipientMerge";
+import { MergeRecipientsModal } from "../components/MergeRecipientsModal";
 import type { Recipient } from "../db";
 
 type DeleteState =
@@ -64,6 +67,10 @@ const RecipientsManagement: React.FC = () => {
   const [showDuplicateAlert, setShowDuplicateAlert] = useState(false);
 
   const [deleteState, setDeleteState] = useState<DeleteState>({ type: "none" });
+  const [duplicatePairs, setDuplicatePairs] = useState<
+    Array<[Recipient, Recipient]>
+  >([]);
+  const [showMergeModal, setShowMergeModal] = useState(false);
 
   useEffect(() => {
     fetchRecipients();
@@ -99,6 +106,10 @@ const RecipientsManagement: React.FC = () => {
       });
 
       setRecipients(sorted);
+
+      // NEW: Find duplicate pairs
+      const pairs = findAllDuplicatePairs(sorted);
+      setDuplicatePairs(pairs);
     } catch (err) {
       console.error("Error fetching recipients:", err);
       setToastMessage("Failed to load recipients");
@@ -124,63 +135,14 @@ const RecipientsManagement: React.FC = () => {
   };
 
   /**
-   * handleEditRecipient - Opens modal with recipient data
+   * handleEditRecipient - Opens modal to edit recipient
+   * Removed: old fuzzy duplicate detection that showed false positives
    */
   const handleEditRecipient = (recipient: Recipient) => {
     setEditingRecipient(recipient);
     setShowAddRecipientModal(true);
-  };
-
-  /**
-   * checkRecipientUsage - Determines if recipient has been used in transactions
-   */
-  const checkRecipientUsage = async (recipientId: number): Promise<boolean> => {
-    try {
-      const transactions = await db.transactions.toArray();
-      return transactions.some((txn) => txn.recipientId === recipientId);
-    } catch (error) {
-      console.error("Error checking recipient usage:", error);
-      return false;
-    }
-  };
-
-  /**
-   * initiateDeleteRecipient - Check recipient usage and show appropriate alert
-   */
-  const initiateDeleteRecipient = async (recipient: Recipient) => {
-    try {
-      setLoading(true);
-      const isUsed = await checkRecipientUsage(recipient.id!);
-      const isDeactivated = recipient.isActive === false;
-
-      if (isUsed && !isDeactivated) {
-        // Recipient is ACTIVE and has been used in transactions
-        setDeleteState({
-          type: "used",
-          recipientId: recipient.id!,
-          recipientName: recipient.name,
-        });
-      } else if (isUsed && isDeactivated) {
-        // Recipient is DEACTIVATED and has been used in transactions
-        // Show informational alert, no deactivate option
-        setDeleteState({
-          type: "used_deactivated",
-          recipientId: recipient.id!,
-          recipientName: recipient.name,
-        });
-      } else {
-        // Recipient is unused, safe to delete
-        setDeleteState({
-          type: "delete",
-          recipientId: recipient.id!,
-          recipientName: recipient.name,
-        });
-      }
-    } catch (error) {
-      console.error("Error checking recipient usage:", error);
-    } finally {
-      setLoading(false);
-    }
+    // Removed: detectPotentialDuplicates() call that was showing false alerts
+    // The banner notification already shows real duplicates using findAllDuplicatePairs()
   };
 
   /**
@@ -357,6 +319,41 @@ const RecipientsManagement: React.FC = () => {
     }
   };
 
+  /**
+   * initiateDeleteRecipient - Checks if recipient has been used in transactions
+   * If used: offer to deactivate instead
+   * If unused: confirm deletion
+   */
+  const initiateDeleteRecipient = async (recipient: Recipient) => {
+    const transactionCount = recipientCounts.get(recipient.id!) || 0;
+
+    if (transactionCount > 0) {
+      // Recipient has been used in transactions
+      if (recipient.isActive === false) {
+        // Already inactive, can't delete
+        setDeleteState({
+          type: "used_deactivated",
+          recipientId: recipient.id!,
+          recipientName: recipient.name,
+        });
+      } else {
+        // Active and used, offer to deactivate
+        setDeleteState({
+          type: "used",
+          recipientId: recipient.id!,
+          recipientName: recipient.name,
+        });
+      }
+    } else {
+      // Recipient has never been used, safe to delete
+      setDeleteState({
+        type: "delete",
+        recipientId: recipient.id!,
+        recipientName: recipient.name,
+      });
+    }
+  };
+
   // Determine which alert to show
 
   return (
@@ -371,6 +368,58 @@ const RecipientsManagement: React.FC = () => {
       </IonHeader>
 
       <IonContent className="ion-padding">
+        {/* NEW: DUPLICATE NOTIFICATION BANNER */}
+        {duplicatePairs.length > 0 && (
+          <IonCard
+            style={{
+              marginBottom: "16px",
+              backgroundColor: "#fff5f5",
+              borderLeft: "4px solid #eb445c",
+            }}
+          >
+            <IonCardContent>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "12px" }}
+              >
+                <IonIcon
+                  icon={warningOutline}
+                  style={{ color: "#eb445c", fontSize: "1.5rem" }}
+                />
+                <div style={{ flex: 1 }}>
+                  <p
+                    style={{
+                      margin: "0 0 8px 0",
+                      fontWeight: "600",
+                      fontSize: "0.95rem",
+                    }}
+                  >
+                    {duplicatePairs.length} Duplicate Recipient Pair
+                    {duplicatePairs.length !== 1 ? "s" : ""} Found
+                  </p>
+                  <p
+                    style={{
+                      margin: "0",
+                      fontSize: "0.85rem",
+                      color: "#666",
+                    }}
+                  >
+                    You have {duplicatePairs.length} duplicate recipient
+                    {duplicatePairs.length !== 1 ? "s" : ""} that can be merged
+                    to keep your data clean.
+                  </p>
+                </div>
+                <IonButton
+                  onClick={() => setShowMergeModal(true)}
+                  size="small"
+                  color="danger"
+                >
+                  Merge Now
+                </IonButton>
+              </div>
+            </IonCardContent>
+          </IonCard>
+        )}
+
         {loading && <IonSpinner />}
 
         {/* SEARCH & SORT CONTROLS */}
@@ -653,6 +702,20 @@ const RecipientsManagement: React.FC = () => {
             setShowDuplicateAlert(true);
           }}
           checkForDuplicate={checkForDuplicateRecipient}
+        />
+
+        {/* MERGE MODAL */}
+        <MergeRecipientsModal
+          isOpen={showMergeModal}
+          onClose={() => setShowMergeModal(false)}
+          duplicatePairs={duplicatePairs}
+          recipientCounts={recipientCounts}
+          onMergeComplete={() => {
+            setShowMergeModal(false);
+            setToastMessage("Recipients merged successfully!");
+            setShowToast(true);
+            fetchRecipients(); // Refresh to remove merged recipients
+          }}
         />
 
         {/* FAB BUTTON FOR ADDING RECIPIENTS */}
