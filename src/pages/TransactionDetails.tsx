@@ -24,15 +24,7 @@ import {
 } from "@ionic/react";
 import { useParams, useHistory } from "react-router-dom";
 import { createOutline, calendar, trash } from "ionicons/icons";
-import {
-  db,
-  Transaction,
-  Category,
-  PaymentMethod,
-  Recipient,
-  Account,
-  Budget,
-} from "../db";
+import { db, Transaction, Category, Recipient, Account, Budget } from "../db";
 
 const TransactionDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -40,9 +32,6 @@ const TransactionDetails: React.FC = () => {
   const [txn, setTxn] = useState<Transaction | null>(null);
   const [history, setHistory] = useState<Transaction[]>([]);
   const [category, setCategory] = useState<Category | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(
-    null
-  );
   const [account, setAccount] = useState<Account | null>(null);
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [budget, setBudget] = useState<Budget | null>(null);
@@ -54,21 +43,15 @@ const TransactionDetails: React.FC = () => {
       setTxn(transaction || null);
       if (transaction) {
         // Fetch related data
-        const [cat, pm, rec, acc] = await Promise.all([
+        const [cat, rec, acc] = await Promise.all([
           db.categories.get(transaction.categoryId),
-          db.paymentMethods.get(transaction.paymentChannelId),
           db.recipients.get(transaction.recipientId),
-          db.paymentMethods
-            .get(transaction.paymentChannelId)
-            .then(async (pm) => {
-              if (pm?.accountId) {
-                return db.accounts.get(pm.accountId);
-              }
-              return null;
-            }),
+          // CHANGED: Fetch account directly using accountId instead of going through paymentMethods
+          transaction.accountId
+            ? db.accounts.get(transaction.accountId)
+            : Promise.resolve(null),
         ]);
         setCategory(cat || null);
-        setPaymentMethod(pm || null);
         setRecipient(rec || null);
         setAccount(acc || null);
 
@@ -194,7 +177,7 @@ const TransactionDetails: React.FC = () => {
             })}
           </div>
           <div style={{ color: "#888", fontSize: "0.9rem" }}>
-            Via {account?.name || "—"} - {paymentMethod?.name || "—"}
+            Via {account?.name || "—"}
           </div>
         </div>
 

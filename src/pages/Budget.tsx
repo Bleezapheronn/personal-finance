@@ -1033,18 +1033,6 @@ const BudgetPage: React.FC = () => {
             {/* Active Goals Section - Scrollable */}
             {getAllGoals().length > 0 && (
               <div style={{ marginBottom: "24px" }}>
-                <h2
-                  style={{
-                    fontSize: "0.9rem",
-                    fontWeight: "bold",
-                    color: "#999",
-                    marginBottom: "12px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Goals
-                </h2>
-
                 {(() => {
                   const allGoals = getAllGoals();
                   if (allGoals.length === 0) return null;

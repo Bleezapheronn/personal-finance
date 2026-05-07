@@ -229,6 +229,11 @@
   font-weight: 700;
 }
 
+.metric-subtext {
+  font-size: 0.8rem !important;
+  display: block;
+}
+
 /* ===== REUSABLE STATUS BADGE STYLES ===== */
 
 .status-badge {

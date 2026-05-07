@@ -67,10 +67,6 @@ const Reports: React.FC = () => {
     setCurrentDate(getNextPeriod(periodType, currentDate));
   };
 
-  const handleToday = () => {
-    setCurrentDate(new Date());
-  };
-
   // Get status label
   const getStatusLabel = (status: string): string => {
     switch (status) {
@@ -148,13 +144,6 @@ const Reports: React.FC = () => {
 
           <IonButton fill="clear" onClick={handleNextPeriod}>
             <IonIcon slot="start" icon={chevronForward} />
-          </IonButton>
-        </div>
-
-        {/* Today Button */}
-        <div className="today-button-container">
-          <IonButton size="small" fill="outline" onClick={handleToday}>
-            Today
           </IonButton>
         </div>
 
@@ -237,12 +226,6 @@ const Reports: React.FC = () => {
                           <IonText>
                             <h5 className="bucket-name">{bucket.bucketName}</h5>
                           </IonText>
-                          <IonText color="medium" className="bucket-range">
-                            Target: {bucket.minPercentage}% -{" "}
-                            {bucket.maxPercentage}%
-                            {bucket.minFixedAmount &&
-                              ` (Min: ${bucket.minFixedAmount.toFixed(2)})`}
-                          </IonText>
                         </div>
                         <span
                           className={`status-badge status-${bucket.status}`}
@@ -255,7 +238,7 @@ const Reports: React.FC = () => {
                     <IonCardContent>
                       <IonGrid>
                         <IonRow>
-                          <IonCol size="6">
+                          <IonCol size="4">
                             <div className="metric">
                               <IonText color="medium" className="metric-label">
                                 Amount
@@ -263,15 +246,73 @@ const Reports: React.FC = () => {
                               <IonText className="metric-value">
                                 {formatCurrency(bucket.totalAmount)}
                               </IonText>
+                              <IonText
+                                color="medium"
+                                className="metric-subtext"
+                              >
+                                {formatCurrency(
+                                  (bucket.minPercentage / 100) *
+                                    report.totalIncome,
+                                )}
+                                {" - "}
+                                {formatCurrency(
+                                  (bucket.maxPercentage / 100) *
+                                    report.totalIncome,
+                                )}
+                              </IonText>
                             </div>
                           </IonCol>
-                          <IonCol size="6">
-                            <div className="metric">
+                          <IonCol size="4">
+                            <div
+                              className="metric"
+                              style={{
+                                alignItems: "center",
+                                textAlign: "center",
+                              }}
+                            >
                               <IonText color="medium" className="metric-label">
                                 % of Total
                               </IonText>
                               <IonText className="metric-value">
                                 {bucket.actualPercentage.toFixed(1)}%
+                              </IonText>
+                              <IonText
+                                color="medium"
+                                className="metric-subtext"
+                              >
+                                {bucket.minPercentage}% - {bucket.maxPercentage}
+                                %
+                              </IonText>
+                            </div>
+                          </IonCol>
+                          <IonCol size="4">
+                            <div
+                              className="metric"
+                              style={{
+                                alignItems: "flex-end",
+                                textAlign: "right",
+                              }}
+                            >
+                              <IonText color="medium" className="metric-label">
+                                Remaining
+                              </IonText>
+                              <IonText className="metric-value">
+                                {formatCurrency(
+                                  (bucket.minPercentage / 100) *
+                                    report.totalIncome +
+                                    bucket.totalAmount,
+                                )}
+                              </IonText>
+                              <IonText
+                                color="medium"
+                                className="metric-subtext"
+                              >
+                                Max:{" "}
+                                {formatCurrency(
+                                  (bucket.maxPercentage / 100) *
+                                    report.totalIncome +
+                                    bucket.totalAmount,
+                                )}
                               </IonText>
                             </div>
                           </IonCol>
@@ -287,21 +328,13 @@ const Reports: React.FC = () => {
                                   style={{
                                     width: `${Math.min(
                                       bucket.actualPercentage,
-                                      100
+                                      100,
                                     )}%`,
                                     backgroundColor: getProgressBarColor(
-                                      bucket.status
+                                      bucket.status,
                                     ),
                                   }}
                                 />
-                              </div>
-                              <div className="progress-labels">
-                                <span className="min-label">
-                                  {bucket.minPercentage}%
-                                </span>
-                                <span className="max-label">
-                                  {bucket.maxPercentage}%
-                                </span>
                               </div>
                             </div>
                           </IonCol>
