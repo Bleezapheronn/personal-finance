@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   IonPage,
   IonHeader,
@@ -30,6 +30,8 @@ import {
   IonFab,
   IonFabButton,
   IonToast,
+  IonInfiniteScroll,
+  IonInfiniteScrollContent,
 } from "@ionic/react";
 
 import { useHistory } from "react-router-dom";
@@ -44,18 +46,13 @@ import {
   downloadOutline,
   cloudUploadOutline,
 } from "ionicons/icons";
-import {
-  db,
-  Transaction,
-  Category,
-  Recipient,
-  Bucket,
-  Account,
-} from "../db";
+import { db, Transaction, Category, Recipient, Bucket, Account } from "../db";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import { exportTransactionsToCSV, downloadCSV } from "../utils/csvExport";
 import { ImportModal } from "../components/ImportModal";
 import "./Transactions.css";
+
+const TRANSACTION_BATCH_DAYS = 30;
 
 const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
@@ -64,7 +61,7 @@ const Transactions: React.FC = () => {
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountImages, setAccountImages] = useState<Map<number, string>>(
-    new Map()
+    new Map(),
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -76,6 +73,9 @@ const Transactions: React.FC = () => {
   const [isTransferDelete, setIsTransferDelete] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [visibleTransactionWindowDays, setVisibleTransactionWindowDays] =
+    useState(TRANSACTION_BATCH_DAYS);
+  const [hasMoreTransactions, setHasMoreTransactions] = useState(true);
 
   // Filter states - CHANGED: accountId instead of paymentMethodId
   const [selectedAccountId, setSelectedAccountId] = useState<
@@ -85,7 +85,7 @@ const Transactions: React.FC = () => {
     number | undefined
   >(undefined);
   const [selectedBucketId, setSelectedBucketId] = useState<number | undefined>(
-    undefined
+    undefined,
   );
   const [selectedCategoryId, setSelectedCategoryId] = useState<
     number | undefined
@@ -146,6 +146,7 @@ const Transactions: React.FC = () => {
       });
 
       setTransactions(sortedTransactions);
+      setVisibleTransactionWindowDays(TRANSACTION_BATCH_DAYS);
       setError("");
     } catch (err) {
       setError("Failed to load transactions.");
@@ -205,7 +206,7 @@ const Transactions: React.FC = () => {
         await db.transactions.delete(txnToDelete.transferPairId);
 
         setSuccessMsg(
-          "Transfer transaction deleted successfully! Both paired transactions were removed."
+          "Transfer transaction deleted successfully! Both paired transactions were removed.",
         );
       } else {
         // Delete single transaction
@@ -250,7 +251,9 @@ const Transactions: React.FC = () => {
   };
 
   // CHANGED: Get account image and name directly from accountId
-  const getAccountImage = (accountId: number | undefined): string | undefined => {
+  const getAccountImage = (
+    accountId: number | undefined,
+  ): string | undefined => {
     if (!accountId || !accountImages.has(accountId)) {
       return undefined;
     }
@@ -261,59 +264,6 @@ const Transactions: React.FC = () => {
     if (!accountId) return "—";
     const account = accounts.find((a) => a.id === accountId);
     return account?.name || "—";
-  };
-
-  // Apply all filters
-  const getFilteredTransactions = () => {
-    if (!transactions) return [];
-
-    return transactions.filter((txn) => {
-      // Account filter - CHANGED: Direct accountId check
-      if (selectedAccountId !== undefined) {
-        if (txn.accountId !== selectedAccountId) return false;
-      }
-
-      // Recipient filter
-      if (selectedRecipientId !== undefined) {
-        if (txn.recipientId !== selectedRecipientId) return false;
-      }
-
-      // Bucket filter
-      if (selectedBucketId !== undefined) {
-        const category = categories.find((c) => c.id === txn.categoryId);
-        if (category?.bucketId !== selectedBucketId) return false;
-      }
-
-      // Category filter
-      if (selectedCategoryId !== undefined) {
-        if (txn.categoryId !== selectedCategoryId) return false;
-      }
-
-      // Date from filter
-      if (selectedDateFrom) {
-        const txnDate = new Date(txn.date).toISOString().split("T")[0];
-        if (txnDate < selectedDateFrom) return false;
-      }
-
-      // Date to filter
-      if (selectedDateTo) {
-        const txnDate = new Date(txn.date).toISOString().split("T")[0];
-        if (txnDate > selectedDateTo) return false;
-      }
-
-      // Description filter
-      if (selectedDescription) {
-        if (
-          !txn.description
-            ?.toLowerCase()
-            .includes(selectedDescription.toLowerCase())
-        ) {
-          return false;
-        }
-      }
-
-      return true;
-    });
   };
 
   const clearFilters = () => {
@@ -451,58 +401,6 @@ const Transactions: React.FC = () => {
     );
   };
 
-  // CHANGED: Calculate totals using accountId directly
-  const calculateAccountTotals = () => {
-    const transactionsToUse = getFilteredTransactions();
-
-    if (
-      !transactionsToUse ||
-      transactionsToUse.length === 0 ||
-      accounts.length === 0
-    ) {
-      return { accountTotals: [], overallTotal: 0 };
-    }
-
-    const accountTotalsMap = new Map<number, number>();
-
-    transactionsToUse.forEach((txn) => {
-      if (txn.accountId) {
-        const netAmount = txn.amount + (txn.transactionCost || 0);
-        const currentTotal = accountTotalsMap.get(txn.accountId) || 0;
-        accountTotalsMap.set(txn.accountId, currentTotal + netAmount);
-      }
-    });
-
-    const accountTotals = Array.from(accountTotalsMap.entries())
-      .map(([accountId, total]) => {
-        const account = accounts.find((a) => a.id === accountId);
-        return {
-          accountId,
-          accountName: account?.name || "Unknown",
-          total,
-          imageUrl: accountImages.get(accountId),
-        };
-      })
-      // Filter out credit accounts unless balance is negative (i.e., overdraft used)
-      .filter((account) => {
-        const acct = accounts.find((a) => a.id === account.accountId);
-        if (acct?.isCredit) {
-          // Only show credit accounts if they have negative balance (credit used)
-          return account.total < 0;
-        }
-        return true; // Always show non-credit accounts
-      });
-
-    accountTotals.sort((a, b) => a.accountName.localeCompare(b.accountName));
-
-    const overallTotal = accountTotals.reduce(
-      (sum, account) => sum + account.total,
-      0
-    );
-
-    return { accountTotals, overallTotal };
-  };
-
   // Add this helper function before the return statement
   const getTimeGroup = (dateString: string): string => {
     const txnDate = new Date(dateString);
@@ -543,12 +441,91 @@ const Transactions: React.FC = () => {
     }
   };
 
-  // Group transactions by time period
-  const groupedTransactions = () => {
+  const filteredTransactions = useMemo(() => {
+    if (!transactions) return [];
+    return transactions.filter((txn) => {
+      if (
+        selectedAccountId !== undefined &&
+        txn.accountId !== selectedAccountId
+      ) {
+        return false;
+      }
+
+      if (
+        selectedRecipientId !== undefined &&
+        txn.recipientId !== selectedRecipientId
+      ) {
+        return false;
+      }
+
+      if (selectedBucketId !== undefined) {
+        const category = categories.find((c) => c.id === txn.categoryId);
+        if (category?.bucketId !== selectedBucketId) {
+          return false;
+        }
+      }
+
+      if (
+        selectedCategoryId !== undefined &&
+        txn.categoryId !== selectedCategoryId
+      ) {
+        return false;
+      }
+
+      if (selectedDateFrom) {
+        const txnDate = new Date(txn.date).toISOString().split("T")[0];
+        if (txnDate < selectedDateFrom) {
+          return false;
+        }
+      }
+
+      if (selectedDateTo) {
+        const txnDate = new Date(txn.date).toISOString().split("T")[0];
+        if (txnDate > selectedDateTo) {
+          return false;
+        }
+      }
+
+      if (
+        selectedDescription &&
+        !txn.description
+          ?.toLowerCase()
+          .includes(selectedDescription.toLowerCase())
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [
+    transactions,
+    selectedAccountId,
+    selectedRecipientId,
+    selectedBucketId,
+    selectedCategoryId,
+    selectedDateFrom,
+    selectedDateTo,
+    selectedDescription,
+    categories,
+  ]);
+
+  const visibleTransactions = useMemo(() => {
+    const cutoffDate = new Date();
+    cutoffDate.setHours(0, 0, 0, 0);
+    cutoffDate.setDate(cutoffDate.getDate() - visibleTransactionWindowDays);
+
+    return filteredTransactions.filter((txn) => {
+      const txnDate = new Date(txn.date);
+      txnDate.setHours(0, 0, 0, 0);
+      return txnDate >= cutoffDate;
+    });
+  }, [filteredTransactions, visibleTransactionWindowDays]);
+
+  const groupedVisibleTransactions = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
     const groupOrder = ["This Week", "Last Week", "This Month"];
 
-    filteredTransactions.forEach((txn) => {
+    visibleTransactions.forEach((txn) => {
       const group = getTimeGroup(txn.date.toString());
       if (!groups.has(group)) {
         groups.set(group, []);
@@ -556,21 +533,17 @@ const Transactions: React.FC = () => {
       groups.get(group)!.push(txn);
     });
 
-    // Sort the groups
     const sortedGroups: Array<[string, Transaction[]]> = [];
 
-    // Add groups in fixed order
     groupOrder.forEach((group) => {
       if (groups.has(group)) {
         sortedGroups.push([group, groups.get(group)!]);
       }
     });
 
-    // Add remaining groups (previous months) in reverse chronological order
     const remainingGroups = Array.from(groups.entries())
       .filter(([group]) => !groupOrder.includes(group))
       .sort((a, b) => {
-        // Parse month/year and sort in reverse order
         const dateA = new Date(a[0] + " 1");
         const dateB = new Date(b[0] + " 1");
         return dateB.getTime() - dateA.getTime();
@@ -579,10 +552,70 @@ const Transactions: React.FC = () => {
     sortedGroups.push(...remainingGroups);
 
     return sortedGroups;
-  };
+  }, [visibleTransactions]);
 
-  const { accountTotals, overallTotal } = calculateAccountTotals();
-  const filteredTransactions = getFilteredTransactions();
+  const { accountTotals, overallTotal } = useMemo(() => {
+    if (filteredTransactions.length === 0 || accounts.length === 0) {
+      return { accountTotals: [], overallTotal: 0 };
+    }
+
+    const accountTotalsMap = new Map<number, number>();
+
+    filteredTransactions.forEach((txn) => {
+      if (txn.accountId) {
+        const netAmount = txn.amount + (txn.transactionCost || 0);
+        const currentTotal = accountTotalsMap.get(txn.accountId) || 0;
+        accountTotalsMap.set(txn.accountId, currentTotal + netAmount);
+      }
+    });
+
+    const calculatedTotals = Array.from(accountTotalsMap.entries())
+      .map(([accountId, total]) => {
+        const account = accounts.find((a) => a.id === accountId);
+        return {
+          accountId,
+          accountName: account?.name || "Unknown",
+          total,
+          imageUrl: accountImages.get(accountId),
+        };
+      })
+      .filter((account) => {
+        const acct = accounts.find((a) => a.id === account.accountId);
+        if (acct?.isCredit) {
+          return account.total < 0;
+        }
+        return true;
+      });
+
+    calculatedTotals.sort((a, b) => a.accountName.localeCompare(b.accountName));
+
+    return {
+      accountTotals: calculatedTotals,
+      overallTotal: calculatedTotals.reduce(
+        (sum, account) => sum + account.total,
+        0,
+      ),
+    };
+  }, [filteredTransactions, accounts, accountImages]);
+
+  useEffect(() => {
+    const cutoffDate = new Date();
+    cutoffDate.setHours(0, 0, 0, 0);
+    cutoffDate.setDate(cutoffDate.getDate() - visibleTransactionWindowDays);
+
+    const hasOlder = filteredTransactions.some((txn) => {
+      const txnDate = new Date(txn.date);
+      txnDate.setHours(0, 0, 0, 0);
+      return txnDate < cutoffDate;
+    });
+
+    setHasMoreTransactions(hasOlder);
+  }, [filteredTransactions, visibleTransactionWindowDays]);
+
+  const loadOlderTransactions = (event: CustomEvent<void>) => {
+    setVisibleTransactionWindowDays((prev) => prev + TRANSACTION_BATCH_DAYS);
+    (event.target as HTMLIonInfiniteScrollElement | null)?.complete();
+  };
 
   // Add this helper function before the return statement (after calculateAccountTotals)
   const getRecipientTransactionCount = (recipientId: number): number => {
@@ -907,7 +940,7 @@ const Transactions: React.FC = () => {
                             value={selectedDescription}
                             onIonInput={(e: CustomEvent) => {
                               setSelectedDescription(
-                                (e.detail.value as string) || ""
+                                (e.detail.value as string) || "",
                               );
                             }}
                             style={{
@@ -1018,10 +1051,10 @@ const Transactions: React.FC = () => {
                           }))
                           .sort((a, b) => {
                             const countA = getRecipientTransactionCount(
-                              a.id || 0
+                              a.id || 0,
                             );
                             const countB = getRecipientTransactionCount(
-                              b.id || 0
+                              b.id || 0,
                             );
                             return countB - countA;
                           })}
@@ -1089,7 +1122,7 @@ const Transactions: React.FC = () => {
                           })
                           .map((c) => {
                             const bucket = buckets.find(
-                              (b) => b.id === c.bucketId
+                              (b) => b.id === c.bucketId,
                             );
                             return {
                               id: c.id,
@@ -1269,220 +1302,223 @@ const Transactions: React.FC = () => {
           </IonAccordionGroup>
         )}
 
-        {!loading &&
-          filteredTransactions &&
-          filteredTransactions.length === 0 && (
-            <IonText>
-              {hasActiveFilters()
-                ? "No transactions match the selected filters."
-                : "No transactions found."}
-            </IonText>
-          )}
-        {!loading &&
-          filteredTransactions &&
-          filteredTransactions.length > 0 && (
-            <>
-              {groupedTransactions().map(([group, txns]) => (
-                <div key={group} style={{ marginBottom: "24px" }}>
-                  <h3
-                    className={`time-group-header ${
-                      group === "Overdue" ? "overdue" : ""
-                    }`}
-                    style={{
-                      fontSize: "0.9rem",
-                      fontWeight: "bold",
-                      color: "#999",
-                      margin: "16px 0 8px 0",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.5px",
-                    }}
-                  >
-                    {group}
-                  </h3>
-                  <IonList style={{ borderRadius: "4px" }}>
-                    {txns.map((txn) => (
-                      <IonItem key={txn.id}>
-                        <IonGrid>
-                          <IonRow>
-                            <IonCol size="1" className="date-column">
-                              <h2>
-                                <div className="date-column-weekday">
-                                  {new Date(txn.date)
-                                    .toLocaleDateString("en-US", {
-                                      weekday: "short",
-                                    })
-                                    .toUpperCase()}
-                                </div>
-                                <div className="date-column-day">
-                                  {new Date(txn.date).toLocaleDateString(
-                                    "en-US",
-                                    {
-                                      day: "2-digit",
-                                    }
-                                  )}
-                                </div>
-                                <div className="date-column-month">
-                                  {new Date(txn.date)
-                                    .toLocaleDateString("en-US", {
-                                      month: "short",
-                                    })
-                                    .toUpperCase()}
-                                </div>
-                              </h2>
-                            </IonCol>
-                            <IonCol size="7">
-                              <IonRow>
-                                {txn.description && (
-                                  <h2
-                                    className="item-description clickable"
-                                    onClick={() => handleView(txn.id)}
-                                  >
-                                    <div>{txn.description}</div>
-                                  </h2>
+        {!loading && filteredTransactions.length === 0 && (
+          <IonText>
+            {hasActiveFilters()
+              ? "No transactions match the selected filters."
+              : "No transactions found."}
+          </IonText>
+        )}
+        {!loading && filteredTransactions.length > 0 && (
+          <>
+            {groupedVisibleTransactions.map(([group, txns]) => (
+              <div key={group} style={{ marginBottom: "24px" }}>
+                <h3
+                  className={`time-group-header ${
+                    group === "Overdue" ? "overdue" : ""
+                  }`}
+                  style={{
+                    fontSize: "0.9rem",
+                    fontWeight: "bold",
+                    color: "#999",
+                    margin: "16px 0 8px 0",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.5px",
+                  }}
+                >
+                  {group}
+                </h3>
+                <IonList style={{ borderRadius: "4px" }}>
+                  {txns.map((txn) => (
+                    <IonItem key={txn.id}>
+                      <IonGrid>
+                        <IonRow>
+                          <IonCol size="1" className="date-column">
+                            <h2>
+                              <div className="date-column-weekday">
+                                {new Date(txn.date)
+                                  .toLocaleDateString("en-US", {
+                                    weekday: "short",
+                                  })
+                                  .toUpperCase()}
+                              </div>
+                              <div className="date-column-day">
+                                {new Date(txn.date).toLocaleDateString(
+                                  "en-US",
+                                  {
+                                    day: "2-digit",
+                                  },
                                 )}
-                              </IonRow>
-                              <IonRow>
-                                <IonCol size="1.5">
-                                  <IonAvatar
+                              </div>
+                              <div className="date-column-month">
+                                {new Date(txn.date)
+                                  .toLocaleDateString("en-US", {
+                                    month: "short",
+                                  })
+                                  .toUpperCase()}
+                              </div>
+                            </h2>
+                          </IonCol>
+                          <IonCol size="7">
+                            <IonRow>
+                              {txn.description && (
+                                <h2
+                                  className="item-description clickable"
+                                  onClick={() => handleView(txn.id)}
+                                >
+                                  <div>{txn.description}</div>
+                                </h2>
+                              )}
+                            </IonRow>
+                            <IonRow>
+                              <IonCol size="1.5">
+                                <IonAvatar
+                                  style={{
+                                    width: "40px",
+                                    height: "40px",
+                                    cursor: "pointer",
+                                  }}
+                                  title={getAccountName(txn.accountId)}
+                                >
+                                  {getAccountImage(txn.accountId) ? (
+                                    <IonImg
+                                      src={getAccountImage(txn.accountId)}
+                                      alt={getAccountName(txn.accountId)}
+                                    />
+                                  ) : (
+                                    <div
+                                      style={{
+                                        width: "100%",
+                                        height: "100%",
+                                        backgroundColor: "#ccc",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        fontSize: "0.8rem",
+                                      }}
+                                    >
+                                      {getAccountName(txn.accountId).charAt(0)}
+                                    </div>
+                                  )}
+                                </IonAvatar>
+                              </IonCol>
+                              <IonCol>
+                                <div
+                                  style={{
+                                    color: "#666",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                  }}
+                                >
+                                  <IonIcon
+                                    icon={
+                                      txn.amount + (txn.transactionCost || 0) <
+                                      0
+                                        ? arrowUpCircle
+                                        : arrowDownCircle
+                                    }
                                     style={{
-                                      width: "40px",
-                                      height: "40px",
-                                      cursor: "pointer",
-                                    }}
-                                    title={getAccountName(txn.accountId)}
-                                  >
-                                    {getAccountImage(txn.accountId) ? (
-                                      <IonImg
-                                        src={getAccountImage(txn.accountId)}
-                                        alt={getAccountName(txn.accountId)}
-                                      />
-                                    ) : (
-                                      <div
-                                        style={{
-                                          width: "100%",
-                                          height: "100%",
-                                          backgroundColor: "#ccc",
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "center",
-                                          fontSize: "0.8rem",
-                                        }}
-                                      >
-                                        {getAccountName(txn.accountId).charAt(0)}
-                                      </div>
-                                    )}
-                                  </IonAvatar>
-                                </IonCol>
-                                <IonCol>
-                                  <div
-                                    style={{
-                                      color: "#666",
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: "4px",
-                                    }}
-                                  >
-                                    <IonIcon
-                                      icon={
+                                      color:
                                         txn.amount +
                                           (txn.transactionCost || 0) <
                                         0
-                                          ? arrowUpCircle
-                                          : arrowDownCircle
-                                      }
-                                      style={{
-                                        color:
-                                          txn.amount +
-                                            (txn.transactionCost || 0) <
-                                          0
-                                            ? "#eb445c"
-                                            : "#009688",
-                                        fontSize: "1.2rem",
-                                      }}
-                                    />
-                                    {getRecipientName(txn.recipientId)}
-                                  </div>
-                                  <div>
-                                    {getBucketName(txn.categoryId) && (
-                                      <IonChip
-                                        color="secondary"
-                                        style={{
-                                          fontSize: "0.75rem",
-                                          height: "22px",
-                                        }}
-                                      >
-                                        <IonLabel>
-                                          {getBucketName(txn.categoryId)}
-                                        </IonLabel>
-                                      </IonChip>
-                                    )}
+                                          ? "#eb445c"
+                                          : "#009688",
+                                      fontSize: "1.2rem",
+                                    }}
+                                  />
+                                  {getRecipientName(txn.recipientId)}
+                                </div>
+                                <div>
+                                  {getBucketName(txn.categoryId) && (
                                     <IonChip
-                                      color="primary"
+                                      color="secondary"
                                       style={{
-                                        fontSize: "0.85rem",
-                                        height: "24px",
+                                        fontSize: "0.75rem",
+                                        height: "22px",
                                       }}
                                     >
                                       <IonLabel>
-                                        {getCategoryName(txn.categoryId)}
+                                        {getBucketName(txn.categoryId)}
                                       </IonLabel>
                                     </IonChip>
-                                  </div>
-                                </IonCol>
-                              </IonRow>
-                            </IonCol>
+                                  )}
+                                  <IonChip
+                                    color="primary"
+                                    style={{
+                                      fontSize: "0.85rem",
+                                      height: "24px",
+                                    }}
+                                  >
+                                    <IonLabel>
+                                      {getCategoryName(txn.categoryId)}
+                                    </IonLabel>
+                                  </IonChip>
+                                </div>
+                              </IonCol>
+                            </IonRow>
+                          </IonCol>
 
-                            <IonCol size="4" style={{ textAlign: "right" }}>
-                              <div
-                                className={`item-amount ${
-                                  txn.amount + (txn.transactionCost || 0) < 0
-                                    ? "expense"
-                                    : "income"
-                                }`}
-                                style={{ textAlign: "right" }}
-                              >
-                                {(
-                                  txn.amount + (txn.transactionCost || 0)
-                                ).toLocaleString(undefined, {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })}
-                              </div>
-                              <p style={{ margin: "0" }}>&nbsp;</p>
-                              {/* Edit/Delete buttons */}
-                              <IonRow className="item-actions">
-                                <IonCol className="item-actions-container">
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    onClick={() => handleEdit(txn.id)}
-                                    title="Edit Transaction"
-                                  >
-                                    <IonIcon slot="end" icon={createOutline} />
-                                  </IonButton>
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    color="danger"
-                                    onClick={() => handleDeleteClick(txn.id)}
-                                    title="Delete Transaction"
-                                  >
-                                    <IonIcon slot="end" icon={trashOutline} />
-                                  </IonButton>
-                                </IonCol>
-                              </IonRow>
-                            </IonCol>
-                          </IonRow>
-                        </IonGrid>
-                      </IonItem>
-                    ))}
-                  </IonList>
-                </div>
-              ))}
-            </>
-          )}
+                          <IonCol size="4" style={{ textAlign: "right" }}>
+                            <div
+                              className={`item-amount ${
+                                txn.amount + (txn.transactionCost || 0) < 0
+                                  ? "expense"
+                                  : "income"
+                              }`}
+                              style={{ textAlign: "right" }}
+                            >
+                              {(
+                                txn.amount + (txn.transactionCost || 0)
+                              ).toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </div>
+                            <p style={{ margin: "0" }}>&nbsp;</p>
+                            {/* Edit/Delete buttons */}
+                            <IonRow className="item-actions">
+                              <IonCol className="item-actions-container">
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  style={{ marginRight: "0" }}
+                                  onClick={() => handleEdit(txn.id)}
+                                  title="Edit Transaction"
+                                >
+                                  <IonIcon slot="end" icon={createOutline} />
+                                </IonButton>
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  style={{ marginRight: "0" }}
+                                  color="danger"
+                                  onClick={() => handleDeleteClick(txn.id)}
+                                  title="Delete Transaction"
+                                >
+                                  <IonIcon slot="end" icon={trashOutline} />
+                                </IonButton>
+                              </IonCol>
+                            </IonRow>
+                          </IonCol>
+                        </IonRow>
+                      </IonGrid>
+                    </IonItem>
+                  ))}
+                </IonList>
+              </div>
+            ))}
+
+            <IonInfiniteScroll
+              onIonInfinite={loadOlderTransactions}
+              threshold="120px"
+              disabled={!hasMoreTransactions}
+            >
+              <IonInfiniteScrollContent loadingText="Loading older transactions..." />
+            </IonInfiniteScroll>
+          </>
+        )}
 
         <ImportModal
           isOpen={showImportModal}

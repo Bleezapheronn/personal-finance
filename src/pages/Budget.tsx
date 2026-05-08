@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useHistory } from "react-router-dom";
 import {
   IonPage,
@@ -29,6 +29,8 @@ import {
   IonButton,
   IonAvatar,
   IonImg,
+  IonInfiniteScroll,
+  IonInfiniteScrollContent,
 } from "@ionic/react";
 import {
   addOutline,
@@ -78,6 +80,8 @@ interface BudgetOccurrence {
   timeGroup: string;
   linkedTransactions: Transaction[];
 }
+
+const BUDGET_BATCH_DAYS = 30;
 
 const BudgetPage: React.FC = () => {
   const history = useHistory();
@@ -129,6 +133,8 @@ const BudgetPage: React.FC = () => {
 
   // Add this state near the top with other state variables
   const [currentGoalIndex, setCurrentGoalIndex] = useState(0);
+  const [visibleBudgetHorizonDays, setVisibleBudgetHorizonDays] =
+    useState(BUDGET_BATCH_DAYS);
 
   // Load all data
   useIonViewWillEnter(() => {
@@ -171,6 +177,7 @@ const BudgetPage: React.FC = () => {
       setBuckets(bkts);
       setRecipients(recs);
       setAccounts(accs);
+      setVisibleBudgetHorizonDays(BUDGET_BATCH_DAYS);
 
       // Convert account image blobs to URLs
       const imageMap = new Map<number, string>();
@@ -227,10 +234,12 @@ const BudgetPage: React.FC = () => {
   };
 
   // Generate occurrences from immutable snapshots, with legacy fallback.
-  const generateBudgetOccurrences = (): BudgetOccurrence[] => {
-    const oneYearFromNow = new Date();
-    oneYearFromNow.setHours(0, 0, 0, 0);
-    oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+  const generateBudgetOccurrences = (
+    horizonDays: number,
+  ): BudgetOccurrence[] => {
+    const horizonDate = new Date();
+    horizonDate.setHours(0, 0, 0, 0);
+    horizonDate.setDate(horizonDate.getDate() + horizonDays);
 
     const occurrences: BudgetOccurrence[] = [];
     const budgetById = new Map<number, Budget>();
@@ -248,7 +257,7 @@ const BudgetPage: React.FC = () => {
 
         const dueDate = new Date(snapshot.dueDate);
         dueDate.setHours(0, 0, 0, 0);
-        return dueDate <= oneYearFromNow;
+        return dueDate <= horizonDate;
       })
       .map((snapshot) => {
         const liveBudget = budgetById.get(snapshot.budgetId)!;
@@ -346,7 +355,7 @@ const BudgetPage: React.FC = () => {
           currentDueDate.setHours(0, 0, 0, 0);
 
           let occurrenceCount = 0;
-          while (currentDueDate <= oneYearFromNow) {
+          while (currentDueDate <= horizonDate) {
             occurrenceCount++;
 
             const amountPaid = getAmountPaidForOccurrence(
@@ -377,7 +386,7 @@ const BudgetPage: React.FC = () => {
             currentDueDate = getNextOccurrence(currentDueDate, budget);
 
             // Safety check to prevent infinite loops
-            if (occurrenceCount > 50) {
+            if (occurrenceCount > 5000) {
               break;
             }
           }
@@ -385,6 +394,95 @@ const BudgetPage: React.FC = () => {
       });
 
     return occurrences;
+  };
+
+  const hasBudgetOccurrencesBeyondHorizon = (horizonDays: number): boolean => {
+    const horizonDate = new Date();
+    horizonDate.setHours(0, 0, 0, 0);
+    horizonDate.setDate(horizonDate.getDate() + horizonDays);
+
+    const activeBudgetIds = new Set(
+      budgets
+        .filter((budget) => budget.isActive && budget.id)
+        .map((b) => b.id!),
+    );
+
+    const hasSnapshotBeyond = budgetSnapshots.some((snapshot) => {
+      if (!activeBudgetIds.has(snapshot.budgetId)) {
+        return false;
+      }
+      const dueDate = new Date(snapshot.dueDate);
+      dueDate.setHours(0, 0, 0, 0);
+      return dueDate > horizonDate;
+    });
+
+    if (hasSnapshotBeyond) {
+      return true;
+    }
+
+    const maxCyclesForBudget = (budget: Budget): number => {
+      if (
+        budget.remainingCyclesTotal === null ||
+        budget.remainingCyclesTotal === undefined
+      ) {
+        return Number.MAX_SAFE_INTEGER;
+      }
+      return Math.max(0, budget.remainingCyclesTotal);
+    };
+
+    for (const budget of budgets.filter((b) => b.isActive)) {
+      if (!budget.id) continue;
+
+      const hasSnapshots = budgetSnapshots.some(
+        (snapshot) => snapshot.budgetId === budget.id,
+      );
+      if (hasSnapshots) continue;
+
+      let currentDueDate = new Date(budget.dueDate);
+      currentDueDate.setHours(0, 0, 0, 0);
+      const maxCycles = maxCyclesForBudget(budget);
+      let cycleCount = 1;
+
+      while (cycleCount <= maxCycles && currentDueDate <= horizonDate) {
+        if (budget.frequency === "once") {
+          break;
+        }
+        currentDueDate = getNextOccurrence(currentDueDate, budget);
+        cycleCount += 1;
+
+        if (cycleCount > 5000) {
+          break;
+        }
+      }
+
+      if (cycleCount <= maxCycles && currentDueDate > horizonDate) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  const loadMoreBudgetOccurrences = async (event: CustomEvent<void>) => {
+    const nextHorizon = visibleBudgetHorizonDays + BUDGET_BATCH_DAYS;
+
+    try {
+      const horizonDate = new Date();
+      horizonDate.setHours(0, 0, 0, 0);
+      horizonDate.setDate(horizonDate.getDate() + nextHorizon);
+
+      await Promise.all(
+        budgets
+          .filter((budget) => budget.isActive)
+          .map((budget) => ensureBudgetSnapshotCoverage(budget, horizonDate)),
+      );
+
+      const refreshedSnapshots = await db.budgetSnapshots.toArray();
+      setBudgetSnapshots(refreshedSnapshots);
+      setVisibleBudgetHorizonDays(nextHorizon);
+    } finally {
+      (event.target as HTMLIonInfiniteScrollElement | null)?.complete();
+    }
   };
 
   // Calculate next occurrence based on frequency with intelligent month boundary handling
@@ -486,8 +584,9 @@ const BudgetPage: React.FC = () => {
   };
 
   // Filter and group occurrences with proper sorting
-  const groupedOccurrences = () => {
-    const occurrences = generateBudgetOccurrences();
+  const groupedOccurrences = (
+    occurrences: BudgetOccurrence[],
+  ): Array<[string, BudgetOccurrence[]]> => {
     const groups = new Map<string, BudgetOccurrence[]>();
     const groupOrder = ["Overdue", "This Week", "Next Week", "This Month"];
 
@@ -563,24 +662,6 @@ const BudgetPage: React.FC = () => {
     sortedGroups.push(...futureGroups);
 
     return sortedGroups;
-  };
-
-  // Get active goals
-  const getActiveGoals = (): BudgetOccurrence[] => {
-    const occurrences = generateBudgetOccurrences();
-    return occurrences
-      .filter((occ) => occ.budget.isGoal && !occ.isCompleted)
-      .slice(0, 2); // Show max 2 goals
-  };
-
-  // Get most recent completed goal
-  const getMostRecentCompletedGoal = (): BudgetOccurrence | null => {
-    const occurrences = generateBudgetOccurrences();
-    const completedGoals = occurrences
-      .filter((occ) => occ.budget.isGoal && occ.isCompleted)
-      .sort((a, b) => b.dueDate.getTime() - a.dueDate.getTime());
-
-    return completedGoals.length > 0 ? completedGoals[0] : null;
   };
 
   // Handle delete click
@@ -776,6 +857,7 @@ const BudgetPage: React.FC = () => {
 
   const calculateBudgetedAmounts = (
     period: "month" | "quarter" | "year",
+    occurrences: BudgetOccurrence[],
   ): {
     totalExpense: number;
     totalIncome: number;
@@ -788,9 +870,6 @@ const BudgetPage: React.FC = () => {
     let totalIncome = 0;
     let expensePaid = 0;
     let incomePaid = 0;
-
-    // Get all occurrences for this period
-    const occurrences = generateBudgetOccurrences();
 
     occurrences.forEach((occ) => {
       const occDate = new Date(occ.dueDate);
@@ -835,7 +914,7 @@ const BudgetPage: React.FC = () => {
   const BudgetSummaryCard = () => {
     const { label } = getBudgetPeriodBoundaries(budgetSummaryPeriod);
     const { totalExpense, totalIncome, expensePaid, incomePaid } =
-      calculateBudgetedAmounts(budgetSummaryPeriod);
+      calculateBudgetedAmounts(budgetSummaryPeriod, visibleBudgetOccurrences);
 
     const netBudgeted = totalIncome - totalExpense;
     const netPaid = incomePaid - expensePaid;
@@ -988,8 +1067,37 @@ const BudgetPage: React.FC = () => {
     );
   };
 
+  const visibleBudgetOccurrences = generateBudgetOccurrences(
+    visibleBudgetHorizonDays,
+  );
+
+  const allGoals = useMemo(() => {
+    const goals = visibleBudgetOccurrences.filter((occ) => occ.budget.isGoal);
+    return goals.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+  }, [visibleBudgetOccurrences]);
+
+  const activeGoals = useMemo(
+    () => allGoals.filter((goal) => !goal.isCompleted).slice(0, 2),
+    [allGoals],
+  );
+
+  const mostRecentCompletedGoal = useMemo(() => {
+    const completedGoals = allGoals
+      .filter((goal) => goal.isCompleted)
+      .sort((a, b) => b.dueDate.getTime() - a.dueDate.getTime());
+    return completedGoals.length > 0 ? completedGoals[0] : null;
+  }, [allGoals]);
+
+  const groupedBudgets = useMemo(
+    () => groupedOccurrences(visibleBudgetOccurrences),
+    [visibleBudgetOccurrences],
+  );
+
+  const hasMoreBudgetOccurrences = hasBudgetOccurrencesBeyondHorizon(
+    visibleBudgetHorizonDays,
+  );
+
   const getInitialGoalIndex = (): number => {
-    const allGoals = getAllGoals();
     const firstIncompleteIndex = allGoals.findIndex(
       (goal) => !goal.isCompleted,
     );
@@ -1000,30 +1108,15 @@ const BudgetPage: React.FC = () => {
   useEffect(() => {
     setCurrentGoalIndex(getInitialGoalIndex());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
-
-  const getAllGoals = (): BudgetOccurrence[] => {
-    const occurrences = generateBudgetOccurrences();
-
-    // Get all goals (active and completed)
-    const allGoals = occurrences.filter((occ) => occ.budget.isGoal);
-
-    // Sort by due date ascending (earliest first)
-    return allGoals.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
-  };
+  }, [loading, allGoals.length]);
 
   const handleGoalPrevious = () => {
     setCurrentGoalIndex((prev) => Math.max(0, prev - 1));
   };
 
   const handleGoalNext = () => {
-    const allGoals = getAllGoals();
     setCurrentGoalIndex((prev) => Math.min(prev + 1, allGoals.length - 1));
   };
-
-  const activeGoals = getActiveGoals();
-  const mostRecentCompletedGoal = getMostRecentCompletedGoal();
-  const groupedBudgets = groupedOccurrences();
 
   return (
     <IonPage>
@@ -1110,10 +1203,9 @@ const BudgetPage: React.FC = () => {
         {!loading && (
           <>
             {/* Active Goals Section - Scrollable */}
-            {getAllGoals().length > 0 && (
+            {allGoals.length > 0 && (
               <div style={{ marginBottom: "24px" }}>
                 {(() => {
-                  const allGoals = getAllGoals();
                   if (allGoals.length === 0) return null;
 
                   const currentGoal = allGoals[currentGoalIndex];
@@ -1373,242 +1465,263 @@ const BudgetPage: React.FC = () => {
                 <p>No active budgets. Click the + button to add one.</p>
               </IonText>
             ) : (
-              groupedBudgets.map(([timeGroup, occurrences]) => (
-                <div key={timeGroup} style={{ marginBottom: "24px" }}>
-                  <h3
-                    className={`time-group-header ${
-                      timeGroup === "Overdue" ? "overdue" : ""
-                    }`}
-                  >
-                    {timeGroup}
-                  </h3>
+              <>
+                {groupedBudgets.map(([timeGroup, occurrences]) => (
+                  <div key={timeGroup} style={{ marginBottom: "24px" }}>
+                    <h3
+                      className={`time-group-header ${
+                        timeGroup === "Overdue" ? "overdue" : ""
+                      }`}
+                    >
+                      {timeGroup}
+                    </h3>
 
-                  <IonList style={{ borderRadius: "4px" }}>
-                    {occurrences.map((occ) => (
-                      <IonItem
-                        key={`${occ.budgetSnapshotId ?? "legacy"}-${occ.budgetId}-${occ.dueDate.getTime()}`}
-                        onClick={() => {
-                          setSelectedBudgetForCompletion(occ);
-                          setShowCompleteModal(true);
-                        }}
-                        style={{ cursor: "pointer" }}
-                      >
-                        <IonGrid style={{ width: "100%" }}>
-                          <IonRow>
-                            <IonCol size="1" className="date-column">
-                              <h2>
-                                <div className="date-column-weekday">
-                                  {occ.dueDate
-                                    .toLocaleDateString("en-US", {
-                                      weekday: "short",
-                                    })
-                                    .toUpperCase()}
-                                </div>
-                                <div className="date-column-day">
-                                  {occ.dueDate.toLocaleDateString("en-US", {
-                                    day: "2-digit",
-                                  })}
-                                </div>
-                                <div className="date-column-month">
-                                  {occ.dueDate
-                                    .toLocaleDateString("en-US", {
-                                      month: "short",
-                                    })
-                                    .toUpperCase()}
-                                </div>
-                              </h2>
-                            </IonCol>
-
-                            <IonCol size="7">
-                              <IonRow>
-                                <h3 className="item-description">
-                                  {occ.budget.description}
-                                  {!occ.budget.isFlexible && (
-                                    <IonIcon
-                                      icon={bag}
-                                      style={{
-                                        marginLeft: "8px",
-                                        fontSize: "1rem",
-                                        color: "var(--ion-color-warning)",
-                                        verticalAlign: "middle",
-                                      }}
-                                      title="Strict Budget"
-                                    />
-                                  )}
-                                </h3>
-                              </IonRow>
-                              <IonRow>
-                                <IonCol size="1.5">
-                                  <IonAvatar
-                                    style={{
-                                      width: "40px",
-                                      height: "40px",
-                                    }}
-                                    title={getAccountName(occ.budget.accountId)}
-                                  >
-                                    {getAccountImage(occ.budget.accountId) ? (
-                                      <IonImg
-                                        src={getAccountImage(
-                                          occ.budget.accountId,
-                                        )}
-                                        alt={getAccountName(
-                                          occ.budget.accountId,
-                                        )}
-                                      />
-                                    ) : (
-                                      <div
-                                        style={{
-                                          width: "100%",
-                                          height: "100%",
-                                          backgroundColor: "#ccc",
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "center",
-                                          fontSize: "0.8rem",
-                                        }}
-                                      >
-                                        {getAccountName(
-                                          occ.budget.accountId,
-                                        ).charAt(0)}
-                                      </div>
-                                    )}
-                                  </IonAvatar>
-                                </IonCol>
-                                <IonCol>
-                                  <div className="item-metadata">
-                                    <IonIcon
-                                      icon={
-                                        occ.budget.amount < 0
-                                          ? arrowUpCircle
-                                          : arrowDownCircle
-                                      }
-                                      className={`item-metadata-icon ${
-                                        occ.budget.amount < 0
-                                          ? "expense"
-                                          : "income"
-                                      }`}
-                                    />
-                                    {getRecipientName(occ.budget.recipientId)}
+                    <IonList style={{ borderRadius: "4px" }}>
+                      {occurrences.map((occ) => (
+                        <IonItem
+                          key={`${occ.budgetSnapshotId ?? "legacy"}-${occ.budgetId}-${occ.dueDate.getTime()}`}
+                          onClick={() => {
+                            setSelectedBudgetForCompletion(occ);
+                            setShowCompleteModal(true);
+                          }}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <IonGrid style={{ width: "100%" }}>
+                            <IonRow>
+                              <IonCol size="1" className="date-column">
+                                <h2>
+                                  <div className="date-column-weekday">
+                                    {occ.dueDate
+                                      .toLocaleDateString("en-US", {
+                                        weekday: "short",
+                                      })
+                                      .toUpperCase()}
                                   </div>
-                                  <div style={{ marginTop: "4px" }}>
-                                    {getBucketName(occ.budget.categoryId) && (
+                                  <div className="date-column-day">
+                                    {occ.dueDate.toLocaleDateString("en-US", {
+                                      day: "2-digit",
+                                    })}
+                                  </div>
+                                  <div className="date-column-month">
+                                    {occ.dueDate
+                                      .toLocaleDateString("en-US", {
+                                        month: "short",
+                                      })
+                                      .toUpperCase()}
+                                  </div>
+                                </h2>
+                              </IonCol>
+
+                              <IonCol size="7">
+                                <IonRow>
+                                  <h3 className="item-description">
+                                    {occ.budget.description}
+                                    {!occ.budget.isFlexible && (
+                                      <IonIcon
+                                        icon={bag}
+                                        style={{
+                                          marginLeft: "8px",
+                                          fontSize: "1rem",
+                                          color: "var(--ion-color-warning)",
+                                          verticalAlign: "middle",
+                                        }}
+                                        title="Strict Budget"
+                                      />
+                                    )}
+                                  </h3>
+                                </IonRow>
+                                <IonRow>
+                                  <IonCol size="1.5">
+                                    <IonAvatar
+                                      style={{
+                                        width: "40px",
+                                        height: "40px",
+                                      }}
+                                      title={getAccountName(
+                                        occ.budget.accountId,
+                                      )}
+                                    >
+                                      {getAccountImage(occ.budget.accountId) ? (
+                                        <IonImg
+                                          src={getAccountImage(
+                                            occ.budget.accountId,
+                                          )}
+                                          alt={getAccountName(
+                                            occ.budget.accountId,
+                                          )}
+                                        />
+                                      ) : (
+                                        <div
+                                          style={{
+                                            width: "100%",
+                                            height: "100%",
+                                            backgroundColor: "#ccc",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            fontSize: "0.8rem",
+                                          }}
+                                        >
+                                          {getAccountName(
+                                            occ.budget.accountId,
+                                          ).charAt(0)}
+                                        </div>
+                                      )}
+                                    </IonAvatar>
+                                  </IonCol>
+                                  <IonCol>
+                                    <div className="item-metadata">
+                                      <IonIcon
+                                        icon={
+                                          occ.budget.amount < 0
+                                            ? arrowUpCircle
+                                            : arrowDownCircle
+                                        }
+                                        className={`item-metadata-icon ${
+                                          occ.budget.amount < 0
+                                            ? "expense"
+                                            : "income"
+                                        }`}
+                                      />
+                                      {getRecipientName(occ.budget.recipientId)}
+                                    </div>
+                                    <div style={{ marginTop: "4px" }}>
+                                      {getBucketName(occ.budget.categoryId) && (
+                                        <IonChip
+                                          color="secondary"
+                                          style={{
+                                            fontSize: "0.75rem",
+                                            height: "20px",
+                                          }}
+                                        >
+                                          <IonLabel>
+                                            {getBucketName(
+                                              occ.budget.categoryId,
+                                            )}
+                                          </IonLabel>
+                                        </IonChip>
+                                      )}
                                       <IonChip
-                                        color="secondary"
+                                        color="primary"
                                         style={{
                                           fontSize: "0.75rem",
                                           height: "20px",
                                         }}
                                       >
                                         <IonLabel>
-                                          {getBucketName(occ.budget.categoryId)}
+                                          {getCategoryName(
+                                            occ.budget.categoryId,
+                                          )}
                                         </IonLabel>
                                       </IonChip>
-                                    )}
-                                    <IonChip
-                                      color="primary"
-                                      style={{
-                                        fontSize: "0.75rem",
-                                        height: "20px",
-                                      }}
-                                    >
-                                      <IonLabel>
-                                        {getCategoryName(occ.budget.categoryId)}
-                                      </IonLabel>
-                                    </IonChip>
-                                  </div>
-                                </IonCol>
-                              </IonRow>
-                            </IonCol>
+                                    </div>
+                                  </IonCol>
+                                </IonRow>
+                              </IonCol>
 
-                            <IonCol size="4" style={{ textAlign: "right" }}>
-                              <div
-                                style={{
-                                  fontSize: "1.2rem",
-                                  fontWeight: "bold",
-                                  color:
-                                    occ.budget.amount < 0
-                                      ? "#eb445c"
-                                      : "#009688",
-                                }}
-                              >
-                                {Math.abs(occ.amountPaid).toLocaleString(
-                                  undefined,
-                                  {
+                              <IonCol size="4" style={{ textAlign: "right" }}>
+                                <div
+                                  style={{
+                                    fontSize: "1.2rem",
+                                    fontWeight: "bold",
+                                    color:
+                                      occ.budget.amount < 0
+                                        ? "#eb445c"
+                                        : "#009688",
+                                  }}
+                                >
+                                  {Math.abs(occ.amountPaid).toLocaleString(
+                                    undefined,
+                                    {
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    },
+                                  )}
+                                </div>
+                                <div
+                                  style={{ fontSize: "0.85rem", color: "#999" }}
+                                >
+                                  of{" "}
+                                  {Math.abs(
+                                    occ.budget.amount +
+                                      (occ.budget.transactionCost || 0),
+                                  ).toLocaleString(undefined, {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2,
-                                  },
-                                )}
-                              </div>
-                              <div
-                                style={{ fontSize: "0.85rem", color: "#999" }}
-                              >
-                                of{" "}
-                                {Math.abs(
-                                  occ.budget.amount +
-                                    (occ.budget.transactionCost || 0),
-                                ).toLocaleString(undefined, {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })}
-                              </div>
-                              <IonProgressBar
-                                value={getProgressPercentage(occ) / 100}
-                                color={occ.isCompleted ? "success" : "primary"}
-                                style={{ marginTop: "4px" }}
-                              />
+                                  })}
+                                </div>
+                                <IonProgressBar
+                                  value={getProgressPercentage(occ) / 100}
+                                  color={
+                                    occ.isCompleted ? "success" : "primary"
+                                  }
+                                  style={{ marginTop: "4px" }}
+                                />
 
-                              {/* Edit/Delete/Link buttons below progress bar */}
-                              <IonRow className="item-actions">
-                                <IonCol className="item-actions-container">
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleOpenLinkModal(occ);
-                                    }}
-                                    title="Link Transaction"
-                                  >
-                                    <IonIcon icon={linkOutline} slot="end" />
-                                  </IonButton>
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      history.push(
-                                        `/budget/edit/${occ.budget.id}`,
-                                      );
-                                    }}
-                                    title="Edit Budget Item"
-                                  >
-                                    <IonIcon icon={createOutline} slot="end" />
-                                  </IonButton>
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    color="danger"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDeleteClick(occ.budget.id!);
-                                    }}
-                                    title="Delete Budget Item"
-                                  >
-                                    <IonIcon icon={trashOutline} slot="end" />
-                                  </IonButton>
-                                </IonCol>
-                              </IonRow>
-                            </IonCol>
-                          </IonRow>
-                        </IonGrid>
-                      </IonItem>
-                    ))}
-                  </IonList>
-                </div>
-              ))
+                                {/* Edit/Delete/Link buttons below progress bar */}
+                                <IonRow className="item-actions">
+                                  <IonCol className="item-actions-container">
+                                    <IonButton
+                                      fill="clear"
+                                      size="small"
+                                      style={{ marginRight: "0" }}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenLinkModal(occ);
+                                      }}
+                                      title="Link Transaction"
+                                    >
+                                      <IonIcon icon={linkOutline} slot="end" />
+                                    </IonButton>
+                                    <IonButton
+                                      fill="clear"
+                                      size="small"
+                                      style={{ marginRight: "0" }}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        history.push(
+                                          `/budget/edit/${occ.budget.id}`,
+                                        );
+                                      }}
+                                      title="Edit Budget Item"
+                                    >
+                                      <IonIcon
+                                        icon={createOutline}
+                                        slot="end"
+                                      />
+                                    </IonButton>
+                                    <IonButton
+                                      fill="clear"
+                                      size="small"
+                                      style={{ marginRight: "0" }}
+                                      color="danger"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteClick(occ.budget.id!);
+                                      }}
+                                      title="Delete Budget Item"
+                                    >
+                                      <IonIcon icon={trashOutline} slot="end" />
+                                    </IonButton>
+                                  </IonCol>
+                                </IonRow>
+                              </IonCol>
+                            </IonRow>
+                          </IonGrid>
+                        </IonItem>
+                      ))}
+                    </IonList>
+                  </div>
+                ))}
+
+                <IonInfiniteScroll
+                  onIonInfinite={loadMoreBudgetOccurrences}
+                  threshold="120px"
+                  disabled={!hasMoreBudgetOccurrences}
+                >
+                  <IonInfiniteScrollContent loadingText="Loading more budget occurrences..." />
+                </IonInfiniteScroll>
+              </>
             )}
           </>
         )}
