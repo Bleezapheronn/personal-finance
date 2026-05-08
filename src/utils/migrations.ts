@@ -7,6 +7,11 @@ interface MigrationResult {
   timestamp: Date;
 }
 
+interface HasIsActive {
+  id?: number;
+  isActive?: boolean;
+}
+
 /**
  * Migration: Ensure all records have explicit isActive boolean values
  * Sets isActive = true for any records where isActive is undefined
@@ -29,18 +34,20 @@ export const migrateIsActiveStates = async (): Promise<void> => {
     for (const { name, table } of tables) {
       const allRecords = await table.toArray();
       const recordsToUpdate = allRecords.filter(
-        (record: any) => record.isActive === undefined
+        (record: HasIsActive) => record.isActive === undefined,
       );
 
       if (recordsToUpdate.length > 0) {
         // Update all records with undefined isActive to true
-        const updates = recordsToUpdate.map((record: any) => ({
+        const updates = recordsToUpdate.map((record: HasIsActive) => ({
           ...record,
           isActive: true,
         }));
 
         for (const record of updates) {
-          await table.update(record.id, { isActive: true });
+          if (record.id !== undefined) {
+            await table.update(record.id, { isActive: true });
+          }
         }
 
         results.push({
@@ -51,11 +58,11 @@ export const migrateIsActiveStates = async (): Promise<void> => {
         });
 
         console.log(
-          `✅ ${name}: Updated ${recordsToUpdate.length} records (${allRecords.length} total)`
+          `✅ ${name}: Updated ${recordsToUpdate.length} records (${allRecords.length} total)`,
         );
       } else {
         console.log(
-          `✅ ${name}: All ${allRecords.length} records already valid`
+          `✅ ${name}: All ${allRecords.length} records already valid`,
         );
       }
     }
@@ -71,7 +78,7 @@ export const migrateIsActiveStates = async (): Promise<void> => {
       console.log("\n✨ isActive migration completed successfully!");
     } else {
       console.log(
-        "✨ No updates needed - all records already have isActive set"
+        "✨ No updates needed - all records already have isActive set",
       );
     }
   } catch (error) {

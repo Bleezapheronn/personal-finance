@@ -18,6 +18,7 @@ export const validateBudgetForm = (data: {
   categoryId?: number;
   accountId?: number; // CHANGED from paymentMethodId
   recipientId?: number;
+  remainingCyclesTotal?: string;
   frequency: string;
   dayOfMonth?: string;
   intervalDays?: string;
@@ -85,6 +86,17 @@ export const validateBudgetForm = (data: {
         errors.intervalDays = true;
         errorMessages.push("Interval days must be a positive number");
       }
+    }
+  }
+
+  if (
+    data.remainingCyclesTotal !== undefined &&
+    data.remainingCyclesTotal.trim() !== ""
+  ) {
+    const cycles = parseInt(data.remainingCyclesTotal, 10);
+    if (isNaN(cycles) || cycles < 1) {
+      errors.remainingCyclesTotal = true;
+      errorMessages.push("Remaining cycles must be a positive whole number");
     }
   }
 

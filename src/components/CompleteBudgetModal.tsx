@@ -20,7 +20,15 @@ import {
   IonCardContent,
 } from "@ionic/react";
 import { close, trash } from "ionicons/icons";
-import { db, Budget, Category, Bucket, Account, Transaction } from "../db";
+import {
+  db,
+  Budget,
+  Category,
+  Bucket,
+  Account,
+  Transaction,
+  ensureBudgetSnapshotForOccurrence,
+} from "../db";
 
 interface BudgetOccurrence {
   budgetId: number;
@@ -123,13 +131,13 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
       // Pre-fill with remaining budget amount ONLY if remaining > 0
       const remainingBudget = getRemainingBudgetAmount();
       setTransactionAmount(
-        remainingBudget > 0 ? Math.abs(remainingBudget).toString() : ""
+        remainingBudget > 0 ? Math.abs(remainingBudget).toString() : "",
       );
       // Pre-fill transaction cost with budget's transaction cost if available
       setTransactionCost(
         budgetOccurrence.budget.transactionCost
           ? Math.abs(budgetOccurrence.budget.transactionCost).toString()
-          : ""
+          : "",
       );
       setErrorMsg("");
       setSuccessMsg("");
@@ -206,6 +214,11 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
           ? -Math.abs(amount)
           : Math.abs(amount);
 
+      const snapshot = await ensureBudgetSnapshotForOccurrence(
+        budgetOccurrence.budget,
+        budgetOccurrence.dueDate,
+      );
+
       // Calculate signed transaction cost if it exists
       let signedCost: number | undefined = undefined;
       if (cost !== undefined) {
@@ -225,6 +238,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
         description: budgetOccurrence.budget.description,
         budgetId: budgetOccurrence.budgetId,
         occurrenceDate: budgetOccurrence.dueDate,
+        budgetSnapshotId: snapshot.id,
       };
 
       await db.transactions.add(newTransaction);
@@ -335,12 +349,12 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                           {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
-                          }
+                          },
                         )}{" "}
                         /{" "}
                         {Math.abs(
                           budgetOccurrence.budget.amount +
-                            (budgetOccurrence.budget.transactionCost || 0)
+                            (budgetOccurrence.budget.transactionCost || 0),
                         ).toLocaleString(undefined, {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
@@ -362,15 +376,15 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                             remaining > 0
                               ? "#FF9800" // Orange for remaining
                               : remaining === 0
-                              ? "#4CAF50" // Green for completed
-                              : "#9C27B0", // Purple for overpaid
+                                ? "#4CAF50" // Green for completed
+                                : "#9C27B0", // Purple for overpaid
                         }}
                       >
                         {remaining > 0
                           ? "Remaining"
                           : remaining === 0
-                          ? "Completed"
-                          : "Overpaid"}
+                            ? "Completed"
+                            : "Overpaid"}
                       </span>
                       <span
                         style={{
@@ -379,8 +393,8 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                             remaining > 0
                               ? "#FF9800" // Orange for remaining
                               : remaining === 0
-                              ? "#4CAF50" // Green for completed
-                              : "#9C27B0", // Purple for overpaid
+                                ? "#4CAF50" // Green for completed
+                                : "#9C27B0", // Purple for overpaid
                         }}
                       >
                         {Math.abs(remaining).toLocaleString(undefined, {
@@ -559,7 +573,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                                     {
                                       minimumFractionDigits: 2,
                                       maximumFractionDigits: 2,
-                                    }
+                                    },
                                   )}
                                 </div>
                               </IonCol>

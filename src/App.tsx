@@ -27,6 +27,7 @@ import AddTransaction from "./pages/AddTransaction";
 import TransactionDetails from "./pages/TransactionDetails";
 import Budget from "./pages/Budget";
 import AddBudget from "./pages/AddBudget";
+import BudgetHistory from "./pages/BudgetHistory";
 import BucketsManagement from "./pages/BucketsManagement";
 import AccountsManagement from "./pages/AccountsManagement";
 import RecipientsManagement from "./pages/RecipientsManagement";
@@ -34,7 +35,11 @@ import SmsImportTemplatesManagement from "./pages/SmsImportTemplatesManagement";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings"; // NEW
 
-import { migrateIsActiveStates, migratePaymentMethodsToAccounts } from "./db";
+import {
+  migrateBudgetSnapshots,
+  migrateIsActiveStates,
+  migratePaymentMethodsToAccounts,
+} from "./db";
 
 /* Core CSS required for Ionic components to work properly */
 import "@ionic/react/css/core.css";
@@ -140,6 +145,9 @@ const InnerApp: React.FC = () => {
             <Route exact path="/budget/from-transaction/:transactionId">
               <AddBudget />
             </Route>
+            <Route exact path="/budget/history">
+              <BudgetHistory />
+            </Route>
             <Route path="/buckets-management">
               <BucketsManagement />
             </Route>
@@ -197,6 +205,9 @@ const App: React.FC = () => {
         // Then run isActive migration (Phase 5)
         console.log("📋 Running Phase 5: Fixing isActive states...");
         await migrateIsActiveStates();
+
+        console.log("📋 Running Budget snapshot migration...");
+        await migrateBudgetSnapshots();
 
         console.log("✨ All migrations completed successfully!");
       } catch (error) {

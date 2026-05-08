@@ -43,15 +43,19 @@ import {
   chevronForward,
   downloadOutline,
   cloudUploadOutline,
+  timeOutline,
 } from "ionicons/icons";
 import {
   db,
   Budget,
+  BudgetSnapshot,
   Category,
   Bucket,
   Recipient,
   Transaction,
   Account,
+  migrateBudgetSnapshots,
+  ensureBudgetSnapshotForOccurrence,
 } from "../db";
 import { CompleteBudgetModal } from "../components/CompleteBudgetModal";
 import { LinkPastTransactionsModal } from "../components/LinkPastTransactionsModal";
@@ -60,10 +64,12 @@ import {
   exportBudgetsToCSV,
   downloadBudgetsCSV,
 } from "../utils/budgetCsvExport";
+import { ensureBudgetSnapshotCoverage } from "../utils/budgetSnapshots";
 import { ImportModal } from "../components/ImportModal";
 import "./Budget.css";
 
 interface BudgetOccurrence {
+  budgetSnapshotId?: number;
   budgetId: number;
   budget: Budget;
   dueDate: Date;
@@ -77,13 +83,14 @@ const BudgetPage: React.FC = () => {
   const history = useHistory();
 
   const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [budgetSnapshots, setBudgetSnapshots] = useState<BudgetSnapshot[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountImages, setAccountImages] = useState<Map<number, string>>(
-    new Map()
+    new Map(),
   );
 
   const [loading, setLoading] = useState(true);
@@ -94,7 +101,7 @@ const BudgetPage: React.FC = () => {
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [budgetToDelete, setBudgetToDelete] = useState<number | undefined>(
-    undefined
+    undefined,
   );
   const [budgetDeleteHasTransactions, setBudgetDeleteHasTransactions] =
     useState(false);
@@ -107,6 +114,9 @@ const BudgetPage: React.FC = () => {
   const [matchingTransactionsForLink, setMatchingTransactionsForLink] =
     useState<Transaction[]>([]);
   const [budgetIdForLinking, setBudgetIdForLinking] = useState<
+    number | undefined
+  >(undefined);
+  const [budgetSnapshotIdForLinking, setBudgetSnapshotIdForLinking] = useState<
     number | undefined
   >(undefined);
   const [budgetOccurrenceDateForLinking, setBudgetOccurrenceDateForLinking] =
@@ -125,66 +135,11 @@ const BudgetPage: React.FC = () => {
     loadData();
   });
 
-  // Migrate existing transactions to populate occurrenceDate
-  const migrateTransactionOccurrenceDates = async () => {
-    try {
-      const allTransactions = await db.transactions.toArray();
-      const allBudgets = await db.budgets.toArray();
-
-      for (const txn of allTransactions) {
-        // Skip if already has occurrenceDate
-        if (txn.budgetId && !txn.occurrenceDate) {
-          const budget = allBudgets.find((b) => b.id === txn.budgetId);
-          if (budget) {
-            // Find which occurrence this transaction belongs to
-            // Default: match to the nearest due date at or before the transaction date
-            let occurrenceDate = new Date(budget.dueDate);
-            occurrenceDate.setHours(0, 0, 0, 0);
-
-            const txnDate = new Date(txn.date);
-            txnDate.setHours(0, 0, 0, 0);
-
-            if (budget.frequency === "once") {
-              // Single occurrence - use the budget's due date
-              occurrenceDate = new Date(budget.dueDate);
-              occurrenceDate.setHours(0, 0, 0, 0);
-            } else {
-              // Recurring budget - find the occurrence this transaction belongs to
-              // Use the nearest occurrence at or before the transaction date
-              let currentDueDate = new Date(budget.dueDate);
-              currentDueDate.setHours(0, 0, 0, 0);
-
-              let occurrenceCount = 0;
-              while (currentDueDate <= txnDate) {
-                occurrenceCount++;
-
-                occurrenceDate = new Date(currentDueDate);
-                currentDueDate = getNextOccurrence(currentDueDate, budget);
-
-                // Safety check to prevent infinite loops
-                if (occurrenceCount > 50) {
-                  break;
-                }
-              }
-            }
-
-            // Update transaction with occurrence date
-            await db.transactions.update(txn.id!, {
-              occurrenceDate,
-            });
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Error during migration:", err);
-    }
-  };
-
   const loadData = async () => {
     setLoading(true);
     try {
-      // Run migration on first load
-      await migrateTransactionOccurrenceDates();
+      // Run snapshot migration and pre-generate upcoming snapshots
+      await migrateBudgetSnapshots();
 
       const [b, txns, cats, bkts, recs, accs] = await Promise.all([
         db.budgets.toArray(),
@@ -195,7 +150,22 @@ const BudgetPage: React.FC = () => {
         db.accounts.toArray(),
       ]);
 
+      const oneYearFromNow = new Date();
+      oneYearFromNow.setHours(0, 0, 0, 0);
+      oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+
+      await Promise.all(
+        b
+          .filter((budget) => budget.isActive)
+          .map((budget) =>
+            ensureBudgetSnapshotCoverage(budget, oneYearFromNow),
+          ),
+      );
+
+      const snapshots = await db.budgetSnapshots.toArray();
+
       setBudgets(b);
+      setBudgetSnapshots(snapshots);
       setTransactions(txns);
       setCategories(cats);
       setBuckets(bkts);
@@ -223,69 +193,155 @@ const BudgetPage: React.FC = () => {
 
   // Calculate amount paid for a specific budget occurrence
   const getAmountPaidForOccurrence = (
+    budgetSnapshotId: number | undefined,
     budgetId: number,
-    occurrenceDate: Date
+    occurrenceDate: Date,
   ): number => {
     return transactions
       .filter(
         (txn) =>
-          txn.budgetId === budgetId &&
-          txn.occurrenceDate &&
-          new Date(txn.occurrenceDate).getTime() === occurrenceDate.getTime()
+          (budgetSnapshotId !== undefined &&
+            txn.budgetSnapshotId === budgetSnapshotId) ||
+          (txn.budgetId === budgetId &&
+            txn.occurrenceDate &&
+            new Date(txn.occurrenceDate).getTime() ===
+              occurrenceDate.getTime()),
       )
       .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
   };
 
   // Get linked transactions for a specific occurrence
   const getLinkedTransactionsForOccurrence = (
+    budgetSnapshotId: number | undefined,
     budgetId: number,
-    occurrenceDate: Date
+    occurrenceDate: Date,
   ): Transaction[] => {
     return transactions.filter(
       (txn) =>
-        txn.budgetId === budgetId &&
-        txn.occurrenceDate &&
-        new Date(txn.occurrenceDate).getTime() === occurrenceDate.getTime()
+        (budgetSnapshotId !== undefined &&
+          txn.budgetSnapshotId === budgetSnapshotId) ||
+        (txn.budgetId === budgetId &&
+          txn.occurrenceDate &&
+          new Date(txn.occurrenceDate).getTime() === occurrenceDate.getTime()),
     );
   };
 
-  // Generate budget occurrences for next 12 months
+  // Generate occurrences from immutable snapshots, with legacy fallback.
   const generateBudgetOccurrences = (): BudgetOccurrence[] => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const oneYearFromNow = new Date(today);
+    const oneYearFromNow = new Date();
+    oneYearFromNow.setHours(0, 0, 0, 0);
     oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
 
     const occurrences: BudgetOccurrence[] = [];
+    const budgetById = new Map<number, Budget>();
 
+    budgets.forEach((budget) => {
+      if (budget.id && budget.isActive) {
+        budgetById.set(budget.id, budget);
+      }
+    });
+
+    const snapshotOccurrences: BudgetOccurrence[] = budgetSnapshots
+      .filter((snapshot) => {
+        const liveBudget = budgetById.get(snapshot.budgetId);
+        if (!liveBudget) return false;
+
+        const dueDate = new Date(snapshot.dueDate);
+        dueDate.setHours(0, 0, 0, 0);
+        return dueDate <= oneYearFromNow;
+      })
+      .map((snapshot) => {
+        const liveBudget = budgetById.get(snapshot.budgetId)!;
+
+        const dueDate = new Date(snapshot.dueDate);
+        dueDate.setHours(0, 0, 0, 0);
+
+        const snapshotBudget: Budget = {
+          ...liveBudget,
+          description: snapshot.description,
+          categoryId: snapshot.categoryId,
+          accountId: snapshot.accountId,
+          recipientId: snapshot.recipientId,
+          amount: snapshot.amount,
+          transactionCost: snapshot.transactionCost,
+          frequency: snapshot.frequency,
+          frequencyDetails: snapshot.frequencyDetails,
+          isGoal: snapshot.isGoal,
+          isFlexible: snapshot.isFlexible,
+          remainingCyclesTotal: snapshot.remainingCyclesTotal,
+          dueDate,
+          updatedAt: snapshot.sourceBudgetUpdatedAt,
+        };
+
+        const amountPaid = getAmountPaidForOccurrence(
+          snapshot.id,
+          snapshot.budgetId,
+          dueDate,
+        );
+
+        const isCompleted =
+          snapshotBudget.amount < 0
+            ? amountPaid <= snapshotBudget.amount
+            : amountPaid >= snapshotBudget.amount;
+
+        return {
+          budgetSnapshotId: snapshot.id,
+          budgetId: snapshot.budgetId,
+          budget: snapshotBudget,
+          dueDate,
+          amountPaid,
+          isCompleted,
+          timeGroup: getTimeGroup(dueDate),
+          linkedTransactions: getLinkedTransactionsForOccurrence(
+            snapshot.id,
+            snapshot.budgetId,
+            dueDate,
+          ),
+        };
+      });
+
+    occurrences.push(...snapshotOccurrences);
+
+    // Legacy fallback for active budgets with no snapshot rows yet.
     budgets
       .filter((budget) => budget.isActive)
       .forEach((budget) => {
+        const budgetId = budget.id;
+        if (!budgetId) return;
+
+        const hasSnapshots = snapshotOccurrences.some(
+          (occ) => occ.budgetId === budgetId,
+        );
+        if (hasSnapshots) return;
+
         if (budget.frequency === "once") {
-          // Single occurrence
           const dueDate = new Date(budget.dueDate);
           dueDate.setHours(0, 0, 0, 0);
 
-          const amountPaid = getAmountPaidForOccurrence(budget.id!, dueDate);
+          const amountPaid = getAmountPaidForOccurrence(
+            undefined,
+            budgetId,
+            dueDate,
+          );
           const isCompleted =
             budget.amount < 0
               ? amountPaid <= budget.amount
               : amountPaid >= budget.amount;
 
           occurrences.push({
-            budgetId: budget.id!,
+            budgetId,
             budget,
             dueDate,
             amountPaid,
             isCompleted,
             timeGroup: getTimeGroup(dueDate),
             linkedTransactions: getLinkedTransactionsForOccurrence(
-              budget.id!,
-              dueDate
+              undefined,
+              budgetId,
+              dueDate,
             ),
           });
         } else {
-          // Recurring budget - generate all occurrences
           let currentDueDate = new Date(budget.dueDate);
           currentDueDate.setHours(0, 0, 0, 0);
 
@@ -294,8 +350,9 @@ const BudgetPage: React.FC = () => {
             occurrenceCount++;
 
             const amountPaid = getAmountPaidForOccurrence(
-              budget.id!,
-              currentDueDate
+              undefined,
+              budgetId,
+              currentDueDate,
             );
             const isCompleted =
               budget.amount < 0
@@ -303,15 +360,16 @@ const BudgetPage: React.FC = () => {
                 : amountPaid >= budget.amount;
 
             occurrences.push({
-              budgetId: budget.id!,
+              budgetId,
               budget,
               dueDate: new Date(currentDueDate),
               amountPaid,
               isCompleted,
               timeGroup: getTimeGroup(currentDueDate),
               linkedTransactions: getLinkedTransactionsForOccurrence(
-                budget.id!,
-                currentDueDate
+                undefined,
+                budgetId,
+                currentDueDate,
               ),
             });
 
@@ -331,10 +389,10 @@ const BudgetPage: React.FC = () => {
 
   // Calculate next occurrence based on frequency with intelligent month boundary handling
   const getNextOccurrence = (currentDate: Date, budget: Budget): Date => {
-    // Extract date parts in UTC to avoid timezone issues
-    const year = currentDate.getUTCFullYear();
-    const month = currentDate.getUTCMonth();
-    const day = currentDate.getUTCDate();
+    // Use local date parts consistently to avoid UTC/local drift.
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const day = currentDate.getDate();
 
     let nextYear = year;
     let nextMonth = month;
@@ -359,9 +417,7 @@ const BudgetPage: React.FC = () => {
           }
 
           // Get the last day of the new month
-          const lastDayOfMonth = new Date(
-            Date.UTC(nextYear, nextMonth + 1, 0)
-          ).getUTCDate();
+          const lastDayOfMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
 
           // Use the requested day or last day of month, whichever is smaller
           nextDay = Math.min(requestedDay, lastDayOfMonth);
@@ -377,8 +433,7 @@ const BudgetPage: React.FC = () => {
         break;
     }
 
-    // Create new date using UTC to avoid timezone issues
-    const next = new Date(Date.UTC(nextYear, nextMonth, nextDay));
+    const next = new Date(nextYear, nextMonth, nextDay);
 
     return next;
   };
@@ -502,7 +557,7 @@ const BudgetPage: React.FC = () => {
       })
       .map(
         ([group, occs]) =>
-          [group, sortOccurrences(occs)] as [string, BudgetOccurrence[]]
+          [group, sortOccurrences(occs)] as [string, BudgetOccurrence[]],
       );
 
     sortedGroups.push(...futureGroups);
@@ -566,14 +621,13 @@ const BudgetPage: React.FC = () => {
 
   // Handle link past transactions
   const handleOpenLinkModal = (budgetOccurrence: BudgetOccurrence) => {
-    const budget = budgets.find((b) => b.id === budgetOccurrence.budgetId);
-    if (!budget) return;
+    const budget = budgetOccurrence.budget;
 
     const matching = findMatchingTransactions(
       transactions,
       budget.description,
       budget.categoryId,
-      budget.recipientId
+      budget.recipientId,
     );
 
     if (matching.length === 0) {
@@ -583,34 +637,53 @@ const BudgetPage: React.FC = () => {
 
     setMatchingTransactionsForLink(matching);
     setBudgetIdForLinking(budgetOccurrence.budgetId);
+    setBudgetSnapshotIdForLinking(budgetOccurrence.budgetSnapshotId);
     setBudgetOccurrenceDateForLinking(budgetOccurrence.dueDate);
     setShowLinkModal(true);
   };
 
   const handleLinkTransactions = async (
     transactionIds: number[],
-    occurrenceDate: Date
+    occurrenceDate: Date,
   ) => {
     if (budgetIdForLinking === undefined) return;
 
     try {
+      const budget = budgets.find((b) => b.id === budgetIdForLinking);
+      if (!budget) {
+        setError("Budget was not found");
+        return;
+      }
+
+      const snapshot = await ensureBudgetSnapshotForOccurrence(
+        budget,
+        occurrenceDate,
+      );
+
+      const targetSnapshotId =
+        budgetSnapshotIdForLinking !== undefined
+          ? budgetSnapshotIdForLinking
+          : snapshot.id;
+
       // Update all selected transactions with the budgetId and occurrenceDate
       for (const txnId of transactionIds) {
         await db.transactions.update(txnId, {
           budgetId: budgetIdForLinking,
           occurrenceDate,
+          budgetSnapshotId: targetSnapshotId,
         });
       }
 
       setSuccessMsg(
         `Successfully linked ${transactionIds.length} transaction${
           transactionIds.length !== 1 ? "s" : ""
-        } to budget`
+        } to budget`,
       );
       setShowSuccessToast(true);
       loadData();
       setShowLinkModal(false);
       setBudgetIdForLinking(undefined);
+      setBudgetSnapshotIdForLinking(undefined);
       setBudgetOccurrenceDateForLinking(undefined);
       setMatchingTransactionsForLink([]);
     } catch (err) {
@@ -636,7 +709,7 @@ const BudgetPage: React.FC = () => {
 
   // CHANGED: Simplified to get account image directly from accountId
   const getAccountImage = (
-    accountId: number | undefined
+    accountId: number | undefined,
   ): string | undefined => {
     if (!accountId || !accountImages.has(accountId)) {
       return undefined;
@@ -659,7 +732,7 @@ const BudgetPage: React.FC = () => {
       // Expense: progress toward negative goal
       return Math.min(
         100,
-        Math.abs((occ.amountPaid / totalBudgetAmount) * 100)
+        Math.abs((occ.amountPaid / totalBudgetAmount) * 100),
       );
     } else {
       // Income: progress toward positive goal
@@ -668,7 +741,7 @@ const BudgetPage: React.FC = () => {
   };
 
   const getBudgetPeriodBoundaries = (
-    period: "month" | "quarter" | "year"
+    period: "month" | "quarter" | "year",
   ): { start: Date; end: Date; label: string } => {
     const today = new Date();
     const year = today.getFullYear();
@@ -702,7 +775,7 @@ const BudgetPage: React.FC = () => {
   };
 
   const calculateBudgetedAmounts = (
-    period: "month" | "quarter" | "year"
+    period: "month" | "quarter" | "year",
   ): {
     totalExpense: number;
     totalIncome: number;
@@ -918,7 +991,7 @@ const BudgetPage: React.FC = () => {
   const getInitialGoalIndex = (): number => {
     const allGoals = getAllGoals();
     const firstIncompleteIndex = allGoals.findIndex(
-      (goal) => !goal.isCompleted
+      (goal) => !goal.isCompleted,
     );
 
     return firstIncompleteIndex >= 0 ? firstIncompleteIndex : 0;
@@ -961,6 +1034,12 @@ const BudgetPage: React.FC = () => {
           </IonButtons>
           <IonTitle>Budget</IonTitle>
           <IonButtons slot="end">
+            <IonButton
+              onClick={() => history.push("/budget/history")}
+              title="Budget History"
+            >
+              <IonIcon icon={timeOutline} />
+            </IonButton>
             <IonButton
               onClick={async () => {
                 try {
@@ -1105,7 +1184,7 @@ const BudgetPage: React.FC = () => {
                                 }}
                               >
                                 {getRecipientName(
-                                  currentGoal.budget.recipientId
+                                  currentGoal.budget.recipientId,
                                 )}
                               </p>
                               <p
@@ -1142,7 +1221,7 @@ const BudgetPage: React.FC = () => {
                                     day: "2-digit",
                                     month: "short",
                                     year: "numeric",
-                                  }
+                                  },
                                 )}
                               </p>
                             </IonCol>
@@ -1158,7 +1237,7 @@ const BudgetPage: React.FC = () => {
                                 }}
                               >
                                 {Math.abs(
-                                  currentGoal.amountPaid
+                                  currentGoal.amountPaid,
                                 ).toLocaleString(undefined, {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
@@ -1170,7 +1249,7 @@ const BudgetPage: React.FC = () => {
                                 of{" "}
                                 {Math.abs(
                                   currentGoal.budget.amount +
-                                    (currentGoal.budget.transactionCost || 0)
+                                    (currentGoal.budget.transactionCost || 0),
                                 ).toLocaleString(undefined, {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
@@ -1193,14 +1272,14 @@ const BudgetPage: React.FC = () => {
                                           ? "#2dd36f"
                                           : "rgb(68, 124, 224)",
                                       width: `${getProgressPercentage(
-                                        currentGoal
+                                        currentGoal,
                                       )}%`,
                                     }}
                                   />
                                 </div>
                                 <div className="progress-percentage">
                                   {Math.round(
-                                    getProgressPercentage(currentGoal)
+                                    getProgressPercentage(currentGoal),
                                   )}
                                   %
                                 </div>
@@ -1253,7 +1332,7 @@ const BudgetPage: React.FC = () => {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   history.push(
-                                    `/budget/edit/${currentGoal.budget.id}`
+                                    `/budget/edit/${currentGoal.budget.id}`,
                                   );
                                 }}
                                 title="Edit Goal"
@@ -1307,7 +1386,7 @@ const BudgetPage: React.FC = () => {
                   <IonList style={{ borderRadius: "4px" }}>
                     {occurrences.map((occ) => (
                       <IonItem
-                        key={`${occ.budgetId}-${occ.dueDate.getTime()}`}
+                        key={`${occ.budgetSnapshotId ?? "legacy"}-${occ.budgetId}-${occ.dueDate.getTime()}`}
                         onClick={() => {
                           setSelectedBudgetForCompletion(occ);
                           setShowCompleteModal(true);
@@ -1370,10 +1449,10 @@ const BudgetPage: React.FC = () => {
                                     {getAccountImage(occ.budget.accountId) ? (
                                       <IonImg
                                         src={getAccountImage(
-                                          occ.budget.accountId
+                                          occ.budget.accountId,
                                         )}
                                         alt={getAccountName(
-                                          occ.budget.accountId
+                                          occ.budget.accountId,
                                         )}
                                       />
                                     ) : (
@@ -1389,7 +1468,7 @@ const BudgetPage: React.FC = () => {
                                         }}
                                       >
                                         {getAccountName(
-                                          occ.budget.accountId
+                                          occ.budget.accountId,
                                         ).charAt(0)}
                                       </div>
                                     )}
@@ -1457,7 +1536,7 @@ const BudgetPage: React.FC = () => {
                                   {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2,
-                                  }
+                                  },
                                 )}
                               </div>
                               <div
@@ -1466,7 +1545,7 @@ const BudgetPage: React.FC = () => {
                                 of{" "}
                                 {Math.abs(
                                   occ.budget.amount +
-                                    (occ.budget.transactionCost || 0)
+                                    (occ.budget.transactionCost || 0),
                                 ).toLocaleString(undefined, {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
@@ -1500,7 +1579,7 @@ const BudgetPage: React.FC = () => {
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       history.push(
-                                        `/budget/edit/${occ.budget.id}`
+                                        `/budget/edit/${occ.budget.id}`,
                                       );
                                     }}
                                     title="Edit Budget Item"
@@ -1568,6 +1647,7 @@ const BudgetPage: React.FC = () => {
         onClose={() => {
           setShowLinkModal(false);
           setBudgetIdForLinking(undefined);
+          setBudgetSnapshotIdForLinking(undefined);
           setBudgetOccurrenceDateForLinking(undefined);
           setMatchingTransactionsForLink([]);
         }}

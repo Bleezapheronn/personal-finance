@@ -31,6 +31,10 @@ import {
   validateDescription,
   ValidationErrors,
 } from "../utils/budgetValidation";
+import {
+  deleteFutureUnlinkedSnapshotsForBudget,
+  ensureBudgetSnapshotCoverage,
+} from "../utils/budgetSnapshots";
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
@@ -60,6 +64,7 @@ const AddBudget: React.FC = () => {
   >("once");
   const [dayOfMonth, setDayOfMonth] = useState<string>("");
   const [intervalDays, setIntervalDays] = useState<string>("");
+  const [remainingCyclesTotal, setRemainingCyclesTotal] = useState<string>("");
   const [isGoal, setIsGoal] = useState(false);
   const [isFlexible, setIsFlexible] = useState(false);
 
@@ -244,7 +249,7 @@ const AddBudget: React.FC = () => {
       descriptionSuggestions
         .filter((item) => fuzzyMatch(description, item.text))
         .slice(0, MAX_SUGGESTIONS),
-    [descriptionSuggestions, description]
+    [descriptionSuggestions, description],
   );
 
   // Handle keyboard navigation
@@ -256,7 +261,7 @@ const AddBudget: React.FC = () => {
       case "ArrowDown":
         e.preventDefault();
         setSelectedSuggestionIndex((prev) =>
-          prev < filteredDescriptions.length - 1 ? prev + 1 : prev
+          prev < filteredDescriptions.length - 1 ? prev + 1 : prev,
         );
         break;
       case "ArrowUp":
@@ -267,7 +272,7 @@ const AddBudget: React.FC = () => {
         e.preventDefault();
         if (selectedSuggestionIndex >= 0) {
           await selectSuggestion(
-            filteredDescriptions[selectedSuggestionIndex].text
+            filteredDescriptions[selectedSuggestionIndex].text,
           );
         }
         break;
@@ -346,7 +351,7 @@ const AddBudget: React.FC = () => {
     const lastDayOfNextMonth = new Date(
       nextMonth.getFullYear(),
       nextMonth.getMonth() + 1,
-      0
+      0,
     ).getDate();
 
     if (originalDay > lastDayOfNextMonth) {
@@ -376,7 +381,7 @@ const AddBudget: React.FC = () => {
             setTransactionCost(
               budget.transactionCost
                 ? Math.abs(budget.transactionCost).toString()
-                : ""
+                : "",
             );
             setCategoryId(budget.categoryId);
             setAccountId(budget.accountId); // CHANGED from paymentChannelId
@@ -391,6 +396,11 @@ const AddBudget: React.FC = () => {
             setDueDate(`${year}-${month}-${day}`);
 
             setFrequency(budget.frequency);
+            setRemainingCyclesTotal(
+              budget.remainingCyclesTotal
+                ? budget.remainingCyclesTotal.toString()
+                : "",
+            );
             if (budget.frequencyDetails?.dayOfMonth) {
               setDayOfMonth(budget.frequencyDetails.dayOfMonth.toString());
             }
@@ -417,7 +427,7 @@ const AddBudget: React.FC = () => {
 
             if (transaction.transactionCost) {
               setTransactionCost(
-                Math.abs(transaction.transactionCost).toString()
+                Math.abs(transaction.transactionCost).toString(),
               );
             }
 
@@ -427,7 +437,7 @@ const AddBudget: React.FC = () => {
 
             setFrequency("monthly");
             const nextMonthDate = getNextMonthDueDate(
-              new Date(transaction.date)
+              new Date(transaction.date),
             );
             setDueDate(nextMonthDate);
 
@@ -480,6 +490,7 @@ const AddBudget: React.FC = () => {
     setFrequency("once");
     setDayOfMonth("");
     setIntervalDays("");
+    setRemainingCyclesTotal("");
     setIsGoal(false);
     setIsFlexible(false);
     setEditingBudget(null);
@@ -499,6 +510,7 @@ const AddBudget: React.FC = () => {
       categoryId,
       accountId, // CHANGED from paymentMethodId
       recipientId,
+      remainingCyclesTotal,
       frequency,
       dayOfMonth: frequency === "monthly" ? dayOfMonth : undefined,
       intervalDays: frequency === "custom" ? intervalDays : undefined,
@@ -507,7 +519,7 @@ const AddBudget: React.FC = () => {
     if (!formValidation.isValid) {
       setFieldErrors(formValidation.errors);
       setErrorMsg(
-        formValidation.errorMessage || "Please fill in all required fields."
+        formValidation.errorMessage || "Please fill in all required fields.",
       );
       return;
     }
@@ -549,6 +561,10 @@ const AddBudget: React.FC = () => {
         frequencyDetails.intervalDays = parseInt(intervalDays, 10);
       }
 
+      const parsedRemainingCycles = remainingCyclesTotal.trim()
+        ? parseInt(remainingCyclesTotal, 10)
+        : null;
+
       const budgetData: Omit<Budget, "id"> = {
         description: description.trim(),
         amount: numericAmount,
@@ -565,30 +581,24 @@ const AddBudget: React.FC = () => {
         isGoal: isGoal,
         isFlexible: isFlexible,
         isActive: true,
+        remainingCyclesTotal:
+          parsedRemainingCycles && parsedRemainingCycles > 0
+            ? parsedRemainingCycles
+            : null,
         createdAt: editingBudget?.createdAt || new Date(),
         updatedAt: new Date(),
       };
 
       if (isEditMode && id) {
-        const oldBudget = await db.budgets.get(Number(id));
-
         await db.budgets.update(Number(id), budgetData);
 
-        if (
-          oldBudget &&
-          oldBudget.dueDate.getTime() !== dueDateObj.getTime() &&
-          hasLinkedTransactions
-        ) {
-          const linkedTransactions = await db.transactions
-            .where("budgetId")
-            .equals(Number(id))
-            .toArray();
-
-          for (const txn of linkedTransactions) {
-            await db.transactions.update(txn.id!, {
-              occurrenceDate: dueDateObj,
-            });
-          }
+        // Preserve immutable history by only pruning future snapshots that have no linked transactions.
+        await deleteFutureUnlinkedSnapshotsForBudget(Number(id), new Date());
+        const updatedBudget = await db.budgets.get(Number(id));
+        if (updatedBudget) {
+          const oneYearFromNow = new Date();
+          oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+          await ensureBudgetSnapshotCoverage(updatedBudget, oneYearFromNow);
         }
 
         setSuccessToastMessage("Budget updated successfully!");
@@ -598,7 +608,7 @@ const AddBudget: React.FC = () => {
         setSuccessToastMessage(
           isFromTransaction
             ? "Budget created from transaction successfully!"
-            : "Budget added successfully!"
+            : "Budget added successfully!",
         );
         setShowSuccessToast(true);
       }
@@ -612,7 +622,7 @@ const AddBudget: React.FC = () => {
     } catch (error) {
       console.error("Error saving budget:", error);
       setErrorMsg(
-        `Failed to ${isEditMode ? "update" : "add"} budget. Please try again.`
+        `Failed to ${isEditMode ? "update" : "add"} budget. Please try again.`,
       );
     }
   };
@@ -628,8 +638,8 @@ const AddBudget: React.FC = () => {
             {isEditMode
               ? "Edit Budget"
               : isFromTransaction
-              ? "Create Budget from Transaction"
-              : "Add Budget"}
+                ? "Create Budget from Transaction"
+                : "Add Budget"}
           </IonTitle>
         </IonToolbar>
       </IonHeader>
@@ -964,7 +974,7 @@ const AddBudget: React.FC = () => {
               </IonCol>
 
               {/* Frequency */}
-              <IonCol size="5">
+              <IonCol size="4">
                 <div className="form-input-wrapper">
                   <label className="form-label">
                     Frequency
@@ -991,7 +1001,7 @@ const AddBudget: React.FC = () => {
                             | "weekly"
                             | "monthly"
                             | "yearly"
-                            | "custom"
+                            | "custom",
                         );
                         setDayOfMonth("");
                         setIntervalDays("");
@@ -1032,9 +1042,44 @@ const AddBudget: React.FC = () => {
                 </div>
               </IonCol>
 
+              <IonCol size="3">
+                <div className="form-input-wrapper">
+                  <label className="form-label">
+                    Remaining Cycles (optional)
+                  </label>
+                  <IonInput
+                    className="form-input"
+                    type="number"
+                    placeholder="Empty = Infinite"
+                    value={remainingCyclesTotal}
+                    onIonChange={(e) => {
+                      setRemainingCyclesTotal(e.detail.value ?? "");
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        remainingCyclesTotal: false,
+                      }));
+                    }}
+                    min="1"
+                    inputMode="numeric"
+                  />
+                  {fieldErrors.remainingCyclesTotal && (
+                    <IonText
+                      color="danger"
+                      style={{
+                        fontSize: "0.75rem",
+                        display: "block",
+                        marginTop: "4px",
+                      }}
+                    >
+                      Must be a positive whole number
+                    </IonText>
+                  )}
+                </div>
+              </IonCol>
+
               {/* Day of Month (for monthly) */}
               {frequency === "monthly" && (
-                <IonCol size="3">
+                <IonCol size="2">
                   <div className="form-input-wrapper">
                     <label className="form-label">Day of Month (1-31)</label>
                     <IonInput
@@ -1053,7 +1098,7 @@ const AddBudget: React.FC = () => {
 
               {/* Interval Days (for custom) */}
               {frequency === "custom" && (
-                <IonCol size="3">
+                <IonCol size="2">
                   <div className="form-input-wrapper">
                     <label className="form-label">Repeat Every (N Days)</label>
                     <IonInput
@@ -1101,8 +1146,8 @@ const AddBudget: React.FC = () => {
                   {isEditMode
                     ? "Update Budget"
                     : isFromTransaction
-                    ? "Create Budget"
-                    : "Add Budget"}
+                      ? "Create Budget"
+                      : "Add Budget"}
                 </IonButton>
               </IonCol>
             </IonRow>
