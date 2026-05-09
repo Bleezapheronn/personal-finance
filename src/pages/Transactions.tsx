@@ -422,11 +422,31 @@ const Transactions: React.FC = () => {
     const lastWeekStart = new Date(thisWeekStart);
     lastWeekStart.setDate(thisWeekStart.getDate() - 7);
 
+    const nextWeekStart = new Date(thisWeekStart);
+    nextWeekStart.setDate(thisWeekStart.getDate() + 7);
+
+    const nextMonthStart = new Date(
+      today.getFullYear(),
+      today.getMonth() + 1,
+      1,
+    );
+    const nextMonthEnd = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+
+    const weekAfterNextStart = new Date(nextWeekStart);
+    weekAfterNextStart.setDate(nextWeekStart.getDate() + 7);
+
     // Check which group the transaction belongs to
-    if (txnDateOnly >= thisWeekStart) {
+    if (txnDateOnly >= thisWeekStart && txnDateOnly < nextWeekStart) {
       return "This Week";
     } else if (txnDateOnly >= lastWeekStart) {
       return "Last Week";
+    } else if (
+      txnDateOnly >= nextWeekStart &&
+      txnDateOnly < weekAfterNextStart
+    ) {
+      return "Next Week";
+    } else if (txnDateOnly >= nextMonthStart && txnDateOnly <= nextMonthEnd) {
+      return "Next Month";
     } else if (
       txnDate.getMonth() === today.getMonth() &&
       txnDate.getFullYear() === today.getFullYear()
@@ -523,7 +543,13 @@ const Transactions: React.FC = () => {
 
   const groupedVisibleTransactions = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
-    const groupOrder = ["This Week", "Last Week", "This Month"];
+    const groupOrder = [
+      "This Week",
+      "Last Week",
+      "Next Week",
+      "This Month",
+      "Next Month",
+    ];
 
     visibleTransactions.forEach((txn) => {
       const group = getTimeGroup(txn.date.toString());

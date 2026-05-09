@@ -135,7 +135,7 @@ export const validateTransactionForm = (data: {
 };
 
 /**
- * Validates that the date and time are not in the future
+ * Validates that the date and time are a valid datetime string.
  */
 export const validateDateTime = (dateTimeString: string): ValidationResult => {
   try {
@@ -146,16 +146,6 @@ export const validateDateTime = (dateTimeString: string): ValidationResult => {
         isValid: false,
         errors: { date: true, time: true },
         errorMessage: "Invalid date or time format.",
-      };
-    }
-
-    // Optional: Check if date is not in the future
-    const now = new Date();
-    if (date > now) {
-      return {
-        isValid: false,
-        errors: { date: true, time: true },
-        errorMessage: "Transaction date cannot be in the future.",
       };
     }
 

@@ -1042,7 +1042,26 @@ const AddBudget: React.FC = () => {
                 </div>
               </IonCol>
 
-              <IonCol size="3">
+              {/* Day of Month (for monthly) */}
+              {frequency === "monthly" && (
+                <IonCol size="2">
+                  <div className="form-input-wrapper">
+                    <label className="form-label">Day of Month (1-31)</label>
+                    <IonInput
+                      className="form-input"
+                      type="number"
+                      placeholder="e.g. 5"
+                      value={dayOfMonth}
+                      onIonChange={(e) => setDayOfMonth(e.detail.value ?? "")}
+                      min="1"
+                      max="31"
+                      inputMode="numeric"
+                    />
+                  </div>
+                </IonCol>
+              )}
+
+              <IonCol size="2">
                 <div className="form-input-wrapper">
                   <label className="form-label">
                     Remaining Cycles (optional)
@@ -1076,25 +1095,6 @@ const AddBudget: React.FC = () => {
                   )}
                 </div>
               </IonCol>
-
-              {/* Day of Month (for monthly) */}
-              {frequency === "monthly" && (
-                <IonCol size="2">
-                  <div className="form-input-wrapper">
-                    <label className="form-label">Day of Month (1-31)</label>
-                    <IonInput
-                      className="form-input"
-                      type="number"
-                      placeholder="e.g. 5"
-                      value={dayOfMonth}
-                      onIonChange={(e) => setDayOfMonth(e.detail.value ?? "")}
-                      min="1"
-                      max="31"
-                      inputMode="numeric"
-                    />
-                  </div>
-                </IonCol>
-              )}
 
               {/* Interval Days (for custom) */}
               {frequency === "custom" && (

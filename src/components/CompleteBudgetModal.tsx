@@ -201,13 +201,6 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
         return;
       }
 
-      // Check if transaction date is in future (not allowed)
-      const now = new Date();
-      if (transactionDate > now) {
-        setErrorMsg("Transaction date cannot be in the future");
-        return;
-      }
-
       // Calculate signed amount based on budget type
       const signedAmount =
         budgetOccurrence.budget.amount < 0

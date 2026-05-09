@@ -245,7 +245,7 @@ const BudgetPage: React.FC = () => {
     const budgetById = new Map<number, Budget>();
 
     budgets.forEach((budget) => {
-      if (budget.id && budget.isActive) {
+      if (budget.id) {
         budgetById.set(budget.id, budget);
       }
     });
@@ -591,6 +591,11 @@ const BudgetPage: React.FC = () => {
     const groupOrder = ["Overdue", "This Week", "Next Week", "This Month"];
 
     occurrences.forEach((occ) => {
+      // Keep inactive budgets in totals, but hide them from the list display.
+      if (!occ.budget.isActive) {
+        return;
+      }
+
       // Skip completed occurrences in the Overdue group
       if (occ.timeGroup === "Overdue" && occ.isCompleted) {
         return;
@@ -875,21 +880,32 @@ const BudgetPage: React.FC = () => {
       const occDate = new Date(occ.dueDate);
       occDate.setHours(0, 0, 0, 0);
 
-      // Check if occurrence falls within the period
-      if (occDate >= start && occDate <= end) {
-        const budgetAmount =
-          occ.budget.amount + (occ.budget.transactionCost || 0);
+      const budgetAmount =
+        occ.budget.amount + (occ.budget.transactionCost || 0);
 
+      // Planned amounts are based on budget due date and active budgets only.
+      if (occ.budget.isActive && occDate >= start && occDate <= end) {
         if (budgetAmount < 0) {
-          // Expense
           totalExpense += Math.abs(budgetAmount);
-          expensePaid += Math.abs(occ.amountPaid);
         } else {
-          // Income
           totalIncome += budgetAmount;
-          incomePaid += occ.amountPaid;
         }
       }
+
+      // Paid amounts are based on actual linked transaction dates.
+      occ.linkedTransactions.forEach((txn) => {
+        const txnDate = new Date(txn.date);
+        txnDate.setHours(0, 0, 0, 0);
+
+        if (txnDate >= start && txnDate <= end) {
+          const txnAmount = txn.amount + (txn.transactionCost || 0);
+          if (budgetAmount < 0) {
+            expensePaid += Math.abs(txnAmount);
+          } else {
+            incomePaid += txnAmount;
+          }
+        }
+      });
     });
 
     return { totalExpense, totalIncome, expensePaid, incomePaid };
