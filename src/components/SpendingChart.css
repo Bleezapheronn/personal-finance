@@ -1,0 +1,112 @@
+.spending-chart-card {
+  margin: 0.75rem 1rem 1.5rem 1rem;
+}
+
+.spending-chart-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.spending-chart-filters-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.spending-chart-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.spending-chart-filter-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ion-color-medium-shade);
+}
+
+.spending-chart-month-input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--ion-color-medium);
+  border-radius: 4px;
+  padding: 0 0.6rem;
+  background: var(--ion-background-color);
+  color: var(--ion-text-color);
+  font-family: inherit;
+}
+
+.spending-chart-category-panel {
+  border: 1px solid var(--ion-color-light-shade);
+  border-radius: 8px;
+  padding: 0.8rem;
+  margin-bottom: 1rem;
+  background: color-mix(in srgb, var(--ion-color-light) 34%, transparent);
+}
+
+.spending-chart-category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.spending-chart-category-header h5 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.spending-chart-category-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.spending-chart-category-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 0.8rem;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 0.2rem 0.1rem;
+}
+
+.spending-chart-category-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.spending-chart-hint,
+.spending-chart-empty,
+.spending-chart-error {
+  margin: 0.45rem 0 0;
+  font-size: 0.85rem;
+}
+
+.spending-chart-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 260px;
+}
+
+.spending-chart-plot-area {
+  width: 100%;
+  min-height: 360px;
+}
+
+@media (max-width: 900px) {
+  .spending-chart-filters-row {
+    grid-template-columns: 1fr;
+  }
+
+  .spending-chart-category-list {
+    grid-template-columns: 1fr;
+  }
+}

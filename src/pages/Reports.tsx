@@ -31,6 +31,7 @@ import {
   PeriodType,
   formatCurrency,
 } from "../utils/reportService";
+import SpendingChart from "../components/SpendingChart";
 import "./Reports.css";
 
 const Reports: React.FC = () => {
@@ -89,10 +90,10 @@ const Reports: React.FC = () => {
       case "on-target":
         return "#2dd36f";
       case "above-max":
-        return "#ffc409";
+        return "#eb445c";
       case "below-min-fixed":
       case "below-min-percentage":
-        return "#eb445c";
+        return "#ffc409";
       default:
         return "#999999";
     }
@@ -345,6 +346,8 @@ const Reports: React.FC = () => {
                 ))
               )}
             </div>
+
+            <SpendingChart />
           </>
         )}
       </IonContent>

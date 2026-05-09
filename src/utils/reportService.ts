@@ -28,12 +28,30 @@ export interface PeriodReport {
   bucketReports: BucketReport[];
 }
 
+export interface MonthlyChartDataOptions {
+  bucketId: number;
+  categoryIds: number[];
+  startMonth: string;
+  endMonth: string;
+}
+
+export interface MonthlyChartRow {
+  month: string;
+  monthKey: string;
+  [seriesKey: string]: string | number;
+}
+
+export interface MonthlyChartDataResult {
+  rows: MonthlyChartRow[];
+  seriesKeys: string[];
+}
+
 export type PeriodType = "month" | "quarter" | "year";
 
 // Get date range for a specific period
 export const getDateRangeForPeriod = (
   periodType: PeriodType,
-  date: Date = new Date()
+  date: Date = new Date(),
 ): { start: Date; end: Date; label: string } => {
   const year = date.getFullYear();
   const month = date.getMonth();
@@ -69,7 +87,7 @@ export const getDateRangeForPeriod = (
 // Generate report for a specific period
 export const generatePeriodReport = async (
   periodType: PeriodType,
-  date: Date = new Date()
+  date: Date = new Date(),
 ): Promise<PeriodReport> => {
   const { start, end, label } = getDateRangeForPeriod(periodType, date);
 
@@ -250,6 +268,148 @@ export const getNextPeriod = (periodType: PeriodType, date: Date): Date => {
   }
 
   return newDate;
+};
+
+const parseMonthInput = (
+  monthValue: string,
+): { year: number; monthIndex: number } | null => {
+  const [yearStr, monthStr] = monthValue.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    month < 1 ||
+    month > 12
+  ) {
+    return null;
+  }
+
+  return { year, monthIndex: month - 1 };
+};
+
+const getMonthLabel = (date: Date): string => {
+  return date.toLocaleString("en-US", {
+    month: "short",
+    year: "numeric",
+  });
+};
+
+const getMonthKey = (date: Date): string => {
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}`;
+};
+
+const getMonthSequence = (start: Date, end: Date): Date[] => {
+  const months: Date[] = [];
+  const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+
+  while (cursor <= endMonth) {
+    months.push(new Date(cursor));
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  return months;
+};
+
+export const getMonthlyChartData = async (
+  options: MonthlyChartDataOptions,
+): Promise<MonthlyChartDataResult> => {
+  const parsedStart = parseMonthInput(options.startMonth);
+  const parsedEnd = parseMonthInput(options.endMonth);
+
+  if (!parsedStart || !parsedEnd) {
+    return { rows: [], seriesKeys: [] };
+  }
+
+  const startDate = new Date(parsedStart.year, parsedStart.monthIndex, 1);
+  const endDate = new Date(
+    parsedEnd.year,
+    parsedEnd.monthIndex + 1,
+    0,
+    23,
+    59,
+    59,
+    999,
+  );
+
+  if (startDate > endDate) {
+    return { rows: [], seriesKeys: [] };
+  }
+
+  const [transactions, categories] = await Promise.all([
+    db.transactions.where("date").between(startDate, endDate).toArray(),
+    db.categories.toArray(),
+  ]);
+
+  const categoriesById = new Map<number, { bucketId: number; name: string }>();
+  categories.forEach((category) => {
+    if (!category.id) {
+      return;
+    }
+
+    categoriesById.set(category.id, {
+      bucketId: category.bucketId,
+      name: category.name || `Category ${category.id}`,
+    });
+  });
+
+  const selectedCategoryIds = options.categoryIds.filter((id) =>
+    Number.isFinite(id),
+  );
+  const selectedSet = new Set<number>(selectedCategoryIds);
+
+  const seriesKeys =
+    selectedCategoryIds.length === 0
+      ? ["Total"]
+      : selectedCategoryIds
+          .map((categoryId) => categoriesById.get(categoryId)?.name)
+          .filter((name): name is string => Boolean(name));
+
+  const monthDates = getMonthSequence(startDate, endDate);
+  const rows = monthDates.map((monthDate) => {
+    const row: MonthlyChartRow = {
+      month: getMonthLabel(monthDate),
+      monthKey: getMonthKey(monthDate),
+    };
+
+    seriesKeys.forEach((key) => {
+      row[key] = 0;
+    });
+
+    return row;
+  });
+
+  const rowByMonthKey = new Map(
+    rows.map((row) => [row.monthKey as string, row]),
+  );
+
+  transactions.forEach((txn) => {
+    const categoryMeta = categoriesById.get(txn.categoryId);
+    if (!categoryMeta || categoryMeta.bucketId !== options.bucketId) {
+      return;
+    }
+
+    if (selectedSet.size > 0 && !selectedSet.has(txn.categoryId)) {
+      return;
+    }
+
+    const monthKey = getMonthKey(new Date(txn.date));
+    const row = rowByMonthKey.get(monthKey);
+    if (!row) {
+      return;
+    }
+
+    const amount = Math.abs(txn.amount + (txn.transactionCost || 0));
+    const seriesKey = selectedSet.size > 0 ? categoryMeta.name : "Total";
+    const currentValue =
+      typeof row[seriesKey] === "number" ? (row[seriesKey] as number) : 0;
+    row[seriesKey] = currentValue + amount;
+  });
+
+  return { rows, seriesKeys };
 };
 
 // Format number as comma-separated value

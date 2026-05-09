@@ -251,14 +251,14 @@
 }
 
 .status-above-max {
-  background-color: #ffc409;
-  color: #000;
+  background-color: #eb445c;
+  color: white;
 }
 
 .status-below-min-fixed,
 .status-below-min-percentage {
-  background-color: #eb445c;
-  color: white;
+  background-color: #ffc409;
+  color: #000;
 }
 
 /* ===== REUSABLE SUMMARY STYLES ===== */
