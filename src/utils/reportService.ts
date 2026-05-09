@@ -46,6 +46,21 @@ export interface MonthlyChartDataResult {
   seriesKeys: string[];
 }
 
+export interface BucketCategoryBreakdownItem {
+  categoryId: number;
+  categoryName: string;
+  amount: number;
+  percentage: number;
+}
+
+export interface BucketCategoryBreakdownResult {
+  bucketId: number;
+  bucketName: string;
+  periodLabel: string;
+  totalAmount: number;
+  items: BucketCategoryBreakdownItem[];
+}
+
 export type PeriodType = "month" | "quarter" | "year";
 
 // Get date range for a specific period
@@ -402,14 +417,94 @@ export const getMonthlyChartData = async (
       return;
     }
 
-    const amount = Math.abs(txn.amount + (txn.transactionCost || 0));
+    const amount = txn.amount + (txn.transactionCost || 0);
     const seriesKey = selectedSet.size > 0 ? categoryMeta.name : "Total";
     const currentValue =
       typeof row[seriesKey] === "number" ? (row[seriesKey] as number) : 0;
     row[seriesKey] = currentValue + amount;
   });
 
+  rows.forEach((row) => {
+    seriesKeys.forEach((key) => {
+      const value = row[key];
+      if (typeof value === "number") {
+        row[key] = Math.abs(value);
+      }
+    });
+  });
+
   return { rows, seriesKeys };
+};
+
+export const getCategoryBreakdownForBucket = async (
+  periodType: PeriodType,
+  date: Date,
+  bucketId: number,
+): Promise<BucketCategoryBreakdownResult> => {
+  const { start, end, label } = getDateRangeForPeriod(periodType, date);
+
+  const [transactions, categories, buckets] = await Promise.all([
+    db.transactions.where("date").between(start, end).toArray(),
+    db.categories.toArray(),
+    db.buckets.toArray(),
+  ]);
+
+  const bucket = buckets.find(
+    (item) => item.id === bucketId && item.isActive && !item.excludeFromReports,
+  );
+
+  const bucketCategories = categories.filter(
+    (category) =>
+      category.id && category.bucketId === bucketId && category.isActive,
+  );
+
+  const categoryLookup = new Map(
+    bucketCategories.map((category) => [category.id as number, category]),
+  );
+  const totalsByCategory = new Map<number, number>();
+
+  transactions.forEach((txn) => {
+    const category = categoryLookup.get(txn.categoryId);
+    if (!category) {
+      return;
+    }
+
+    const netAmount = txn.amount + (txn.transactionCost || 0);
+    const current = totalsByCategory.get(category.id as number) || 0;
+    totalsByCategory.set(category.id as number, current + netAmount);
+  });
+
+  const items = bucketCategories
+    .map((category) => {
+      const signedTotal = totalsByCategory.get(category.id as number) || 0;
+      const amount = Math.abs(signedTotal);
+
+      return {
+        categoryId: category.id as number,
+        categoryName: category.name || `Category ${category.id}`,
+        amount,
+      };
+    })
+    .filter((item) => item.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+
+  const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
+
+  const itemsWithPercentages =
+    totalAmount > 0
+      ? items.map((item) => ({
+          ...item,
+          percentage: (item.amount / totalAmount) * 100,
+        }))
+      : [];
+
+  return {
+    bucketId,
+    bucketName: bucket?.name || `Bucket ${bucketId}`,
+    periodLabel: label,
+    totalAmount,
+    items: itemsWithPercentages,
+  };
 };
 
 // Format number as comma-separated value

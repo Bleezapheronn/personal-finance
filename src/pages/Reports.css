@@ -84,6 +84,21 @@
   gap: 0.25rem;
 }
 
+.bucket-name-button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.bucket-name-button:hover .bucket-name,
+.bucket-name-button:focus-visible .bucket-name {
+  text-decoration: underline;
+}
+
 .bucket-header .status-badge {
   flex-shrink: 0;
   align-self: center;

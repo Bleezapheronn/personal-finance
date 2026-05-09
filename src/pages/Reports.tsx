@@ -31,6 +31,7 @@ import {
   PeriodType,
   formatCurrency,
 } from "../utils/reportService";
+import BucketCategoryPieModal from "../components/BucketCategoryPieModal";
 import SpendingChart from "../components/SpendingChart";
 import "./Reports.css";
 
@@ -40,6 +41,10 @@ const Reports: React.FC = () => {
   const [report, setReport] = useState<PeriodReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [selectedBucketForPie, setSelectedBucketForPie] = useState<{
+    bucketId: number;
+    bucketName: string;
+  } | null>(null);
 
   // Load report whenever period type or date changes
   const loadReport = useCallback(async () => {
@@ -66,6 +71,14 @@ const Reports: React.FC = () => {
 
   const handleNextPeriod = () => {
     setCurrentDate(getNextPeriod(periodType, currentDate));
+  };
+
+  const handleBucketClick = (bucketId: number, bucketName: string) => {
+    setSelectedBucketForPie({ bucketId, bucketName });
+  };
+
+  const handleCloseBucketPie = () => {
+    setSelectedBucketForPie(null);
   };
 
   // Get status label
@@ -224,9 +237,22 @@ const Reports: React.FC = () => {
                     <IonCardHeader>
                       <div className="bucket-header">
                         <div>
-                          <IonText>
-                            <h5 className="bucket-name">{bucket.bucketName}</h5>
-                          </IonText>
+                          <button
+                            type="button"
+                            className="bucket-name-button"
+                            onClick={() =>
+                              handleBucketClick(
+                                bucket.bucketId,
+                                bucket.bucketName,
+                              )
+                            }
+                          >
+                            <IonText>
+                              <h5 className="bucket-name">
+                                {bucket.bucketName}
+                              </h5>
+                            </IonText>
+                          </button>
                         </div>
                         <span
                           className={`status-badge status-${bucket.status}`}
@@ -348,6 +374,15 @@ const Reports: React.FC = () => {
             </div>
 
             <SpendingChart />
+
+            <BucketCategoryPieModal
+              isOpen={selectedBucketForPie !== null}
+              bucketId={selectedBucketForPie?.bucketId ?? null}
+              bucketName={selectedBucketForPie?.bucketName ?? "Bucket"}
+              periodType={periodType}
+              periodDate={currentDate}
+              onClose={handleCloseBucketPie}
+            />
           </>
         )}
       </IonContent>
