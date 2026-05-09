@@ -54,6 +54,17 @@ import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
 
+const normalizeToLocalDay = (value: string | Date): Date => {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const parseDateInputToLocalDay = (value: string): Date => {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+};
+
 const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -402,13 +413,11 @@ const Transactions: React.FC = () => {
   };
 
   // Add this helper function before the return statement
-  const getTimeGroup = (dateString: string): string => {
-    const txnDate = new Date(dateString);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  const getTimeGroup = (dateValue: string | Date): string => {
+    const txnDate = new Date(dateValue);
+    const today = normalizeToLocalDay(new Date());
 
-    const txnDateOnly = new Date(txnDate);
-    txnDateOnly.setHours(0, 0, 0, 0);
+    const txnDateOnly = normalizeToLocalDay(dateValue);
 
     // Get the day of week for today
     const todayDay = today.getDay();
@@ -438,8 +447,6 @@ const Transactions: React.FC = () => {
     // Check which group the transaction belongs to
     if (txnDateOnly >= thisWeekStart && txnDateOnly < nextWeekStart) {
       return "This Week";
-    } else if (txnDateOnly >= lastWeekStart) {
-      return "Last Week";
     } else if (
       txnDateOnly >= nextWeekStart &&
       txnDateOnly < weekAfterNextStart
@@ -447,6 +454,8 @@ const Transactions: React.FC = () => {
       return "Next Week";
     } else if (txnDateOnly >= nextMonthStart && txnDateOnly <= nextMonthEnd) {
       return "Next Month";
+    } else if (txnDateOnly >= lastWeekStart && txnDateOnly < thisWeekStart) {
+      return "Last Week";
     } else if (
       txnDate.getMonth() === today.getMonth() &&
       txnDate.getFullYear() === today.getFullYear()
@@ -493,15 +502,17 @@ const Transactions: React.FC = () => {
       }
 
       if (selectedDateFrom) {
-        const txnDate = new Date(txn.date).toISOString().split("T")[0];
-        if (txnDate < selectedDateFrom) {
+        const txnDate = normalizeToLocalDay(txn.date);
+        const fromDate = parseDateInputToLocalDay(selectedDateFrom);
+        if (txnDate < fromDate) {
           return false;
         }
       }
 
       if (selectedDateTo) {
-        const txnDate = new Date(txn.date).toISOString().split("T")[0];
-        if (txnDate > selectedDateTo) {
+        const txnDate = normalizeToLocalDay(txn.date);
+        const toDate = parseDateInputToLocalDay(selectedDateTo);
+        if (txnDate > toDate) {
           return false;
         }
       }
@@ -529,30 +540,36 @@ const Transactions: React.FC = () => {
     categories,
   ]);
 
+  const windowAnchorDate = useMemo(() => {
+    if (!transactions || transactions.length === 0) {
+      return normalizeToLocalDay(new Date());
+    }
+
+    return normalizeToLocalDay(transactions[0].date);
+  }, [transactions]);
+
   const visibleTransactions = useMemo(() => {
-    const cutoffDate = new Date();
-    cutoffDate.setHours(0, 0, 0, 0);
+    const cutoffDate = new Date(windowAnchorDate);
     cutoffDate.setDate(cutoffDate.getDate() - visibleTransactionWindowDays);
 
     return filteredTransactions.filter((txn) => {
-      const txnDate = new Date(txn.date);
-      txnDate.setHours(0, 0, 0, 0);
-      return txnDate >= cutoffDate;
+      const txnDate = normalizeToLocalDay(txn.date);
+      return txnDate >= cutoffDate && txnDate <= windowAnchorDate;
     });
-  }, [filteredTransactions, visibleTransactionWindowDays]);
+  }, [filteredTransactions, visibleTransactionWindowDays, windowAnchorDate]);
 
   const groupedVisibleTransactions = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
     const groupOrder = [
+      "Next Month",
+      "Next Week",
       "This Week",
       "Last Week",
-      "Next Week",
       "This Month",
-      "Next Month",
     ];
 
     visibleTransactions.forEach((txn) => {
-      const group = getTimeGroup(txn.date.toString());
+      const group = getTimeGroup(txn.date);
       if (!groups.has(group)) {
         groups.set(group, []);
       }
@@ -625,18 +642,16 @@ const Transactions: React.FC = () => {
   }, [filteredTransactions, accounts, accountImages]);
 
   useEffect(() => {
-    const cutoffDate = new Date();
-    cutoffDate.setHours(0, 0, 0, 0);
+    const cutoffDate = new Date(windowAnchorDate);
     cutoffDate.setDate(cutoffDate.getDate() - visibleTransactionWindowDays);
 
     const hasOlder = filteredTransactions.some((txn) => {
-      const txnDate = new Date(txn.date);
-      txnDate.setHours(0, 0, 0, 0);
+      const txnDate = normalizeToLocalDay(txn.date);
       return txnDate < cutoffDate;
     });
 
     setHasMoreTransactions(hasOlder);
-  }, [filteredTransactions, visibleTransactionWindowDays]);
+  }, [filteredTransactions, visibleTransactionWindowDays, windowAnchorDate]);
 
   const loadOlderTransactions = (event: CustomEvent<void>) => {
     setVisibleTransactionWindowDays((prev) => prev + TRANSACTION_BATCH_DAYS);
