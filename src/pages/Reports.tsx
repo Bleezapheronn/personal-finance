@@ -23,6 +23,7 @@ import {
   useIonViewWillEnter,
 } from "@ionic/react";
 import { chevronBack, chevronForward } from "ionicons/icons";
+import { db } from "../db";
 import {
   generatePeriodReport,
   getPreviousPeriod,
@@ -79,6 +80,28 @@ const Reports: React.FC = () => {
 
   const handleCloseBucketPie = () => {
     setSelectedBucketForPie(null);
+  };
+
+  const handleIncomeSummaryClick = async () => {
+    if (!report) {
+      return;
+    }
+
+    try {
+      const buckets = await db.buckets.toArray();
+      const incomeBucket = buckets.find((bucket) => bucket.excludeFromReports);
+
+      if (!incomeBucket?.id) {
+        return;
+      }
+
+      setSelectedBucketForPie({
+        bucketId: incomeBucket.id,
+        bucketName: "Total Income",
+      });
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // Get status label
@@ -185,14 +208,18 @@ const Reports: React.FC = () => {
                 <IonGrid>
                   <IonRow>
                     <IonCol size="4">
-                      <div className="summary-item">
+                      <button
+                        type="button"
+                        className="summary-item summary-item-button"
+                        onClick={handleIncomeSummaryClick}
+                      >
                         <IonText color="medium" className="summary-label">
                           Total Income
                         </IonText>
                         <IonText className="summary-value income">
                           {formatCurrency(report.totalIncome)}
                         </IonText>
-                      </div>
+                      </button>
                     </IonCol>
                     <IonCol size="4">
                       <div className="summary-item">
@@ -381,6 +408,9 @@ const Reports: React.FC = () => {
               bucketName={selectedBucketForPie?.bucketName ?? "Bucket"}
               periodType={periodType}
               periodDate={currentDate}
+              includeExcludedBucket={
+                selectedBucketForPie?.bucketName === "Total Income"
+              }
               onClose={handleCloseBucketPie}
             />
           </>

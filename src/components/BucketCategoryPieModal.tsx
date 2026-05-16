@@ -34,6 +34,7 @@ interface BucketCategoryPieModalProps {
   bucketName: string;
   periodType: PeriodType;
   periodDate: Date;
+  includeExcludedBucket?: boolean;
   onClose: () => void;
 }
 
@@ -61,6 +62,7 @@ const BucketCategoryPieModal: React.FC<BucketCategoryPieModalProps> = ({
   bucketName,
   periodType,
   periodDate,
+  includeExcludedBucket = false,
   onClose,
 }) => {
   const [loading, setLoading] = useState(false);
@@ -91,6 +93,7 @@ const BucketCategoryPieModal: React.FC<BucketCategoryPieModalProps> = ({
           periodType,
           periodDate,
           bucketId,
+          includeExcludedBucket,
         );
 
         if (!cancelled) {
@@ -114,7 +117,7 @@ const BucketCategoryPieModal: React.FC<BucketCategoryPieModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [bucketId, isOpen, periodDate, periodType]);
+  }, [bucketId, includeExcludedBucket, isOpen, periodDate, periodType]);
 
   const handleDismiss = () => {
     onClose();

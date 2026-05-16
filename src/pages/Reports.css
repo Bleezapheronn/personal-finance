@@ -52,6 +52,21 @@
   color: white !important;
 }
 
+.summary-item-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.summary-item-button:focus-visible .summary-label,
+.summary-item-button:hover .summary-label {
+  text-decoration: underline;
+}
+
 .section-title {
   padding: 0 1rem 0.5rem 1rem;
   font-weight: 600;

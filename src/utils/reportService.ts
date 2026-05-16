@@ -440,6 +440,7 @@ export const getCategoryBreakdownForBucket = async (
   periodType: PeriodType,
   date: Date,
   bucketId: number,
+  includeExcludedBucket: boolean = false,
 ): Promise<BucketCategoryBreakdownResult> => {
   const { start, end, label } = getDateRangeForPeriod(periodType, date);
 
@@ -450,7 +451,10 @@ export const getCategoryBreakdownForBucket = async (
   ]);
 
   const bucket = buckets.find(
-    (item) => item.id === bucketId && item.isActive && !item.excludeFromReports,
+    (item) =>
+      item.id === bucketId &&
+      item.isActive &&
+      (includeExcludedBucket || !item.excludeFromReports),
   );
 
   const bucketCategories = categories.filter(
