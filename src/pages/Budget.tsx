@@ -250,7 +250,29 @@ const BudgetPage: React.FC = () => {
       }
     });
 
-    const snapshotOccurrences: BudgetOccurrence[] = budgetSnapshots
+    const uniqueSnapshots = new Map<string, BudgetSnapshot>();
+    budgetSnapshots.forEach((snapshot) => {
+      const occurrenceDate = new Date(snapshot.occurrenceDate);
+      occurrenceDate.setHours(0, 0, 0, 0);
+      const key = `${snapshot.budgetId}:${occurrenceDate.getTime()}`;
+      const existing = uniqueSnapshots.get(key);
+
+      if (!existing) {
+        uniqueSnapshots.set(key, snapshot);
+        return;
+      }
+
+      if (
+        new Date(snapshot.updatedAt).getTime() >=
+        new Date(existing.updatedAt).getTime()
+      ) {
+        uniqueSnapshots.set(key, snapshot);
+      }
+    });
+
+    const snapshotOccurrences: BudgetOccurrence[] = Array.from(
+      uniqueSnapshots.values(),
+    )
       .filter((snapshot) => {
         const liveBudget = budgetById.get(snapshot.budgetId);
         if (!liveBudget) return false;

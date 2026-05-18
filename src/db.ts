@@ -381,6 +381,19 @@ const normalizeToDay = (value: Date): Date => {
   return date;
 };
 
+const getSnapshotKey = (budgetId: number, occurrenceDate: Date): string =>
+  `${budgetId}:${normalizeToDay(occurrenceDate).getTime()}`;
+
+const snapshotCreationInFlight = new Map<string, Promise<BudgetSnapshot>>();
+
+let budgetSnapshotMigrationInFlight: Promise<{
+  budgetsProcessed: number;
+  snapshotsCreated: number;
+  transactionsLinked: number;
+  snapshotsDeduplicated: number;
+  transactionsRelinkedFromDuplicates: number;
+}> | null = null;
+
 const getNextOccurrenceDate = (currentDate: Date, budget: Budget): Date => {
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -439,6 +452,65 @@ const getFiniteCycles = (budget: Budget): number => {
   return budget.remainingCyclesTotal;
 };
 
+export const dedupeBudgetSnapshots = async (): Promise<{
+  snapshotsDeduplicated: number;
+  transactionsRelinked: number;
+}> => {
+  const snapshots = await db.budgetSnapshots.toArray();
+  const grouped = new Map<string, BudgetSnapshot[]>();
+
+  snapshots.forEach((snapshot) => {
+    const key = getSnapshotKey(snapshot.budgetId, snapshot.occurrenceDate);
+    const list = grouped.get(key);
+    if (list) {
+      list.push(snapshot);
+    } else {
+      grouped.set(key, [snapshot]);
+    }
+  });
+
+  let snapshotsDeduplicated = 0;
+  let transactionsRelinked = 0;
+
+  await db.transaction("rw", db.budgetSnapshots, db.transactions, async () => {
+    for (const group of grouped.values()) {
+      if (group.length <= 1) {
+        continue;
+      }
+
+      const sorted = group
+        .filter((snapshot) => snapshot.id !== undefined)
+        .sort((a, b) => (a.id as number) - (b.id as number));
+
+      const keep = sorted[0];
+      if (!keep?.id) {
+        continue;
+      }
+
+      for (let i = 1; i < sorted.length; i += 1) {
+        const duplicate = sorted[i];
+        if (!duplicate.id) {
+          continue;
+        }
+
+        const relinked = await db.transactions
+          .where("budgetSnapshotId")
+          .equals(duplicate.id)
+          .modify({ budgetSnapshotId: keep.id });
+
+        if (relinked > 0) {
+          transactionsRelinked += relinked;
+        }
+
+        await db.budgetSnapshots.delete(duplicate.id);
+        snapshotsDeduplicated += 1;
+      }
+    }
+  });
+
+  return { snapshotsDeduplicated, transactionsRelinked };
+};
+
 export const ensureBudgetSnapshotForOccurrence = async (
   budget: Budget,
   occurrenceDateInput: Date,
@@ -452,46 +524,62 @@ export const ensureBudgetSnapshotForOccurrence = async (
   }
 
   const occurrenceDate = normalizeToDay(occurrenceDateInput);
-
-  const existing = await db.budgetSnapshots
-    .where("[budgetId+occurrenceDate]")
-    .equals([budget.id, occurrenceDate])
-    .first();
-
-  if (existing) {
-    return existing;
+  const inFlightKey = getSnapshotKey(budget.id, occurrenceDate);
+  const existingInFlight = snapshotCreationInFlight.get(inFlightKey);
+  if (existingInFlight) {
+    return existingInFlight;
   }
 
-  const now = new Date();
-  const snapshot: Omit<BudgetSnapshot, "id"> = {
-    budgetId: budget.id,
-    occurrenceDate,
-    dueDate: occurrenceDate,
-    cycleIndex: options?.cycleIndex ?? 0,
-    description: budget.description,
-    categoryId: budget.categoryId,
-    accountId: budget.accountId,
-    recipientId: budget.recipientId,
-    amount: budget.amount,
-    transactionCost: budget.transactionCost,
-    frequency: budget.frequency,
-    frequencyDetails: budget.frequencyDetails,
-    isGoal: budget.isGoal,
-    isFlexible: budget.isFlexible,
-    goalPercentage: budget.goalPercentage,
-    goalDirection: budget.goalDirection,
-    remainingCyclesTotal: budget.remainingCyclesTotal ?? null,
-    isHistorical: options?.isHistorical ?? occurrenceDate < normalizeToDay(now),
-    sourceBudgetUpdatedAt: budget.updatedAt,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const createPromise = (async () => {
+    const existing = await db.budgetSnapshots
+      .where("[budgetId+occurrenceDate]")
+      .equals([budget.id as number, occurrenceDate])
+      .first();
 
-  const id = await db.budgetSnapshots.add(snapshot);
-  return {
-    ...snapshot,
-    id,
-  };
+    if (existing) {
+      return existing;
+    }
+
+    const now = new Date();
+    const snapshot: Omit<BudgetSnapshot, "id"> = {
+      budgetId: budget.id as number,
+      occurrenceDate,
+      dueDate: occurrenceDate,
+      cycleIndex: options?.cycleIndex ?? 0,
+      description: budget.description,
+      categoryId: budget.categoryId,
+      accountId: budget.accountId,
+      recipientId: budget.recipientId,
+      amount: budget.amount,
+      transactionCost: budget.transactionCost,
+      frequency: budget.frequency,
+      frequencyDetails: budget.frequencyDetails,
+      isGoal: budget.isGoal,
+      isFlexible: budget.isFlexible,
+      goalPercentage: budget.goalPercentage,
+      goalDirection: budget.goalDirection,
+      remainingCyclesTotal: budget.remainingCyclesTotal ?? null,
+      isHistorical:
+        options?.isHistorical ?? occurrenceDate < normalizeToDay(now),
+      sourceBudgetUpdatedAt: budget.updatedAt,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const id = await db.budgetSnapshots.add(snapshot);
+    return {
+      ...snapshot,
+      id,
+    };
+  })();
+
+  snapshotCreationInFlight.set(inFlightKey, createPromise);
+
+  try {
+    return await createPromise;
+  } finally {
+    snapshotCreationInFlight.delete(inFlightKey);
+  }
 };
 
 const getClosestOccurrenceAtOrBefore = (
@@ -535,109 +623,130 @@ export const migrateBudgetSnapshots = async (): Promise<{
   budgetsProcessed: number;
   snapshotsCreated: number;
   transactionsLinked: number;
+  snapshotsDeduplicated: number;
+  transactionsRelinkedFromDuplicates: number;
 }> => {
-  const summary = {
-    budgetsProcessed: 0,
-    snapshotsCreated: 0,
-    transactionsLinked: 0,
-  };
+  if (budgetSnapshotMigrationInFlight) {
+    return budgetSnapshotMigrationInFlight;
+  }
 
-  try {
-    const allBudgets = await db.budgets.toArray();
-    const today = normalizeToDay(new Date());
+  budgetSnapshotMigrationInFlight = (async () => {
+    const summary = {
+      budgetsProcessed: 0,
+      snapshotsCreated: 0,
+      transactionsLinked: 0,
+      snapshotsDeduplicated: 0,
+      transactionsRelinkedFromDuplicates: 0,
+    };
 
-    for (const budget of allBudgets) {
-      if (!budget.id) {
-        continue;
-      }
+    try {
+      const dedupeResult = await dedupeBudgetSnapshots();
+      summary.snapshotsDeduplicated = dedupeResult.snapshotsDeduplicated;
+      summary.transactionsRelinkedFromDuplicates =
+        dedupeResult.transactionsRelinked;
 
-      summary.budgetsProcessed += 1;
+      const allBudgets = await db.budgets.toArray();
+      const today = normalizeToDay(new Date());
 
-      const maxCycles = getFiniteCycles(budget);
-      if (maxCycles === 0) {
-        continue;
-      }
-
-      let occurrenceDate = normalizeToDay(budget.dueDate);
-      let cycleIndex = 1;
-      let guard = 0;
-
-      while (occurrenceDate <= today && cycleIndex <= maxCycles) {
-        const existing = await db.budgetSnapshots
-          .where("[budgetId+occurrenceDate]")
-          .equals([budget.id, occurrenceDate])
-          .first();
-
-        if (!existing) {
-          await ensureBudgetSnapshotForOccurrence(budget, occurrenceDate, {
-            cycleIndex,
-            isHistorical: true,
-          });
-          summary.snapshotsCreated += 1;
+      for (const budget of allBudgets) {
+        if (!budget.id) {
+          continue;
         }
 
-        if (budget.frequency === "once") {
-          break;
+        summary.budgetsProcessed += 1;
+
+        const maxCycles = getFiniteCycles(budget);
+        if (maxCycles === 0) {
+          continue;
         }
 
-        occurrenceDate = normalizeToDay(
-          getNextOccurrenceDate(occurrenceDate, budget),
-        );
-        cycleIndex += 1;
+        let occurrenceDate = normalizeToDay(budget.dueDate);
+        let cycleIndex = 1;
+        let guard = 0;
 
-        guard += 1;
-        if (guard > 5000) {
-          break;
+        while (occurrenceDate <= today && cycleIndex <= maxCycles) {
+          const existing = await db.budgetSnapshots
+            .where("[budgetId+occurrenceDate]")
+            .equals([budget.id, occurrenceDate])
+            .first();
+
+          if (!existing) {
+            await ensureBudgetSnapshotForOccurrence(budget, occurrenceDate, {
+              cycleIndex,
+              isHistorical: true,
+            });
+            summary.snapshotsCreated += 1;
+          }
+
+          if (budget.frequency === "once") {
+            break;
+          }
+
+          occurrenceDate = normalizeToDay(
+            getNextOccurrenceDate(occurrenceDate, budget),
+          );
+          cycleIndex += 1;
+
+          guard += 1;
+          if (guard > 5000) {
+            break;
+          }
         }
       }
-    }
 
-    const budgetMap = new Map<number, Budget>();
-    allBudgets.forEach((b) => {
-      if (b.id) {
-        budgetMap.set(b.id, b);
-      }
-    });
-
-    const transactionsNeedingSnapshot = await db.transactions
-      .filter((txn) => !!txn.budgetId && !txn.budgetSnapshotId)
-      .toArray();
-
-    for (const txn of transactionsNeedingSnapshot) {
-      if (!txn.id || !txn.budgetId) {
-        continue;
-      }
-
-      const budget = budgetMap.get(txn.budgetId);
-      if (!budget) {
-        continue;
-      }
-
-      const target = txn.occurrenceDate
-        ? getClosestOccurrenceAtOrBefore(budget, txn.occurrenceDate)
-        : getClosestOccurrenceAtOrBefore(budget, txn.date);
-
-      const snapshot = await ensureBudgetSnapshotForOccurrence(
-        budget,
-        target.occurrenceDate,
-        {
-          cycleIndex: target.cycleIndex,
-          isHistorical: target.occurrenceDate < today,
-        },
-      );
-
-      await db.transactions.update(txn.id, {
-        budgetSnapshotId: snapshot.id,
-        occurrenceDate: target.occurrenceDate,
+      const budgetMap = new Map<number, Budget>();
+      allBudgets.forEach((b) => {
+        if (b.id) {
+          budgetMap.set(b.id, b);
+        }
       });
 
-      summary.transactionsLinked += 1;
-    }
+      const transactionsNeedingSnapshot = await db.transactions
+        .filter((txn) => !!txn.budgetId && !txn.budgetSnapshotId)
+        .toArray();
 
-    return summary;
-  } catch (error) {
-    console.error("❌ Error during budget snapshot migration:", error);
-    throw error;
+      for (const txn of transactionsNeedingSnapshot) {
+        if (!txn.id || !txn.budgetId) {
+          continue;
+        }
+
+        const budget = budgetMap.get(txn.budgetId);
+        if (!budget) {
+          continue;
+        }
+
+        const target = txn.occurrenceDate
+          ? getClosestOccurrenceAtOrBefore(budget, txn.occurrenceDate)
+          : getClosestOccurrenceAtOrBefore(budget, txn.date);
+
+        const snapshot = await ensureBudgetSnapshotForOccurrence(
+          budget,
+          target.occurrenceDate,
+          {
+            cycleIndex: target.cycleIndex,
+            isHistorical: target.occurrenceDate < today,
+          },
+        );
+
+        await db.transactions.update(txn.id, {
+          budgetSnapshotId: snapshot.id,
+          occurrenceDate: target.occurrenceDate,
+        });
+
+        summary.transactionsLinked += 1;
+      }
+
+      return summary;
+    } catch (error) {
+      console.error("❌ Error during budget snapshot migration:", error);
+      throw error;
+    }
+  })();
+
+  try {
+    return await budgetSnapshotMigrationInFlight;
+  } finally {
+    budgetSnapshotMigrationInFlight = null;
   }
 };
 
