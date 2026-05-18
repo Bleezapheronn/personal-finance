@@ -184,7 +184,7 @@ const BucketCategoryPieModal: React.FC<BucketCategoryPieModalProps> = ({
                     ))}
                   </Pie>
                   <Tooltip
-                    formatter={(value: number | string, name, props) => {
+                    formatter={(value, name, props) => {
                       const item = props.payload as {
                         amount: number;
                         percentage: number;

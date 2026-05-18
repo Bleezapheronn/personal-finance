@@ -22,6 +22,7 @@ export const validateBudgetForm = (data: {
   frequency: string;
   dayOfMonth?: string;
   intervalDays?: string;
+  goalPercentage?: string;
 }): ValidationResult => {
   const errors: ValidationErrors = {};
   const errorMessages: string[] = [];
@@ -32,8 +33,13 @@ export const validateBudgetForm = (data: {
     errorMessages.push("Description is required");
   }
 
-  // Validate amount
-  if (!data.amount || !data.amount.trim()) {
+  // Validate amount — not required when a valid goalPercentage is provided
+  const hasGoalPercentage =
+    data.goalPercentage &&
+    data.goalPercentage.trim() !== "" &&
+    !isNaN(parseFloat(data.goalPercentage)) &&
+    parseFloat(data.goalPercentage) > 0;
+  if (!hasGoalPercentage && (!data.amount || !data.amount.trim())) {
     errors.amount = true;
     errorMessages.push("Amount is required");
   }

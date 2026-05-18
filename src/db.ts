@@ -40,6 +40,8 @@ export interface Budget {
   };
   isGoal: boolean;
   isFlexible: boolean;
+  goalPercentage?: number;
+  goalDirection?: "income" | "expense";
   isActive: boolean;
   remainingCyclesTotal?: number | null;
   dueDate: Date;
@@ -67,6 +69,8 @@ export interface BudgetSnapshot {
   };
   isGoal: boolean;
   isFlexible: boolean;
+  goalPercentage?: number;
+  goalDirection?: "income" | "expense";
   remainingCyclesTotal?: number | null;
   isHistorical: boolean;
   sourceBudgetUpdatedAt: Date;
@@ -191,6 +195,15 @@ export class FinanceDB extends Dexie {
     });
 
     this.version(13).stores({
+      transactions:
+        "++id, categoryId, paymentChannelId, recipientId, date, amount, originalAmount, originalCurrency, exchangeRate, transactionReference, description, transferPairId, isTransfer, budgetId, occurrenceDate, budgetSnapshotId",
+      budgets:
+        "++id, description, categoryId, paymentChannelId, dueDate, isGoal, isFlexible, isActive, frequency, remainingCyclesTotal, createdAt, updatedAt",
+      budgetSnapshots:
+        "++id, budgetId, occurrenceDate, dueDate, cycleIndex, [budgetId+occurrenceDate], isHistorical, createdAt, updatedAt",
+    });
+
+    this.version(14).stores({
       transactions:
         "++id, categoryId, paymentChannelId, recipientId, date, amount, originalAmount, originalCurrency, exchangeRate, transactionReference, description, transferPairId, isTransfer, budgetId, occurrenceDate, budgetSnapshotId",
       budgets:
@@ -465,6 +478,8 @@ export const ensureBudgetSnapshotForOccurrence = async (
     frequencyDetails: budget.frequencyDetails,
     isGoal: budget.isGoal,
     isFlexible: budget.isFlexible,
+    goalPercentage: budget.goalPercentage,
+    goalDirection: budget.goalDirection,
     remainingCyclesTotal: budget.remainingCyclesTotal ?? null,
     isHistorical: options?.isHistorical ?? occurrenceDate < normalizeToDay(now),
     sourceBudgetUpdatedAt: budget.updatedAt,

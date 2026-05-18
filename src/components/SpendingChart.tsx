@@ -331,7 +331,7 @@ const SpendingChart: React.FC = () => {
                   tickFormatter={(value) => formatCurrency(Number(value) || 0)}
                 />
                 <Tooltip
-                  formatter={(value: number | string, name) => [
+                  formatter={(value, name) => [
                     formatCurrency(Number(value) || 0),
                     String(name),
                   ]}

@@ -277,6 +277,8 @@ const BudgetPage: React.FC = () => {
           frequencyDetails: snapshot.frequencyDetails,
           isGoal: snapshot.isGoal,
           isFlexible: snapshot.isFlexible,
+          goalPercentage: snapshot.goalPercentage,
+          goalDirection: snapshot.goalDirection,
           remainingCyclesTotal: snapshot.remainingCyclesTotal,
           dueDate,
           updatedAt: snapshot.sourceBudgetUpdatedAt,
@@ -288,10 +290,14 @@ const BudgetPage: React.FC = () => {
           dueDate,
         );
 
-        const isCompleted =
-          snapshotBudget.amount < 0
-            ? amountPaid <= snapshotBudget.amount
-            : amountPaid >= snapshotBudget.amount;
+        const effectiveTarget = getEffectiveBudgetTarget(snapshotBudget);
+        const isExpense =
+          snapshotBudget.goalDirection === "expense" ||
+          (snapshotBudget.goalDirection === undefined &&
+            snapshotBudget.amount < 0);
+        const isCompleted = isExpense
+          ? amountPaid <= -effectiveTarget
+          : amountPaid >= effectiveTarget;
 
         return {
           budgetSnapshotId: snapshot.id,
@@ -332,10 +338,13 @@ const BudgetPage: React.FC = () => {
             budgetId,
             dueDate,
           );
-          const isCompleted =
-            budget.amount < 0
-              ? amountPaid <= budget.amount
-              : amountPaid >= budget.amount;
+          const onceTarget = getEffectiveBudgetTarget(budget);
+          const isOnceExpense =
+            budget.goalDirection === "expense" ||
+            (budget.goalDirection === undefined && budget.amount < 0);
+          const isCompleted = isOnceExpense
+            ? amountPaid <= -onceTarget
+            : amountPaid >= onceTarget;
 
           occurrences.push({
             budgetId,
@@ -363,10 +372,11 @@ const BudgetPage: React.FC = () => {
               budgetId,
               currentDueDate,
             );
+            const recurringTarget = getEffectiveBudgetTarget(budget);
             const isCompleted =
               budget.amount < 0
-                ? amountPaid <= budget.amount
-                : amountPaid >= budget.amount;
+                ? amountPaid <= -recurringTarget
+                : amountPaid >= recurringTarget;
 
             occurrences.push({
               budgetId,
@@ -808,21 +818,63 @@ const BudgetPage: React.FC = () => {
       ? recipients.find((r) => r.id === recipientId)?.name || "—"
       : "—";
 
+  // Sum of actual income transactions from Jan 1 of this year to today.
+  // Uses the bucket flagged as excludeFromReports to identify income categories.
+  const yearToDateIncome = useMemo(() => {
+    const incomeBucket = buckets.find((b) => b.excludeFromReports);
+    if (!incomeBucket) return 0;
+    const incomeCategoryIds = new Set(
+      categories
+        .filter((c) => c.bucketId === incomeBucket.id)
+        .map((c) => c.id!),
+    );
+    const jan1 = new Date(new Date().getFullYear(), 0, 1);
+    jan1.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    return transactions
+      .filter((txn) => {
+        const d = new Date(txn.date);
+        return incomeCategoryIds.has(txn.categoryId) && d >= jan1 && d <= today;
+      })
+      .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
+  }, [transactions, categories, buckets]);
+
+  // Returns the absolute effective target for a budget.
+  // When goalPercentage is set: max(percentage × YTD income, optional floor).
+  // Otherwise: abs(amount + transactionCost) as before.
+  const getEffectiveBudgetTarget = (budget: Budget): number => {
+    if (budget.goalPercentage && budget.goalPercentage > 0) {
+      const percentageAmount = (budget.goalPercentage / 100) * yearToDateIncome;
+      const floor = Math.abs(
+        (budget.amount || 0) + (budget.transactionCost || 0),
+      );
+      return Math.max(percentageAmount, floor);
+    }
+    return Math.abs(budget.amount + (budget.transactionCost || 0));
+  };
+
+  const isExpenseBudget = (
+    budget: Pick<Budget, "goalDirection" | "amount">,
+  ): boolean => {
+    return (
+      budget.goalDirection === "expense" ||
+      (budget.goalDirection === undefined && budget.amount < 0)
+    );
+  };
+
   const getProgressPercentage = (occ: BudgetOccurrence): number => {
     const budget = occ.budget;
-    const totalBudgetAmount = budget.amount + (budget.transactionCost || 0);
+    const effectiveTarget = getEffectiveBudgetTarget(budget);
 
-    if (totalBudgetAmount === 0) return 0;
+    if (effectiveTarget === 0) return 0;
 
-    if (totalBudgetAmount < 0) {
-      // Expense: progress toward negative goal
-      return Math.min(
-        100,
-        Math.abs((occ.amountPaid / totalBudgetAmount) * 100),
-      );
+    const isExpense = isExpenseBudget(budget);
+
+    if (isExpense) {
+      return Math.min(100, (Math.abs(occ.amountPaid) / effectiveTarget) * 100);
     } else {
-      // Income: progress toward positive goal
-      return Math.min(100, (occ.amountPaid / totalBudgetAmount) * 100);
+      return Math.min(100, (occ.amountPaid / effectiveTarget) * 100);
     }
   };
 
@@ -880,8 +932,11 @@ const BudgetPage: React.FC = () => {
       const occDate = new Date(occ.dueDate);
       occDate.setHours(0, 0, 0, 0);
 
-      const budgetAmount =
-        occ.budget.amount + (occ.budget.transactionCost || 0);
+      const effectiveAbs = getEffectiveBudgetTarget(occ.budget);
+      const isExpense =
+        occ.budget.goalDirection === "expense" ||
+        (occ.budget.goalDirection === undefined && occ.budget.amount < 0);
+      const budgetAmount = isExpense ? -effectiveAbs : effectiveAbs;
 
       // Planned amounts are based on budget due date and active budgets only.
       if (occ.budget.isActive && occDate >= start && occDate <= end) {
@@ -1338,10 +1393,9 @@ const BudgetPage: React.FC = () => {
                                 style={{
                                   fontSize: "1.2rem",
                                   fontWeight: "bold",
-                                  color:
-                                    currentGoal.budget.amount < 0
-                                      ? "#eb445c"
-                                      : "#009688",
+                                  color: isExpenseBudget(currentGoal.budget)
+                                    ? "#eb445c"
+                                    : "#009688",
                                 }}
                               >
                                 {Math.abs(
@@ -1355,13 +1409,24 @@ const BudgetPage: React.FC = () => {
                                 style={{ fontSize: "0.85rem", color: "#999" }}
                               >
                                 of{" "}
-                                {Math.abs(
-                                  currentGoal.budget.amount +
-                                    (currentGoal.budget.transactionCost || 0),
+                                {getEffectiveBudgetTarget(
+                                  currentGoal.budget,
                                 ).toLocaleString(undefined, {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
                                 })}
+                                {currentGoal.budget.goalPercentage ? (
+                                  <span
+                                    style={{
+                                      marginLeft: "4px",
+                                      fontSize: "0.75rem",
+                                      color: "#aaa",
+                                    }}
+                                  >
+                                    ({currentGoal.budget.goalPercentage}% of
+                                    income)
+                                  </span>
+                                ) : null}
                               </div>
                             </IonCol>
                           </IonRow>
@@ -1589,12 +1654,12 @@ const BudgetPage: React.FC = () => {
                                     <div className="item-metadata">
                                       <IonIcon
                                         icon={
-                                          occ.budget.amount < 0
+                                          isExpenseBudget(occ.budget)
                                             ? arrowUpCircle
                                             : arrowDownCircle
                                         }
                                         className={`item-metadata-icon ${
-                                          occ.budget.amount < 0
+                                          isExpenseBudget(occ.budget)
                                             ? "expense"
                                             : "income"
                                         }`}
@@ -1640,10 +1705,9 @@ const BudgetPage: React.FC = () => {
                                   style={{
                                     fontSize: "1.2rem",
                                     fontWeight: "bold",
-                                    color:
-                                      occ.budget.amount < 0
-                                        ? "#eb445c"
-                                        : "#009688",
+                                    color: isExpenseBudget(occ.budget)
+                                      ? "#eb445c"
+                                      : "#009688",
                                   }}
                                 >
                                   {Math.abs(occ.amountPaid).toLocaleString(
@@ -1658,13 +1722,23 @@ const BudgetPage: React.FC = () => {
                                   style={{ fontSize: "0.85rem", color: "#999" }}
                                 >
                                   of{" "}
-                                  {Math.abs(
-                                    occ.budget.amount +
-                                      (occ.budget.transactionCost || 0),
+                                  {getEffectiveBudgetTarget(
+                                    occ.budget,
                                   ).toLocaleString(undefined, {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2,
                                   })}
+                                  {occ.budget.goalPercentage ? (
+                                    <span
+                                      style={{
+                                        marginLeft: "4px",
+                                        fontSize: "0.75rem",
+                                        color: "#aaa",
+                                      }}
+                                    >
+                                      ({occ.budget.goalPercentage}% of income)
+                                    </span>
+                                  ) : null}
                                 </div>
                                 <IonProgressBar
                                   value={getProgressPercentage(occ) / 100}

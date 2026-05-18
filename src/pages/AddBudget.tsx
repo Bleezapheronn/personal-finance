@@ -67,6 +67,8 @@ const AddBudget: React.FC = () => {
   const [remainingCyclesTotal, setRemainingCyclesTotal] = useState<string>("");
   const [isGoal, setIsGoal] = useState(false);
   const [isFlexible, setIsFlexible] = useState(false);
+  const [amountMode, setAmountMode] = useState<"fixed" | "percentage">("fixed");
+  const [goalPercentage, setGoalPercentage] = useState<string>("");
 
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
 
@@ -388,6 +390,19 @@ const AddBudget: React.FC = () => {
             setRecipientId(budget.recipientId);
             setIsGoal(budget.isGoal);
             setIsFlexible(budget.isFlexible ?? false);
+            if (budget.goalPercentage) {
+              setAmountMode("percentage");
+              setGoalPercentage(String(budget.goalPercentage));
+              // Set budgetType based on goalDirection for percentage budgets
+              if (budget.goalDirection === "income") {
+                setBudgetType("income");
+              } else if (budget.goalDirection === "expense") {
+                setBudgetType("expense");
+              }
+            } else {
+              setAmountMode("fixed");
+              setGoalPercentage("");
+            }
 
             const dueDateObj = new Date(budget.dueDate);
             const year = dueDateObj.getFullYear();
@@ -493,6 +508,8 @@ const AddBudget: React.FC = () => {
     setRemainingCyclesTotal("");
     setIsGoal(false);
     setIsFlexible(false);
+    setAmountMode("fixed");
+    setGoalPercentage("");
     setEditingBudget(null);
   };
 
@@ -514,6 +531,7 @@ const AddBudget: React.FC = () => {
       frequency,
       dayOfMonth: frequency === "monthly" ? dayOfMonth : undefined,
       intervalDays: frequency === "custom" ? intervalDays : undefined,
+      goalPercentage: amountMode === "percentage" ? goalPercentage : undefined,
     });
 
     if (!formValidation.isValid) {
@@ -524,11 +542,23 @@ const AddBudget: React.FC = () => {
       return;
     }
 
-    // Validate amount
-    const amountValidation = validateAmount(amount);
-    if (!amountValidation.isValid) {
-      setFieldErrors(amountValidation.errors);
-      setErrorMsg(amountValidation.errorMessage || "Invalid amount.");
+    // Validate amount — skip when a valid percentage is provided instead
+    const hasValidPercentage =
+      amountMode === "percentage" &&
+      goalPercentage.trim() !== "" &&
+      !isNaN(parseFloat(goalPercentage)) &&
+      parseFloat(goalPercentage) > 0;
+
+    if (!hasValidPercentage) {
+      const amountValidation = validateAmount(amount);
+      if (!amountValidation.isValid) {
+        setFieldErrors(amountValidation.errors);
+        setErrorMsg(amountValidation.errorMessage || "Invalid amount.");
+        return;
+      }
+    } else if (parseFloat(goalPercentage) > 100) {
+      setFieldErrors((prev) => ({ ...prev, amount: true }));
+      setErrorMsg("Percentage cannot exceed 100.");
       return;
     }
 
@@ -542,7 +572,7 @@ const AddBudget: React.FC = () => {
 
     try {
       const dueDateObj = new Date(dueDate);
-      const numericAmountRaw = parseFloat(amount);
+      const numericAmountRaw = amount.trim() ? parseFloat(amount) : 0;
       const numericAmount =
         budgetType === "expense"
           ? -Math.abs(numericAmountRaw)
@@ -580,6 +610,16 @@ const AddBudget: React.FC = () => {
             : undefined,
         isGoal: isGoal,
         isFlexible: isFlexible,
+        goalPercentage:
+          amountMode === "percentage" && goalPercentage.trim()
+            ? parseFloat(goalPercentage)
+            : undefined,
+        goalDirection:
+          amountMode === "percentage"
+            ? budgetType === "income"
+              ? "income"
+              : "expense"
+            : undefined,
         isActive: true,
         remainingCyclesTotal:
           parsedRemainingCycles && parsedRemainingCycles > 0
@@ -910,11 +950,63 @@ const AddBudget: React.FC = () => {
               </IonCol>
             </IonRow>
 
+            {/* Amount Mode Toggle */}
+            <IonRow>
+              <IonCol>
+                <div className="form-input-wrapper">
+                  <label className="form-label">Amount Type</label>
+                  <IonSegment
+                    value={amountMode}
+                    onIonChange={(e) =>
+                      setAmountMode(e.detail.value as "fixed" | "percentage")
+                    }
+                  >
+                    <IonSegmentButton value="fixed">
+                      <IonLabel>Fixed Amount</IonLabel>
+                    </IonSegmentButton>
+                    <IonSegmentButton value="percentage">
+                      <IonLabel>% of Income</IonLabel>
+                    </IonSegmentButton>
+                  </IonSegment>
+                </div>
+              </IonCol>
+            </IonRow>
+
             {/* Amount and Transaction Cost */}
             <IonRow>
-              <IonCol size="8">
+              {amountMode === "percentage" && (
+                <IonCol size="3">
+                  <div className="form-input-wrapper">
+                    <label className="form-label">
+                      % of Year-to-Date Income
+                    </label>
+                    <IonInput
+                      className="form-input"
+                      placeholder="e.g. 5"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={goalPercentage}
+                      onIonChange={(e) => {
+                        setGoalPercentage(e.detail.value ?? "");
+                        setFieldErrors((prev) => ({ ...prev, amount: false }));
+                      }}
+                      inputMode="decimal"
+                    />
+                    {fieldErrors.amount && (
+                      <span className="error-message">Required field</span>
+                    )}
+                  </div>
+                </IonCol>
+              )}
+              <IonCol size={amountMode === "percentage" ? "5" : "8"}>
                 <div className="form-input-wrapper">
-                  <label className="form-label">Amount</label>
+                  <label className="form-label">
+                    {amountMode === "percentage"
+                      ? "Minimum Floor (optional)"
+                      : "Amount"}
+                  </label>
                   <IonInput
                     className="form-input"
                     placeholder="e.g. 1,000.00"
@@ -927,7 +1019,7 @@ const AddBudget: React.FC = () => {
                     }}
                     inputMode="decimal"
                   />
-                  {fieldErrors.amount && (
+                  {fieldErrors.amount && amountMode === "fixed" && (
                     <span className="error-message">Required field</span>
                   )}
                 </div>
