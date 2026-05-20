@@ -384,6 +384,9 @@ const normalizeToDay = (value: Date): Date => {
 const getSnapshotKey = (budgetId: number, occurrenceDate: Date): string =>
   `${budgetId}:${normalizeToDay(occurrenceDate).getTime()}`;
 
+const getSnapshotDueDateKey = (budgetId: number, dueDate: Date): string =>
+  `${budgetId}:due:${normalizeToDay(dueDate).getTime()}`;
+
 const snapshotCreationInFlight = new Map<string, Promise<BudgetSnapshot>>();
 
 let budgetSnapshotMigrationInFlight: Promise<{
@@ -456,57 +459,81 @@ export const dedupeBudgetSnapshots = async (): Promise<{
   snapshotsDeduplicated: number;
   transactionsRelinked: number;
 }> => {
-  const snapshots = await db.budgetSnapshots.toArray();
-  const grouped = new Map<string, BudgetSnapshot[]>();
-
-  snapshots.forEach((snapshot) => {
-    const key = getSnapshotKey(snapshot.budgetId, snapshot.occurrenceDate);
-    const list = grouped.get(key);
-    if (list) {
-      list.push(snapshot);
-    } else {
-      grouped.set(key, [snapshot]);
-    }
-  });
-
   let snapshotsDeduplicated = 0;
   let transactionsRelinked = 0;
 
-  await db.transaction("rw", db.budgetSnapshots, db.transactions, async () => {
-    for (const group of grouped.values()) {
-      if (group.length <= 1) {
-        continue;
-      }
+  const dedupeGroups = async (groups: Map<string, BudgetSnapshot[]>) => {
+    await db.transaction(
+      "rw",
+      db.budgetSnapshots,
+      db.transactions,
+      async () => {
+        for (const group of groups.values()) {
+          if (group.length <= 1) {
+            continue;
+          }
 
-      const sorted = group
-        .filter((snapshot) => snapshot.id !== undefined)
-        .sort((a, b) => (a.id as number) - (b.id as number));
+          const sorted = group
+            .filter((snapshot) => snapshot.id !== undefined)
+            .sort((a, b) => (a.id as number) - (b.id as number));
 
-      const keep = sorted[0];
-      if (!keep?.id) {
-        continue;
-      }
+          const keep = sorted[0];
+          if (!keep?.id) {
+            continue;
+          }
 
-      for (let i = 1; i < sorted.length; i += 1) {
-        const duplicate = sorted[i];
-        if (!duplicate.id) {
-          continue;
+          for (let i = 1; i < sorted.length; i += 1) {
+            const duplicate = sorted[i];
+            if (!duplicate.id) {
+              continue;
+            }
+
+            const relinked = await db.transactions
+              .where("budgetSnapshotId")
+              .equals(duplicate.id)
+              .modify({ budgetSnapshotId: keep.id });
+
+            if (relinked > 0) {
+              transactionsRelinked += relinked;
+            }
+
+            await db.budgetSnapshots.delete(duplicate.id);
+            snapshotsDeduplicated += 1;
+          }
         }
+      },
+    );
+  };
 
-        const relinked = await db.transactions
-          .where("budgetSnapshotId")
-          .equals(duplicate.id)
-          .modify({ budgetSnapshotId: keep.id });
+  const snapshotsByOccurrence = await db.budgetSnapshots.toArray();
+  const occurrenceGrouped = new Map<string, BudgetSnapshot[]>();
 
-        if (relinked > 0) {
-          transactionsRelinked += relinked;
-        }
-
-        await db.budgetSnapshots.delete(duplicate.id);
-        snapshotsDeduplicated += 1;
-      }
+  snapshotsByOccurrence.forEach((snapshot) => {
+    const key = getSnapshotKey(snapshot.budgetId, snapshot.occurrenceDate);
+    const list = occurrenceGrouped.get(key);
+    if (list) {
+      list.push(snapshot);
+    } else {
+      occurrenceGrouped.set(key, [snapshot]);
     }
   });
+
+  await dedupeGroups(occurrenceGrouped);
+
+  const snapshotsByDueDate = await db.budgetSnapshots.toArray();
+  const dueDateGrouped = new Map<string, BudgetSnapshot[]>();
+
+  snapshotsByDueDate.forEach((snapshot) => {
+    const key = getSnapshotDueDateKey(snapshot.budgetId, snapshot.dueDate);
+    const list = dueDateGrouped.get(key);
+    if (list) {
+      list.push(snapshot);
+    } else {
+      dueDateGrouped.set(key, [snapshot]);
+    }
+  });
+
+  await dedupeGroups(dueDateGrouped);
 
   return { snapshotsDeduplicated, transactionsRelinked };
 };

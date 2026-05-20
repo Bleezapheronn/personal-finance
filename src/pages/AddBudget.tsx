@@ -1047,7 +1047,7 @@ const AddBudget: React.FC = () => {
 
             {/* Due Date and Frequency */}
             <IonRow>
-              <IonCol size="3">
+              <IonCol size="2">
                 <div className="form-input-wrapper">
                   <label className="form-label">Due Date</label>
                   <IonInput
@@ -1153,7 +1153,7 @@ const AddBudget: React.FC = () => {
                 </IonCol>
               )}
 
-              <IonCol size="2">
+              <IonCol size="3">
                 <div className="form-input-wrapper">
                   <label className="form-label">
                     Remaining Cycles (optional)
