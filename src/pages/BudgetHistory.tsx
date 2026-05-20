@@ -25,7 +25,6 @@ import {
   IonLabel,
   useIonViewWillEnter,
 } from "@ionic/react";
-import { useHistory } from "react-router-dom";
 import {
   createOutline,
   trashOutline,
@@ -49,6 +48,7 @@ import {
   ensureBudgetSnapshotForOccurrence,
 } from "../db";
 import { CompleteBudgetModal } from "../components/CompleteBudgetModal";
+import { EditSnapshotModal } from "../components/EditSnapshotModal";
 import { LinkPastTransactionsModal } from "../components/LinkPastTransactionsModal";
 import { findMatchingTransactions } from "../utils/transactionMatching";
 import "./Budget.css";
@@ -72,8 +72,6 @@ interface SnapshotCandidate {
 }
 
 const BudgetHistory: React.FC = () => {
-  const history = useHistory();
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [snapshots, setSnapshots] = useState<BudgetSnapshot[]>([]);
@@ -110,6 +108,11 @@ const BudgetHistory: React.FC = () => {
   >(undefined);
   const [budgetOccurrenceDateForLinking, setBudgetOccurrenceDateForLinking] =
     useState<Date | undefined>(undefined);
+
+  const [showEditSnapshotModal, setShowEditSnapshotModal] = useState(false);
+  const [snapshotToEdit, setSnapshotToEdit] = useState<BudgetSnapshot | null>(
+    null,
+  );
 
   const [successMsg, setSuccessMsg] = useState("");
   const [showSuccessToast, setShowSuccessToast] = useState(false);
@@ -820,11 +823,15 @@ const BudgetHistory: React.FC = () => {
                                   style={{ marginRight: "0" }}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    history.push(
-                                      `/budget/edit/${occ.budget.id}`,
+                                    const snap = snapshots.find(
+                                      (s) => s.id === occ.budgetSnapshotId,
                                     );
+                                    if (snap) {
+                                      setSnapshotToEdit(snap);
+                                      setShowEditSnapshotModal(true);
+                                    }
                                   }}
-                                  title="Edit Budget Item"
+                                  title="Edit This Occurrence"
                                 >
                                   <IonIcon icon={createOutline} slot="end" />
                                 </IonButton>
@@ -879,6 +886,20 @@ const BudgetHistory: React.FC = () => {
             ))}
           </>
         )}
+
+        <EditSnapshotModal
+          snapshot={snapshotToEdit}
+          isOpen={showEditSnapshotModal}
+          onDismiss={() => {
+            setShowEditSnapshotModal(false);
+            setSnapshotToEdit(null);
+          }}
+          onSaved={() => {
+            setShowEditSnapshotModal(false);
+            setSnapshotToEdit(null);
+            loadData();
+          }}
+        />
 
         {selectedOccurrenceForCompletion && (
           <CompleteBudgetModal
