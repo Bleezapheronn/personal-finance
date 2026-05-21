@@ -222,17 +222,25 @@ const Reports: React.FC = () => {
                       </button>
                     </IonCol>
                     <IonCol size="4">
-                      <div className="summary-item">
+                      <button
+                        type="button"
+                        className="summary-item summary-item-button"
+                        onClick={handleIncomeSummaryClick}
+                      >
                         <IonText color="medium" className="summary-label">
                           Total Expense
                         </IonText>
                         <IonText className="summary-value expense">
                           {formatCurrency(report.totalExpense)}
                         </IonText>
-                      </div>
+                      </button>
                     </IonCol>
                     <IonCol size="4">
-                      <div className="summary-item">
+                      <button
+                        type="button"
+                        className="summary-item summary-item-button"
+                        onClick={handleIncomeSummaryClick}
+                      >
                         <IonText color="medium" className="summary-label">
                           Net Total
                         </IonText>
@@ -243,7 +251,7 @@ const Reports: React.FC = () => {
                         >
                           {formatCurrency(report.netTotal)}
                         </IonText>
-                      </div>
+                      </button>
                     </IonCol>
                   </IonRow>
                 </IonGrid>
