@@ -18,6 +18,7 @@ import { BudgetSnapshot, db } from "../db";
 
 interface Props {
   snapshot: BudgetSnapshot | null;
+  budgetDueDate?: Date;
   isOpen: boolean;
   onDismiss: () => void;
   onSaved: () => void;
@@ -25,6 +26,7 @@ interface Props {
 
 export const EditSnapshotModal: React.FC<Props> = ({
   snapshot,
+  budgetDueDate,
   isOpen,
   onDismiss,
   onSaved,
@@ -110,9 +112,15 @@ export const EditSnapshotModal: React.FC<Props> = ({
             <IonItem lines="none" style={{ marginBottom: "8px" }}>
               <IonLabel>
                 <h2>{snapshot.description}</h2>
-                <IonNote>{formatDueDate(new Date(snapshot.dueDate))}</IonNote>
               </IonLabel>
             </IonItem>
+
+            {budgetDueDate && (
+              <IonItem lines="full">
+                <IonLabel>Due Date</IonLabel>
+                <IonNote slot="end">{formatDueDate(budgetDueDate)}</IonNote>
+              </IonItem>
+            )}
 
             <IonItem>
               <IonLabel position="stacked">Amount</IonLabel>

@@ -92,6 +92,11 @@ const BudgetHistory: React.FC = () => {
   );
   const [budgetDeleteHasTransactions, setBudgetDeleteHasTransactions] =
     useState(false);
+  const [snapshotToDeleteId, setSnapshotToDeleteId] = useState<
+    number | undefined
+  >(undefined);
+  const [occurrenceHasLinkedTransactions, setOccurrenceHasLinkedTransactions] =
+    useState(false);
 
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [selectedOccurrenceForCompletion, setSelectedOccurrenceForCompletion] =
@@ -113,6 +118,9 @@ const BudgetHistory: React.FC = () => {
   const [snapshotToEdit, setSnapshotToEdit] = useState<BudgetSnapshot | null>(
     null,
   );
+  const [budgetDueDateForEdit, setBudgetDueDateForEdit] = useState<
+    Date | undefined
+  >(undefined);
 
   const [successMsg, setSuccessMsg] = useState("");
   const [showSuccessToast, setShowSuccessToast] = useState(false);
@@ -452,10 +460,14 @@ const BudgetHistory: React.FC = () => {
     ]) as Array<[string, BudgetOccurrence[]]>;
   }, [pastOccurrences]);
 
-  const handleDeleteClick = (budgetId: number) => {
-    const linkedTxns = transactions.filter((txn) => txn.budgetId === budgetId);
+  const handleDeleteClick = (occ: BudgetOccurrence) => {
+    const linkedTxns = transactions.filter(
+      (txn) => txn.budgetId === occ.budgetId,
+    );
     setBudgetDeleteHasTransactions(linkedTxns.length > 0);
-    setBudgetToDelete(budgetId);
+    setBudgetToDelete(occ.budgetId);
+    setSnapshotToDeleteId(occ.budgetSnapshotId);
+    setOccurrenceHasLinkedTransactions(occ.linkedTransactions.length > 0);
     setShowDeleteConfirm(true);
   };
 
@@ -499,10 +511,40 @@ const BudgetHistory: React.FC = () => {
       setShowSuccessToast(true);
       setShowDeleteConfirm(false);
       setBudgetToDelete(undefined);
+      setSnapshotToDeleteId(undefined);
+      setOccurrenceHasLinkedTransactions(false);
       await loadData();
     } catch (err) {
       console.error("Error deleting budget:", err);
       setError("Failed to delete budget");
+    }
+  };
+
+  const handleConfirmDeleteOccurrence = async () => {
+    if (snapshotToDeleteId === undefined) {
+      setError("This occurrence cannot be deleted because no snapshot exists.");
+      return;
+    }
+
+    if (occurrenceHasLinkedTransactions) {
+      setError(
+        "This occurrence has linked transactions. Delink them first, then delete the occurrence.",
+      );
+      return;
+    }
+
+    try {
+      await db.budgetSnapshots.delete(snapshotToDeleteId);
+      setSuccessMsg("Budget occurrence deleted successfully");
+      setShowSuccessToast(true);
+      setShowDeleteConfirm(false);
+      setSnapshotToDeleteId(undefined);
+      setOccurrenceHasLinkedTransactions(false);
+      setBudgetToDelete(undefined);
+      await loadData();
+    } catch (err) {
+      console.error("Error deleting budget occurrence:", err);
+      setError("Failed to delete budget occurrence");
     }
   };
 
@@ -591,21 +633,45 @@ const BudgetHistory: React.FC = () => {
       <IonContent className="ion-padding">
         <IonAlert
           isOpen={showDeleteConfirm}
-          onDidDismiss={() => setShowDeleteConfirm(false)}
-          header="Delete Budget"
+          onDidDismiss={() => {
+            setShowDeleteConfirm(false);
+            setSnapshotToDeleteId(undefined);
+            setOccurrenceHasLinkedTransactions(false);
+            setBudgetToDelete(undefined);
+          }}
+          header="Delete Options"
           message={
-            budgetDeleteHasTransactions
-              ? "This budget has linked transactions. It will be deactivated instead of deleted. You can reactivate it later if needed."
-              : "Are you sure you want to delete this budget? This action cannot be undone."
+            occurrenceHasLinkedTransactions
+              ? "This occurrence has linked transactions. You can deactivate/delete the full budget below, or cancel."
+              : snapshotToDeleteId !== undefined
+                ? "Delete this occurrence only, or delete/deactivate the full budget?"
+                : "This occurrence has no snapshot row to delete. You can still delete/deactivate the full budget."
           }
           buttons={[
             {
               text: "Cancel",
               role: "cancel",
-              handler: () => setShowDeleteConfirm(false),
+              handler: () => {
+                setShowDeleteConfirm(false);
+                setSnapshotToDeleteId(undefined);
+                setOccurrenceHasLinkedTransactions(false);
+                setBudgetToDelete(undefined);
+              },
             },
+            ...(!occurrenceHasLinkedTransactions &&
+            snapshotToDeleteId !== undefined
+              ? [
+                  {
+                    text: "Delete Occurrence",
+                    role: "destructive" as const,
+                    handler: handleConfirmDeleteOccurrence,
+                  },
+                ]
+              : []),
             {
-              text: budgetDeleteHasTransactions ? "Deactivate" : "Delete",
+              text: budgetDeleteHasTransactions
+                ? "Deactivate Budget"
+                : "Delete Budget",
               role: "destructive",
               handler: handleConfirmDelete,
             },
@@ -827,7 +893,13 @@ const BudgetHistory: React.FC = () => {
                                       (s) => s.id === occ.budgetSnapshotId,
                                     );
                                     if (snap) {
+                                      const liveBudget = budgets.find(
+                                        (b) => b.id === occ.budgetId,
+                                      );
                                       setSnapshotToEdit(snap);
+                                      setBudgetDueDateForEdit(
+                                        liveBudget?.dueDate,
+                                      );
                                       setShowEditSnapshotModal(true);
                                     }
                                   }}
@@ -868,7 +940,7 @@ const BudgetHistory: React.FC = () => {
                                   color="danger"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleDeleteClick(occ.budget.id!);
+                                    handleDeleteClick(occ);
                                   }}
                                   title="Delete Budget Item"
                                 >
@@ -889,14 +961,17 @@ const BudgetHistory: React.FC = () => {
 
         <EditSnapshotModal
           snapshot={snapshotToEdit}
+          budgetDueDate={budgetDueDateForEdit}
           isOpen={showEditSnapshotModal}
           onDismiss={() => {
             setShowEditSnapshotModal(false);
             setSnapshotToEdit(null);
+            setBudgetDueDateForEdit(undefined);
           }}
           onSaved={() => {
             setShowEditSnapshotModal(false);
             setSnapshotToEdit(null);
+            setBudgetDueDateForEdit(undefined);
             loadData();
           }}
         />

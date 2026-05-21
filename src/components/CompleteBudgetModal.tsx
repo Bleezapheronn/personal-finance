@@ -259,11 +259,15 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
 
   const handleDeleteLinkedTransaction = async (txnId: number) => {
     try {
-      await db.transactions.delete(txnId);
+      await db.transactions.update(txnId, {
+        budgetId: undefined,
+        occurrenceDate: undefined,
+        budgetSnapshotId: undefined,
+      });
       onComplete();
     } catch (error) {
-      console.error("Error deleting transaction:", error);
-      setErrorMsg("Failed to delete transaction");
+      console.error("Error unlinking transaction:", error);
+      setErrorMsg("Failed to unlink transaction");
     }
   };
 
