@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   IonModal,
   IonHeader,
@@ -65,6 +65,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
   const [categories, setCategories] = useState<Category[]>([]);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
 
   // Load lookup data when modal opens
   useEffect(() => {
@@ -75,28 +76,82 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
 
   const loadLookupData = async () => {
     try {
-      const [cats, bkts, accts] = await Promise.all([
+      const [cats, bkts, accts, txns] = await Promise.all([
         db.categories.toArray(),
         db.buckets.toArray(),
         db.accounts.toArray(),
+        db.transactions.toArray(),
       ]);
 
       setCategories(cats);
       setBuckets(bkts);
       setAccounts(accts);
+      setTransactions(txns);
     } catch (err) {
       console.error("Failed to load lookup data:", err);
     }
   };
 
+  const isExpenseBudget = useCallback((): boolean => {
+    return (
+      budgetOccurrence.budget.goalDirection === "expense" ||
+      (budgetOccurrence.budget.goalDirection === undefined &&
+        budgetOccurrence.budget.amount < 0)
+    );
+  }, [budgetOccurrence.budget.goalDirection, budgetOccurrence.budget.amount]);
+
+  const yearToDateIncome = useMemo(() => {
+    const incomeBucket = buckets.find((b) => b.excludeFromReports);
+    if (!incomeBucket?.id) return 0;
+
+    const incomeCategoryIds = new Set(
+      categories
+        .filter((c) => c.bucketId === incomeBucket.id && c.id !== undefined)
+        .map((c) => c.id as number),
+    );
+
+    const jan1 = new Date(new Date().getFullYear(), 0, 1);
+    jan1.setHours(0, 0, 0, 0);
+
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+
+    return transactions
+      .filter((txn) => {
+        const txnDate = new Date(txn.date);
+        return (
+          incomeCategoryIds.has(txn.categoryId) &&
+          txnDate >= jan1 &&
+          txnDate <= today
+        );
+      })
+      .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
+  }, [transactions, categories, buckets]);
+
+  const getEffectiveBudgetTarget = useCallback((): number => {
+    const budget = budgetOccurrence.budget;
+
+    if (budget.goalPercentage && budget.goalPercentage > 0) {
+      const percentageAmount = (budget.goalPercentage / 100) * yearToDateIncome;
+      const floor = Math.abs(
+        (budget.amount || 0) + (budget.transactionCost || 0),
+      );
+      return Math.max(percentageAmount, floor);
+    }
+
+    return Math.abs(budget.amount + (budget.transactionCost || 0));
+  }, [budgetOccurrence.budget, yearToDateIncome]);
+
+  const effectiveTarget = useMemo(
+    () => getEffectiveBudgetTarget(),
+    [getEffectiveBudgetTarget],
+  );
+
   const getRemainingAmount = useCallback((): number => {
-    const totalBudgetAmount =
-      budgetOccurrence.budget.amount +
-      (budgetOccurrence.budget.transactionCost || 0);
     const amountPaid = budgetOccurrence.amountPaid;
 
     // Work with absolute values for comparison
-    const totalAbsAmount = Math.abs(totalBudgetAmount);
+    const totalAbsAmount = Math.abs(effectiveTarget);
     const paidAbsAmount = Math.abs(amountPaid);
 
     // Calculate remaining as positive value
@@ -104,32 +159,28 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
 
     // Return the remaining amount (positive means still need to pay)
     return remainingAbs;
-  }, [
-    budgetOccurrence.budget.amount,
-    budgetOccurrence.budget.transactionCost,
-    budgetOccurrence.amountPaid,
-  ]);
+  }, [effectiveTarget, budgetOccurrence.amountPaid]);
 
-  const getRemainingBudgetAmount = useCallback((): number => {
-    // Calculate remaining based on budget amount ONLY (excluding transaction cost)
-    const budgetAmountAbsolute = Math.abs(budgetOccurrence.budget.amount);
+  const getRemainingTargetAmount = useCallback((): number => {
+    // Pre-populate with remaining target amount so percentage-based budgets behave the same.
+    const targetAbsolute = Math.abs(effectiveTarget);
     const amountPaid = budgetOccurrence.amountPaid;
     const paidAbsAmount = Math.abs(amountPaid);
 
     // Calculate remaining as positive value
-    const remainingAbs = budgetAmountAbsolute - paidAbsAmount;
+    const remainingAbs = targetAbsolute - paidAbsAmount;
 
     // Return the remaining amount (positive means still need to pay)
     return remainingAbs;
-  }, [budgetOccurrence.budget.amount, budgetOccurrence.amountPaid]);
+  }, [effectiveTarget, budgetOccurrence.amountPaid]);
 
   // Reset form when modal opens
   useEffect(() => {
     if (isOpen) {
       setTransactionReference("");
       setTransactionTime("");
-      // Pre-fill with remaining budget amount ONLY if remaining > 0
-      const remainingBudget = getRemainingBudgetAmount();
+      // Pre-fill with remaining target amount ONLY if remaining > 0.
+      const remainingBudget = getRemainingTargetAmount();
       setTransactionAmount(
         remainingBudget > 0 ? Math.abs(remainingBudget).toString() : "",
       );
@@ -144,7 +195,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
     }
   }, [
     isOpen,
-    getRemainingBudgetAmount,
+    getRemainingTargetAmount,
     budgetOccurrence.budget.transactionCost,
   ]);
 
@@ -202,10 +253,9 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
       }
 
       // Calculate signed amount based on budget type
-      const signedAmount =
-        budgetOccurrence.budget.amount < 0
-          ? -Math.abs(amount)
-          : Math.abs(amount);
+      const signedAmount = isExpenseBudget()
+        ? -Math.abs(amount)
+        : Math.abs(amount);
 
       const snapshot = await ensureBudgetSnapshotForOccurrence(
         budgetOccurrence.budget,
@@ -215,8 +265,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
       // Calculate signed transaction cost if it exists
       let signedCost: number | undefined = undefined;
       if (cost !== undefined) {
-        signedCost =
-          budgetOccurrence.budget.amount < 0 ? -Math.abs(cost) : Math.abs(cost);
+        signedCost = isExpenseBudget() ? -Math.abs(cost) : Math.abs(cost);
       }
 
       // Create transaction with accountId from budget
@@ -335,10 +384,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                         style={{
                           fontSize: "1.1rem",
                           fontWeight: "bold",
-                          color:
-                            budgetOccurrence.budget.amount < 0
-                              ? "#D44619"
-                              : "#009688",
+                          color: isExpenseBudget() ? "#D44619" : "#009688",
                         }}
                       >
                         {Math.abs(budgetOccurrence.amountPaid).toLocaleString(
@@ -349,10 +395,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                           },
                         )}{" "}
                         /{" "}
-                        {Math.abs(
-                          budgetOccurrence.budget.amount +
-                            (budgetOccurrence.budget.transactionCost || 0),
-                        ).toLocaleString(undefined, {
+                        {Math.abs(effectiveTarget).toLocaleString(undefined, {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
                         })}
