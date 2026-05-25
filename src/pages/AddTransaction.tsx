@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useHistory, useParams } from "react-router-dom";
+import { useHistory, useLocation, useParams } from "react-router-dom";
 import {
   IonPage,
   IonHeader,
@@ -48,10 +48,32 @@ import { ParsedSmsData } from "../hooks/useSmsParser";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import { SelectableDropdown } from "../components/SelectableDropdown";
 
+interface DuplicateTransactionPrefill {
+  transactionType: "expense" | "income" | "transfer";
+  amount: string;
+  transactionCost: string;
+  originalAmount: string;
+  originalCurrency: string;
+  exchangeRate: string;
+  exchangeRateOverride: boolean;
+  categoryId: number | undefined;
+  accountId: number | undefined;
+  recipientId: number | undefined;
+  transferToAccountId: number | undefined;
+  transferRecipientId: number | undefined;
+  description: string;
+}
+
+interface AddTransactionLocationState {
+  duplicatePrefill?: DuplicateTransactionPrefill;
+}
+
 const AddTransaction: React.FC = () => {
   const history = useHistory();
+  const location = useLocation<AddTransactionLocationState>();
   const { id } = useParams<{ id?: string }>();
   const isEditMode = Boolean(id);
+  const duplicatePrefill = location.state?.duplicatePrefill;
 
   // Combined date and time into single datetime state
   const [transactionDateTime, setTransactionDateTime] = useState<string>("");
@@ -116,8 +138,8 @@ const AddTransaction: React.FC = () => {
     new Set(
       sortedAccounts
         .map((a) => a.currency)
-        .filter((c): c is string => Boolean(c))
-    )
+        .filter((c): c is string => Boolean(c)),
+    ),
   );
 
   // Clear messages and reset form when entering the page
@@ -262,18 +284,18 @@ const AddTransaction: React.FC = () => {
             const hours = String(txnDate.getHours()).padStart(2, "0");
             const minutes = String(txnDate.getMinutes()).padStart(2, "0");
             setTransactionDateTime(
-              `${year}-${month}-${day}T${hours}:${minutes}`
+              `${year}-${month}-${day}T${hours}:${minutes}`,
             );
 
             setAmount(Math.abs(txn.amount).toString());
             setTransactionCost(
               txn.transactionCost
                 ? Math.abs(txn.transactionCost).toString()
-                : ""
+                : "",
             );
             setTransactionReference(txn.transactionReference || "");
             setOriginalAmount(
-              txn.originalAmount ? Math.abs(txn.originalAmount).toString() : ""
+              txn.originalAmount ? Math.abs(txn.originalAmount).toString() : "",
             );
             setOriginalCurrency(txn.originalCurrency || "");
             setExchangeRate(txn.exchangeRate?.toString() || "");
@@ -287,6 +309,24 @@ const AddTransaction: React.FC = () => {
       };
 
       loadTransaction();
+    } else if (duplicatePrefill) {
+      // ADD MODE + DUPLICATE PREFILL
+      setTransactionDateTime("");
+      setTransactionType(duplicatePrefill.transactionType);
+      setAmount(duplicatePrefill.amount);
+      setTransactionCost(duplicatePrefill.transactionCost);
+      setTransactionReference("");
+      setOriginalAmount(duplicatePrefill.originalAmount);
+      setOriginalCurrency(duplicatePrefill.originalCurrency);
+      setExchangeRate(duplicatePrefill.exchangeRate);
+      setExchangeRateOverride(duplicatePrefill.exchangeRateOverride);
+      setCategoryId(duplicatePrefill.categoryId);
+      setAccountId(duplicatePrefill.accountId);
+      setRecipientId(duplicatePrefill.recipientId);
+      setTransferRecipientId(duplicatePrefill.transferRecipientId);
+      setTransferToAccountId(duplicatePrefill.transferToAccountId);
+      setDescription(duplicatePrefill.description);
+      setEditingTransaction(null);
     } else {
       // ADD MODE: Clear form
       setTransactionDateTime("");
@@ -306,7 +346,7 @@ const AddTransaction: React.FC = () => {
       setDescription("");
       setEditingTransaction(null);
     }
-  }, [id, isEditMode]);
+  }, [duplicatePrefill, id, isEditMode]);
 
   // Load descriptions sorted by frequency when component mounts
   useEffect(() => {
@@ -391,7 +431,7 @@ const AddTransaction: React.FC = () => {
       descriptionSuggestions
         .filter((item) => fuzzyMatch(description, item.text))
         .slice(0, MAX_SUGGESTIONS),
-    [descriptionSuggestions, description]
+    [descriptionSuggestions, description],
   );
 
   // Handle keyboard navigation
@@ -403,7 +443,7 @@ const AddTransaction: React.FC = () => {
       case "ArrowDown":
         e.preventDefault();
         setSelectedSuggestionIndex((prev) =>
-          prev < filteredDescriptions.length - 1 ? prev + 1 : prev
+          prev < filteredDescriptions.length - 1 ? prev + 1 : prev,
         );
         break;
       case "ArrowUp":
@@ -414,7 +454,7 @@ const AddTransaction: React.FC = () => {
         e.preventDefault();
         if (selectedSuggestionIndex >= 0) {
           await selectSuggestion(
-            filteredDescriptions[selectedSuggestionIndex].text
+            filteredDescriptions[selectedSuggestionIndex].text,
           );
         }
         break;
@@ -476,7 +516,7 @@ const AddTransaction: React.FC = () => {
     if (!formValidation.isValid) {
       setFieldErrors(formValidation.errors);
       setErrorMsg(
-        formValidation.errorMessage || "Please fill in all required fields."
+        formValidation.errorMessage || "Please fill in all required fields.",
       );
       return;
     }
@@ -617,8 +657,8 @@ const AddTransaction: React.FC = () => {
           numericOriginalAmountRaw == null
             ? undefined
             : transactionType === "expense"
-            ? -Math.abs(numericOriginalAmountRaw)
-            : Math.abs(numericOriginalAmountRaw);
+              ? -Math.abs(numericOriginalAmountRaw)
+              : Math.abs(numericOriginalAmountRaw);
 
         const tx: Omit<Transaction, "id"> = {
           date: selectedDateTime,
@@ -675,7 +715,7 @@ const AddTransaction: React.FC = () => {
       setErrorMsg(
         `Failed to ${
           isEditMode ? "update" : "add"
-        } transaction. Please try again.`
+        } transaction. Please try again.`,
       );
     }
   };
@@ -761,7 +801,8 @@ const AddTransaction: React.FC = () => {
     } else if (parsedData.recipientName) {
       // Fallback: Check if recipient exists by name
       const existingRecipient = sortedRecipients.find(
-        (r) => r.name?.toLowerCase() === parsedData.recipientName?.toLowerCase()
+        (r) =>
+          r.name?.toLowerCase() === parsedData.recipientName?.toLowerCase(),
       );
 
       if (existingRecipient) {
@@ -774,7 +815,7 @@ const AddTransaction: React.FC = () => {
           JSON.stringify({
             name: parsedData.recipientName,
             phone: parsedData.recipientPhone || "",
-          })
+          }),
         );
       }
     }
@@ -887,7 +928,7 @@ const AddTransaction: React.FC = () => {
                     value={transactionType}
                     onIonChange={(e) =>
                       setTransactionType(
-                        e.detail.value as "expense" | "income" | "transfer"
+                        e.detail.value as "expense" | "income" | "transfer",
                       )
                     }
                     disabled={isEditMode && editingTransaction?.isTransfer}
@@ -1171,7 +1212,7 @@ const AddTransaction: React.FC = () => {
                           .filter((c) => c.name)
                           .map((c) => {
                             const bucket = buckets.find(
-                              (b) => b.id === c.bucketId
+                              (b) => b.id === c.bucketId,
                             );
                             return {
                               id: c.id,
@@ -1384,7 +1425,7 @@ const AddTransaction: React.FC = () => {
                           .filter((c) => c.name)
                           .map((c) => {
                             const bucket = buckets.find(
-                              (b) => b.id === c.bucketId
+                              (b) => b.id === c.bucketId,
                             );
                             return {
                               id: c.id,

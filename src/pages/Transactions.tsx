@@ -37,6 +37,7 @@ import {
 import { useHistory } from "react-router-dom";
 import {
   createOutline,
+  copyOutline,
   addOutline,
   trashOutline,
   arrowUpCircle,
@@ -64,6 +65,22 @@ const parseDateInputToLocalDay = (value: string): Date => {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day);
 };
+
+interface DuplicateTransactionPrefill {
+  transactionType: "expense" | "income" | "transfer";
+  amount: string;
+  transactionCost: string;
+  originalAmount: string;
+  originalCurrency: string;
+  exchangeRate: string;
+  exchangeRateOverride: boolean;
+  categoryId: number | undefined;
+  accountId: number | undefined;
+  recipientId: number | undefined;
+  transferToAccountId: number | undefined;
+  transferRecipientId: number | undefined;
+  description: string;
+}
 
 const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
@@ -184,6 +201,63 @@ const Transactions: React.FC = () => {
     if (id !== undefined) {
       history.push(`/edit/${id}`);
     }
+  };
+
+  const handleDuplicate = async (txn: Transaction) => {
+    if (!txn.id) {
+      return;
+    }
+
+    const basePrefill: DuplicateTransactionPrefill = {
+      transactionType: txn.amount < 0 ? "expense" : "income",
+      amount: Math.abs(txn.amount).toString(),
+      transactionCost: txn.transactionCost
+        ? Math.abs(txn.transactionCost).toString()
+        : "",
+      originalAmount: txn.originalAmount
+        ? Math.abs(txn.originalAmount).toString()
+        : "",
+      originalCurrency: txn.originalCurrency || "",
+      exchangeRate: txn.exchangeRate?.toString() || "",
+      exchangeRateOverride: !!txn.exchangeRate,
+      categoryId: txn.categoryId,
+      accountId: txn.accountId,
+      recipientId: txn.recipientId,
+      transferToAccountId: undefined,
+      transferRecipientId: undefined,
+      description: txn.description || "",
+    };
+
+    if (txn.isTransfer && txn.transferPairId) {
+      const pairedTxn = await db.transactions.get(txn.transferPairId);
+      const outgoingTxn = txn.amount < 0 ? txn : pairedTxn;
+      const incomingTxn = txn.amount < 0 ? pairedTxn : txn;
+
+      const transferPrefill: DuplicateTransactionPrefill = {
+        transactionType: "transfer",
+        amount: Math.abs(outgoingTxn?.amount ?? txn.amount).toString(),
+        transactionCost: outgoingTxn?.transactionCost
+          ? Math.abs(outgoingTxn.transactionCost).toString()
+          : "",
+        originalAmount: outgoingTxn?.originalAmount
+          ? Math.abs(outgoingTxn.originalAmount).toString()
+          : "",
+        originalCurrency: outgoingTxn?.originalCurrency || "",
+        exchangeRate: outgoingTxn?.exchangeRate?.toString() || "",
+        exchangeRateOverride: !!outgoingTxn?.exchangeRate,
+        categoryId: txn.categoryId,
+        accountId: outgoingTxn?.accountId,
+        recipientId: outgoingTxn?.recipientId,
+        transferToAccountId: incomingTxn?.accountId,
+        transferRecipientId: incomingTxn?.recipientId,
+        description: outgoingTxn?.description || txn.description || "",
+      };
+
+      history.push("/add", { duplicatePrefill: transferPrefill });
+      return;
+    }
+
+    history.push("/add", { duplicatePrefill: basePrefill });
   };
 
   // Handler to delete a transaction with confirmation
@@ -1521,6 +1595,15 @@ const Transactions: React.FC = () => {
                             {/* Edit/Delete buttons */}
                             <IonRow className="item-actions">
                               <IonCol className="item-actions-container">
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  style={{ marginRight: "0" }}
+                                  onClick={() => handleDuplicate(txn)}
+                                  title="Duplicate Transaction"
+                                >
+                                  <IonIcon slot="end" icon={copyOutline} />
+                                </IonButton>
                                 <IonButton
                                   fill="clear"
                                   size="small"

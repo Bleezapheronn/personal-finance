@@ -174,29 +174,49 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
     return remainingAbs;
   }, [effectiveTarget, budgetOccurrence.amountPaid]);
 
+  const getDefaultTransactionCostAbs = useCallback((): number => {
+    return Math.abs(budgetOccurrence.budget.transactionCost || 0);
+  }, [budgetOccurrence.budget.transactionCost]);
+
+  const toCurrencyInputValue = useCallback((value: number): string => {
+    return value.toFixed(2);
+  }, []);
+
   // Reset form when modal opens
   useEffect(() => {
     if (isOpen) {
       setTransactionReference("");
       setTransactionTime("");
-      // Pre-fill with remaining target amount ONLY if remaining > 0.
-      const remainingBudget = getRemainingTargetAmount();
-      setTransactionAmount(
-        remainingBudget > 0 ? Math.abs(remainingBudget).toString() : "",
-      );
-      // Pre-fill transaction cost with budget's transaction cost if available
-      setTransactionCost(
-        budgetOccurrence.budget.transactionCost
-          ? Math.abs(budgetOccurrence.budget.transactionCost).toString()
-          : "",
-      );
+      // Remaining target includes amount + cost; split them for field prefill.
+      const remainingBudget = Math.abs(getRemainingTargetAmount());
+      const defaultCost = getDefaultTransactionCostAbs();
+
+      if (
+        remainingBudget > 0 &&
+        defaultCost > 0 &&
+        remainingBudget > defaultCost
+      ) {
+        setTransactionAmount(
+          toCurrencyInputValue(remainingBudget - defaultCost),
+        );
+        setTransactionCost(toCurrencyInputValue(defaultCost));
+      } else if (remainingBudget > 0) {
+        setTransactionAmount(toCurrencyInputValue(remainingBudget));
+        setTransactionCost("");
+      } else {
+        setTransactionAmount("");
+        setTransactionCost(
+          defaultCost > 0 ? toCurrencyInputValue(defaultCost) : "",
+        );
+      }
       setErrorMsg("");
       setSuccessMsg("");
     }
   }, [
     isOpen,
     getRemainingTargetAmount,
-    budgetOccurrence.budget.transactionCost,
+    getDefaultTransactionCostAbs,
+    toCurrencyInputValue,
   ]);
 
   const getBucketName = (categoryId: number) => {
