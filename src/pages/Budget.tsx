@@ -1166,7 +1166,21 @@ const BudgetPage: React.FC = () => {
 
   const allGoals = useMemo(() => {
     const goals = visibleBudgetOccurrences.filter((occ) => occ.budget.isGoal);
-    return goals.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+
+    // Sort completed goals first, then incomplete; due date ascending within each group.
+    return goals.sort((a, b) => {
+      if (a.isCompleted !== b.isCompleted) {
+        return a.isCompleted ? -1 : 1;
+      }
+
+      const dateCompare = a.dueDate.getTime() - b.dueDate.getTime();
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+
+      // Keep deterministic order when due dates are equal.
+      return (a.budgetId || 0) - (b.budgetId || 0);
+    });
   }, [visibleBudgetOccurrences]);
 
   const activeGoals = useMemo(
@@ -1195,7 +1209,27 @@ const BudgetPage: React.FC = () => {
       (goal) => !goal.isCompleted,
     );
 
-    return firstIncompleteIndex >= 0 ? firstIncompleteIndex : 0;
+    if (firstIncompleteIndex >= 0) {
+      return firstIncompleteIndex;
+    }
+
+    // If all goals are completed, default to the most recent completed goal.
+    let mostRecentCompletedIndex = -1;
+    let mostRecentCompletedDueDate = Number.NEGATIVE_INFINITY;
+
+    allGoals.forEach((goal, index) => {
+      if (!goal.isCompleted) {
+        return;
+      }
+
+      const dueDate = goal.dueDate.getTime();
+      if (dueDate > mostRecentCompletedDueDate) {
+        mostRecentCompletedDueDate = dueDate;
+        mostRecentCompletedIndex = index;
+      }
+    });
+
+    return mostRecentCompletedIndex >= 0 ? mostRecentCompletedIndex : 0;
   };
 
   useEffect(() => {
@@ -1204,11 +1238,17 @@ const BudgetPage: React.FC = () => {
   }, [loading, allGoals.length]);
 
   const handleGoalPrevious = () => {
-    setCurrentGoalIndex((prev) => Math.max(0, prev - 1));
+    if (allGoals.length <= 1) return;
+    setCurrentGoalIndex((prev) =>
+      prev === 0 ? allGoals.length - 1 : prev - 1,
+    );
   };
 
   const handleGoalNext = () => {
-    setCurrentGoalIndex((prev) => Math.min(prev + 1, allGoals.length - 1));
+    if (allGoals.length <= 1) return;
+    setCurrentGoalIndex((prev) =>
+      prev === allGoals.length - 1 ? 0 : prev + 1,
+    );
   };
 
   return (
@@ -1302,8 +1342,6 @@ const BudgetPage: React.FC = () => {
                   if (allGoals.length === 0) return null;
 
                   const currentGoal = allGoals[currentGoalIndex];
-                  const isAtStart = currentGoalIndex === 0;
-                  const isAtEnd = currentGoalIndex === allGoals.length - 1;
 
                   return (
                     <IonCard
@@ -1326,7 +1364,7 @@ const BudgetPage: React.FC = () => {
                               e.stopPropagation();
                               handleGoalPrevious();
                             }}
-                            disabled={isAtStart}
+                            disabled={allGoals.length <= 1}
                           >
                             <IonIcon icon={chevronBack} />
                           </IonButton>
@@ -1350,7 +1388,7 @@ const BudgetPage: React.FC = () => {
                               e.stopPropagation();
                               handleGoalNext();
                             }}
-                            disabled={isAtEnd}
+                            disabled={allGoals.length <= 1}
                           >
                             <IonIcon icon={chevronForward} />
                           </IonButton>
@@ -1482,9 +1520,9 @@ const BudgetPage: React.FC = () => {
                             </IonCol>
                           </IonRow>
 
-                          {/* Status Badge */}
-                          {currentGoal.isCompleted && (
-                            <IonRow style={{ marginTop: "8px" }}>
+                          <IonRow style={{ marginTop: "12px", gap: "8px" }}>
+                            {/* Status Badge */}
+                            {currentGoal.isCompleted && (
                               <IonCol>
                                 <div
                                   style={{
@@ -1500,11 +1538,8 @@ const BudgetPage: React.FC = () => {
                                   Completed
                                 </div>
                               </IonCol>
-                            </IonRow>
-                          )}
-
-                          {/* Edit/Delete/Link buttons */}
-                          <IonRow style={{ marginTop: "12px", gap: "8px" }}>
+                            )}
+                            {/* Edit/Delete/Link buttons */}
                             <IonCol
                               style={{ paddingRight: 0, textAlign: "right" }}
                             >
