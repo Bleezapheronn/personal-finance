@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useHistory } from "react-router-dom";
 import {
   IonPage,
@@ -865,16 +865,20 @@ const BudgetPage: React.FC = () => {
   // Returns the absolute effective target for a budget.
   // When goalPercentage is set: max(percentage × YTD income, optional floor).
   // Otherwise: abs(amount + transactionCost) as before.
-  const getEffectiveBudgetTarget = (budget: Budget): number => {
-    if (budget.goalPercentage && budget.goalPercentage > 0) {
-      const percentageAmount = (budget.goalPercentage / 100) * yearToDateIncome;
-      const floor = Math.abs(
-        (budget.amount || 0) + (budget.transactionCost || 0),
-      );
-      return Math.max(percentageAmount, floor);
-    }
-    return Math.abs(budget.amount + (budget.transactionCost || 0));
-  };
+  const getEffectiveBudgetTarget = useCallback(
+    (budget: Budget): number => {
+      if (budget.goalPercentage && budget.goalPercentage > 0) {
+        const percentageAmount =
+          (budget.goalPercentage / 100) * yearToDateIncome;
+        const floor = Math.abs(
+          (budget.amount || 0) + (budget.transactionCost || 0),
+        );
+        return Math.max(percentageAmount, floor);
+      }
+      return Math.abs(budget.amount + (budget.transactionCost || 0));
+    },
+    [yearToDateIncome],
+  );
 
   const isExpenseBudget = (
     budget: Pick<Budget, "goalDirection" | "amount">,
@@ -1178,10 +1182,23 @@ const BudgetPage: React.FC = () => {
         return dateCompare;
       }
 
+      // For same due date, lower target goals come first.
+      const targetCompare =
+        getEffectiveBudgetTarget(a.budget) - getEffectiveBudgetTarget(b.budget);
+      if (targetCompare !== 0) {
+        return targetCompare;
+      }
+
+      // If target also matches, show higher paid progress first.
+      const paidCompare = Math.abs(b.amountPaid) - Math.abs(a.amountPaid);
+      if (paidCompare !== 0) {
+        return paidCompare;
+      }
+
       // Keep deterministic order when due dates are equal.
       return (a.budgetId || 0) - (b.budgetId || 0);
     });
-  }, [visibleBudgetOccurrences]);
+  }, [visibleBudgetOccurrences, getEffectiveBudgetTarget]);
 
   const activeGoals = useMemo(
     () => allGoals.filter((goal) => !goal.isCompleted).slice(0, 2),
