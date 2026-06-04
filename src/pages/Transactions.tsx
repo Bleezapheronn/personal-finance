@@ -534,9 +534,9 @@ const Transactions: React.FC = () => {
       txnDate.getMonth() === today.getMonth() &&
       txnDate.getFullYear() === today.getFullYear()
     ) {
-      return "This Month";
+      return txnDateOnly > today ? "Later This Month" : "This Month (Past)";
     } else {
-      // Return month and year for previous months
+      // Return month and year for out-of-band months (both future and past)
       return txnDate.toLocaleString("en-US", {
         month: "long",
         year: "numeric",
@@ -614,32 +614,31 @@ const Transactions: React.FC = () => {
     categories,
   ]);
 
-  const windowAnchorDate = useMemo(() => {
-    if (!transactions || transactions.length === 0) {
-      return normalizeToLocalDay(new Date());
-    }
-
-    return normalizeToLocalDay(transactions[0].date);
-  }, [transactions]);
-
   const visibleTransactions = useMemo(() => {
-    const cutoffDate = new Date(windowAnchorDate);
+    const today = normalizeToLocalDay(new Date());
+    const cutoffDate = new Date(today);
     cutoffDate.setDate(cutoffDate.getDate() - visibleTransactionWindowDays);
 
     return filteredTransactions.filter((txn) => {
       const txnDate = normalizeToLocalDay(txn.date);
-      return txnDate >= cutoffDate && txnDate <= windowAnchorDate;
+      if (txnDate > today) {
+        // Future transactions are always visible regardless of the past window.
+        return true;
+      }
+
+      return txnDate >= cutoffDate && txnDate <= today;
     });
-  }, [filteredTransactions, visibleTransactionWindowDays, windowAnchorDate]);
+  }, [filteredTransactions, visibleTransactionWindowDays]);
 
   const groupedVisibleTransactions = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
-    const groupOrder = [
+    const fixedGroupOrder = [
       "Next Month",
+      "Later This Month",
       "Next Week",
       "This Week",
       "Last Week",
-      "This Month",
+      "This Month (Past)",
     ];
 
     visibleTransactions.forEach((txn) => {
@@ -651,22 +650,53 @@ const Transactions: React.FC = () => {
     });
 
     const sortedGroups: Array<[string, Transaction[]]> = [];
+    const today = normalizeToLocalDay(new Date());
 
-    groupOrder.forEach((group) => {
+    const monthNamedGroups = Array.from(groups.entries()).filter(
+      ([group]) => !fixedGroupOrder.includes(group),
+    );
+
+    const futureMonthGroups = monthNamedGroups
+      .filter(([group]) => {
+        const groupDate = new Date(`${group} 1`);
+        return (
+          !Number.isNaN(groupDate.getTime()) &&
+          (groupDate.getFullYear() > today.getFullYear() ||
+            (groupDate.getFullYear() === today.getFullYear() &&
+              groupDate.getMonth() > today.getMonth()))
+        );
+      })
+      .sort((a, b) => {
+        const dateA = new Date(`${a[0]} 1`);
+        const dateB = new Date(`${b[0]} 1`);
+        return dateB.getTime() - dateA.getTime();
+      });
+
+    sortedGroups.push(...futureMonthGroups);
+
+    fixedGroupOrder.forEach((group) => {
       if (groups.has(group)) {
         sortedGroups.push([group, groups.get(group)!]);
       }
     });
 
-    const remainingGroups = Array.from(groups.entries())
-      .filter(([group]) => !groupOrder.includes(group))
+    const pastMonthGroups = monthNamedGroups
+      .filter(([group]) => {
+        const groupDate = new Date(`${group} 1`);
+        return (
+          !Number.isNaN(groupDate.getTime()) &&
+          (groupDate.getFullYear() < today.getFullYear() ||
+            (groupDate.getFullYear() === today.getFullYear() &&
+              groupDate.getMonth() < today.getMonth()))
+        );
+      })
       .sort((a, b) => {
-        const dateA = new Date(a[0] + " 1");
-        const dateB = new Date(b[0] + " 1");
+        const dateA = new Date(`${a[0]} 1`);
+        const dateB = new Date(`${b[0]} 1`);
         return dateB.getTime() - dateA.getTime();
       });
 
-    sortedGroups.push(...remainingGroups);
+    sortedGroups.push(...pastMonthGroups);
 
     return sortedGroups;
   }, [visibleTransactions]);
@@ -716,7 +746,8 @@ const Transactions: React.FC = () => {
   }, [filteredTransactions, accounts, accountImages]);
 
   useEffect(() => {
-    const cutoffDate = new Date(windowAnchorDate);
+    const today = normalizeToLocalDay(new Date());
+    const cutoffDate = new Date(today);
     cutoffDate.setDate(cutoffDate.getDate() - visibleTransactionWindowDays);
 
     const hasOlder = filteredTransactions.some((txn) => {
@@ -725,7 +756,7 @@ const Transactions: React.FC = () => {
     });
 
     setHasMoreTransactions(hasOlder);
-  }, [filteredTransactions, visibleTransactionWindowDays, windowAnchorDate]);
+  }, [filteredTransactions, visibleTransactionWindowDays]);
 
   const loadOlderTransactions = (event: CustomEvent<void>) => {
     setVisibleTransactionWindowDays((prev) => prev + TRANSACTION_BATCH_DAYS);
