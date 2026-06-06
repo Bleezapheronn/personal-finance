@@ -615,6 +615,11 @@ const Transactions: React.FC = () => {
   ]);
 
   const visibleTransactions = useMemo(() => {
+    if (selectedDateFrom) {
+      // Date From explicitly defines the lower bound, so bypass rolling windowing.
+      return filteredTransactions;
+    }
+
     const today = normalizeToLocalDay(new Date());
     const cutoffDate = new Date(today);
     cutoffDate.setDate(cutoffDate.getDate() - visibleTransactionWindowDays);
@@ -628,7 +633,7 @@ const Transactions: React.FC = () => {
 
       return txnDate >= cutoffDate && txnDate <= today;
     });
-  }, [filteredTransactions, visibleTransactionWindowDays]);
+  }, [filteredTransactions, selectedDateFrom, visibleTransactionWindowDays]);
 
   const groupedVisibleTransactions = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
@@ -746,6 +751,11 @@ const Transactions: React.FC = () => {
   }, [filteredTransactions, accounts, accountImages]);
 
   useEffect(() => {
+    if (selectedDateFrom) {
+      setHasMoreTransactions(false);
+      return;
+    }
+
     const today = normalizeToLocalDay(new Date());
     const cutoffDate = new Date(today);
     cutoffDate.setDate(cutoffDate.getDate() - visibleTransactionWindowDays);
@@ -756,7 +766,7 @@ const Transactions: React.FC = () => {
     });
 
     setHasMoreTransactions(hasOlder);
-  }, [filteredTransactions, visibleTransactionWindowDays]);
+  }, [filteredTransactions, selectedDateFrom, visibleTransactionWindowDays]);
 
   const loadOlderTransactions = (event: CustomEvent<void>) => {
     setVisibleTransactionWindowDays((prev) => prev + TRANSACTION_BATCH_DAYS);
@@ -1668,7 +1678,7 @@ const Transactions: React.FC = () => {
             <IonInfiniteScroll
               onIonInfinite={loadOlderTransactions}
               threshold="120px"
-              disabled={!hasMoreTransactions}
+              disabled={Boolean(selectedDateFrom) || !hasMoreTransactions}
             >
               <IonInfiniteScrollContent loadingText="Loading older transactions..." />
             </IonInfiniteScroll>
