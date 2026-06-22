@@ -27,6 +27,10 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
       "Account",
       "Budget ID",
       "Occurrence Date",
+      "Transaction Cost",
+      "Original Amount",
+      "Currency",
+      "Exchange Rate",
     ];
 
     // Helper function to escape CSV values (handle commas, quotes, newlines)
@@ -79,6 +83,10 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
         escapeCSV(account?.name),
         escapeCSV(budget?.description), // Use budget description instead of ID for export
         escapeCSV(occurrenceDateStr),
+        escapeCSV(txn.transactionCost),
+        escapeCSV(txn.originalAmount),
+        escapeCSV(txn.originalCurrency),
+        escapeCSV(txn.exchangeRate),
       ]
         .map((v) => v)
         .join(",");
@@ -97,7 +105,7 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
 // Helper to download file
 export const downloadCSV = (
   csvContent: string,
-  filename: string = "transactions.csv"
+  filename: string = "transactions.csv",
 ): void => {
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const link = document.createElement("a");
