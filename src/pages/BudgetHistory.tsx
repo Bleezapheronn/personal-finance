@@ -166,6 +166,16 @@ const BudgetHistory: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState("");
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
+  const snapshotBudgetIdBySnapshotId = useMemo(() => {
+    const bySnapshotId = new Map<number, number>();
+    snapshots.forEach((snapshot) => {
+      if (snapshot.id !== undefined) {
+        bySnapshotId.set(snapshot.id, snapshot.budgetId);
+      }
+    });
+    return bySnapshotId;
+  }, [snapshots]);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -260,15 +270,20 @@ const BudgetHistory: React.FC = () => {
   }, []);
 
   const getLinkedTransactions = useCallback(
-    (snapshotId: number | undefined, budgetId: number, targetDate: Date) => {
-      const targetTime = normalizeToLocalDay(targetDate).getTime();
+    (snapshotId: number | undefined, _budgetId: number, targetDate: Date) => {
+      if (snapshotId !== undefined) {
+        return transactions.filter(
+          (txn) => Number(txn.budgetSnapshotId) === snapshotId,
+        );
+      }
 
+      // Legacy fallback: rows without snapshot linkage, matched by occurrence date.
+      const targetTime = normalizeToLocalDay(targetDate).getTime();
       return transactions.filter(
         (txn) =>
-          (snapshotId !== undefined && txn.budgetSnapshotId === snapshotId) ||
-          (txn.budgetId === budgetId &&
-            txn.occurrenceDate &&
-            normalizeToLocalDay(txn.occurrenceDate).getTime() === targetTime),
+          txn.budgetSnapshotId === undefined &&
+          txn.occurrenceDate &&
+          normalizeToLocalDay(txn.occurrenceDate).getTime() === targetTime,
       );
     },
     [transactions],
@@ -786,10 +801,16 @@ const BudgetHistory: React.FC = () => {
   }, [selectedBucketId]);
 
   const handleDeleteClick = (occ: BudgetOccurrence) => {
-    const linkedTxns = transactions.filter(
-      (txn) => txn.budgetId === occ.budgetId,
-    );
-    setBudgetDeleteHasTransactions(linkedTxns.length > 0);
+    const hasSnapshotLinkedTransactions = transactions.some((txn) => {
+      if (txn.budgetSnapshotId === undefined) {
+        return false;
+      }
+      // Use type-safe numeric comparison to check if this transaction is linked
+      const snapshotId = Number(txn.budgetSnapshotId);
+      return snapshotBudgetIdBySnapshotId.get(snapshotId) === occ.budgetId;
+    });
+
+    setBudgetDeleteHasTransactions(hasSnapshotLinkedTransactions);
     setBudgetToDelete(occ.budgetId);
     setSnapshotToDeleteId(occ.budgetSnapshotId);
     setOccurrenceHasLinkedTransactions(occ.linkedTransactions.length > 0);

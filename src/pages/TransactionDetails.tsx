@@ -55,10 +55,19 @@ const TransactionDetails: React.FC = () => {
         setRecipient(rec || null);
         setAccount(acc || null);
 
-        // Fetch linked budget if exists
-        if (transaction.budgetId) {
-          const linkedBudget = await db.budgets.get(transaction.budgetId);
-          setBudget(linkedBudget || null);
+        // Fetch linked budget through snapshot linkage when present.
+        if (transaction.budgetSnapshotId !== undefined) {
+          const linkedSnapshot = await db.budgetSnapshots.get(
+            transaction.budgetSnapshotId,
+          );
+          if (linkedSnapshot) {
+            const linkedBudget = await db.budgets.get(linkedSnapshot.budgetId);
+            setBudget(linkedBudget || null);
+          } else {
+            setBudget(null);
+          }
+        } else {
+          setBudget(null);
         }
 
         // Fetch recent history for same recipient
@@ -68,7 +77,7 @@ const TransactionDetails: React.FC = () => {
           .reverse()
           .sortBy("date");
         setHistory(
-          allForRecipient.filter((t) => t.id !== transaction.id).slice(0, 3)
+          allForRecipient.filter((t) => t.id !== transaction.id).slice(0, 3),
         );
       }
     };
@@ -80,6 +89,7 @@ const TransactionDetails: React.FC = () => {
 
     try {
       await db.transactions.update(txn.id!, {
+        budgetSnapshotId: undefined,
         budgetId: undefined,
         occurrenceDate: undefined,
       });
@@ -87,6 +97,7 @@ const TransactionDetails: React.FC = () => {
       // Update local state
       setTxn({
         ...txn,
+        budgetSnapshotId: undefined,
         budgetId: undefined,
         occurrenceDate: undefined,
       });
@@ -257,7 +268,7 @@ const TransactionDetails: React.FC = () => {
         </IonCard>
 
         {/* Linked Budget Card - Only shown if transaction is linked to a budget */}
-        {txn.budgetId && budget && txn.occurrenceDate && (
+        {txn.budgetSnapshotId && budget && txn.occurrenceDate && (
           <IonCard style={{ marginTop: "1.6rem" }}>
             <IonCardHeader
               style={{
@@ -280,7 +291,7 @@ const TransactionDetails: React.FC = () => {
                           month: "short",
                           day: "numeric",
                           year: "numeric",
-                        }
+                        },
                       )}
                     </IonText>
                   </IonCol>

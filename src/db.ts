@@ -455,6 +455,43 @@ const getFiniteCycles = (budget: Budget): number => {
   return budget.remainingCyclesTotal;
 };
 
+const getClosestOccurrenceAtOrBefore = (
+  budget: Budget,
+  targetDateInput: Date,
+): { occurrenceDate: Date; cycleIndex: number } => {
+  const start = normalizeToDay(budget.dueDate);
+  const targetDate = normalizeToDay(targetDateInput);
+  const maxCycles = getFiniteCycles(budget);
+
+  if (budget.frequency === "once" || maxCycles <= 1) {
+    return { occurrenceDate: start, cycleIndex: 1 };
+  }
+
+  let occurrenceDate = new Date(start);
+  let cycleIndex = 1;
+  let guard = 0;
+
+  while (occurrenceDate <= targetDate && cycleIndex < maxCycles) {
+    guard += 1;
+    const nextOccurrence = normalizeToDay(
+      getNextOccurrenceDate(occurrenceDate, budget),
+    );
+
+    if (nextOccurrence > targetDate) {
+      break;
+    }
+
+    occurrenceDate = nextOccurrence;
+    cycleIndex += 1;
+
+    if (guard > 5000) {
+      break;
+    }
+  }
+
+  return { occurrenceDate, cycleIndex };
+};
+
 export const dedupeBudgetSnapshots = async (): Promise<{
   snapshotsDeduplicated: number;
   transactionsRelinked: number;
@@ -609,43 +646,6 @@ export const ensureBudgetSnapshotForOccurrence = async (
   }
 };
 
-const getClosestOccurrenceAtOrBefore = (
-  budget: Budget,
-  targetDateInput: Date,
-): { occurrenceDate: Date; cycleIndex: number } => {
-  const start = normalizeToDay(budget.dueDate);
-  const targetDate = normalizeToDay(targetDateInput);
-  const maxCycles = getFiniteCycles(budget);
-
-  if (budget.frequency === "once" || maxCycles <= 1) {
-    return { occurrenceDate: start, cycleIndex: 1 };
-  }
-
-  let occurrenceDate = new Date(start);
-  let cycleIndex = 1;
-  let guard = 0;
-
-  while (occurrenceDate <= targetDate && cycleIndex < maxCycles) {
-    guard += 1;
-    const nextOccurrence = normalizeToDay(
-      getNextOccurrenceDate(occurrenceDate, budget),
-    );
-
-    if (nextOccurrence > targetDate) {
-      break;
-    }
-
-    occurrenceDate = nextOccurrence;
-    cycleIndex += 1;
-
-    if (guard > 5000) {
-      break;
-    }
-  }
-
-  return { occurrenceDate, cycleIndex };
-};
-
 export const migrateBudgetSnapshots = async (): Promise<{
   budgetsProcessed: number;
   snapshotsCreated: number;
@@ -674,6 +674,13 @@ export const migrateBudgetSnapshots = async (): Promise<{
 
       const allBudgets = await db.budgets.toArray();
       const today = normalizeToDay(new Date());
+      const budgetMap = new Map<number, Budget>();
+
+      allBudgets.forEach((budget) => {
+        if (budget.id !== undefined) {
+          budgetMap.set(budget.id, budget);
+        }
+      });
 
       for (const budget of allBudgets) {
         if (!budget.id) {
@@ -721,18 +728,24 @@ export const migrateBudgetSnapshots = async (): Promise<{
         }
       }
 
-      const budgetMap = new Map<number, Budget>();
-      allBudgets.forEach((b) => {
-        if (b.id) {
-          budgetMap.set(b.id, b);
+      const currentSnapshots = await db.budgetSnapshots.toArray();
+      const snapshotIds = new Set<number>();
+      currentSnapshots.forEach((snapshot) => {
+        if (snapshot.id !== undefined) {
+          snapshotIds.add(snapshot.id);
         }
       });
 
-      const transactionsNeedingSnapshot = await db.transactions
-        .filter((txn) => !!txn.budgetId && !txn.budgetSnapshotId)
+      const orphanedSnapshotTransactions = await db.transactions
+        .filter(
+          (txn) =>
+            txn.id !== undefined &&
+            txn.budgetSnapshotId !== undefined &&
+            !snapshotIds.has(txn.budgetSnapshotId),
+        )
         .toArray();
 
-      for (const txn of transactionsNeedingSnapshot) {
+      for (const txn of orphanedSnapshotTransactions) {
         if (!txn.id || !txn.budgetId) {
           continue;
         }
@@ -762,6 +775,9 @@ export const migrateBudgetSnapshots = async (): Promise<{
 
         summary.transactionsLinked += 1;
       }
+
+      // Snapshot linkage is canonical; do not derive links from legacy transaction.budgetId.
+      // Existing rows without budgetSnapshotId are treated as unlinked until explicitly linked.
 
       return summary;
     } catch (error) {

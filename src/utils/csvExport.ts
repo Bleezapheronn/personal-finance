@@ -3,15 +3,30 @@ import { db } from "../db";
 export const exportTransactionsToCSV = async (): Promise<string> => {
   try {
     // Fetch all data
-    const [transactions, categories, recipients, accounts, buckets, budgets] =
-      await Promise.all([
-        db.transactions.toArray(),
-        db.categories.toArray(),
-        db.recipients.toArray(),
-        db.accounts.toArray(),
-        db.buckets.toArray(),
-        db.budgets.toArray(),
-      ]);
+    const [
+      transactions,
+      categories,
+      recipients,
+      accounts,
+      buckets,
+      budgets,
+      budgetSnapshots,
+    ] = await Promise.all([
+      db.transactions.toArray(),
+      db.categories.toArray(),
+      db.recipients.toArray(),
+      db.accounts.toArray(),
+      db.buckets.toArray(),
+      db.budgets.toArray(),
+      db.budgetSnapshots.toArray(),
+    ]);
+
+    const snapshotsById = new Map<number, (typeof budgetSnapshots)[number]>();
+    budgetSnapshots.forEach((snapshot) => {
+      if (snapshot.id !== undefined) {
+        snapshotsById.set(snapshot.id, snapshot);
+      }
+    });
 
     // CSV Header - CHANGED: Added budgetId and occurrenceDate
     const headers = [
@@ -53,8 +68,12 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
       const category = categories.find((c) => c.id === txn.categoryId);
       const bucket = buckets.find((b) => b.id === category?.bucketId);
       const account = accounts.find((a) => a.id === txn.accountId);
-      const budget = txn.budgetId
-        ? budgets.find((b) => b.id === txn.budgetId)
+      const linkedSnapshot =
+        txn.budgetSnapshotId !== undefined
+          ? snapshotsById.get(txn.budgetSnapshotId)
+          : undefined;
+      const budget = linkedSnapshot
+        ? budgets.find((b) => b.id === linkedSnapshot.budgetId)
         : null;
 
       // Split date and time
@@ -81,7 +100,7 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
         escapeCSV(category?.name),
         escapeCSV(bucket?.name),
         escapeCSV(account?.name),
-        escapeCSV(budget?.description), // Use budget description instead of ID for export
+        escapeCSV(linkedSnapshot?.description || budget?.description),
         escapeCSV(occurrenceDateStr),
         escapeCSV(txn.transactionCost),
         escapeCSV(txn.originalAmount),

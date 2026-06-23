@@ -82,6 +82,35 @@ interface BudgetOccurrence {
 }
 
 const BUDGET_BATCH_DAYS = 30;
+const GOAL_CAROUSEL_EXTENDED_HORIZON_DAYS = 3650;
+
+const normalizeToLocalDay = (value: Date | string): Date => {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const isSameLocalDay = (left: Date | string, right: Date | string): boolean => {
+  return (
+    normalizeToLocalDay(left).getTime() === normalizeToLocalDay(right).getTime()
+  );
+};
+
+const isDebugModeEnabled = (): boolean => {
+  return (
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem("debugMode") === "true"
+  );
+};
+
+const getLinkedTransactionCountForSnapshot = (
+  transactions: Transaction[],
+  snapshotId: number,
+): number => {
+  return transactions.filter(
+    (txn) => Number(txn.budgetSnapshotId) === snapshotId,
+  ).length;
+};
 
 const BudgetPage: React.FC = () => {
   const history = useHistory();
@@ -107,8 +136,11 @@ const BudgetPage: React.FC = () => {
   const [budgetToDelete, setBudgetToDelete] = useState<number | undefined>(
     undefined,
   );
-  const [budgetDeleteHasTransactions, setBudgetDeleteHasTransactions] =
-    useState(false);
+  const [deleteAnalysis, setDeleteAnalysis] = useState<{
+    totalSnapshots: number;
+    linkedSnapshots: BudgetSnapshot[];
+    unlinkedSnapshots: BudgetSnapshot[];
+  } | null>(null);
 
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [selectedBudgetForCompletion, setSelectedBudgetForCompletion] =
@@ -156,6 +188,131 @@ const BudgetPage: React.FC = () => {
         db.accounts.toArray(),
       ]);
 
+      // DEBUG: Check for snapshot ID type mismatches
+      if (isDebugModeEnabled()) {
+        const snapshotIds = new Set<number>();
+        const snapshots = await db.budgetSnapshots.toArray();
+        snapshots.forEach((snap) => {
+          if (snap.id !== undefined) {
+            snapshotIds.add(snap.id);
+          }
+        });
+        const typeMismatches = txns.filter(
+          (txn) =>
+            txn.budgetSnapshotId !== undefined &&
+            typeof txn.budgetSnapshotId !== "number",
+        );
+        if (typeMismatches.length > 0) {
+          console.warn(
+            `⚠️ Found ${typeMismatches.length} transactions with non-numeric budgetSnapshotId. This may cause linkage failures. Consider re-saving linked transactions.`,
+            typeMismatches.slice(0, 3),
+          );
+        }
+      }
+
+      // Normalize one-time goal snapshots against the live budget due date.
+      // Keep the due-date-matching snapshot when possible and prune stale,
+      // unlinked duplicates left behind by past edits.
+      const oneTimeGoalBudgets = b.filter(
+        (budget) => budget.id && budget.isGoal && budget.frequency === "once",
+      );
+      const goalBudgetIds = new Set(
+        oneTimeGoalBudgets.map((budget) => budget.id),
+      );
+      if (goalBudgetIds.size > 0) {
+        const snapshots = await db.budgetSnapshots.toArray();
+        const oneTimeGoalSnapshots = snapshots.filter((snap) =>
+          goalBudgetIds.has(snap.budgetId),
+        );
+        const duplicatesByBudget = new Map<
+          number,
+          typeof oneTimeGoalSnapshots
+        >();
+        oneTimeGoalSnapshots.forEach((snap) => {
+          if (!duplicatesByBudget.has(snap.budgetId)) {
+            duplicatesByBudget.set(snap.budgetId, []);
+          }
+          duplicatesByBudget.get(snap.budgetId)!.push(snap);
+        });
+        for (const budget of oneTimeGoalBudgets) {
+          const budgetId = budget.id;
+          if (!budgetId) {
+            continue;
+          }
+
+          const snaps = duplicatesByBudget.get(budgetId) || [];
+          if (snaps.length <= 1) {
+            continue;
+          }
+
+          const matchingDueDateSnapshots = snaps.filter((snap) =>
+            isSameLocalDay(snap.dueDate, budget.dueDate),
+          );
+          const candidatePool =
+            matchingDueDateSnapshots.length > 0
+              ? matchingDueDateSnapshots
+              : snaps;
+          const sortedCandidates = [...candidatePool].sort((left, right) => {
+            const rightLinkedCount = right.id
+              ? getLinkedTransactionCountForSnapshot(txns, right.id)
+              : 0;
+            const leftLinkedCount = left.id
+              ? getLinkedTransactionCountForSnapshot(txns, left.id)
+              : 0;
+
+            if (rightLinkedCount !== leftLinkedCount) {
+              return rightLinkedCount - leftLinkedCount;
+            }
+
+            return (
+              new Date(right.updatedAt).getTime() -
+              new Date(left.updatedAt).getTime()
+            );
+          });
+
+          const keep = sortedCandidates[0];
+          if (!keep?.id) {
+            continue;
+          }
+
+          const deletedSnapshotIds: number[] = [];
+          const preservedLinkedSnapshotIds: number[] = [];
+
+          for (const snap of snaps) {
+            if (!snap.id || snap.id === keep.id) {
+              continue;
+            }
+
+            const linkedCount = getLinkedTransactionCountForSnapshot(
+              txns,
+              snap.id,
+            );
+            if (linkedCount === 0) {
+              await db.budgetSnapshots.delete(snap.id);
+              deletedSnapshotIds.push(snap.id);
+            } else {
+              preservedLinkedSnapshotIds.push(snap.id);
+            }
+          }
+
+          if (isDebugModeEnabled()) {
+            console.info("One-time goal snapshot normalization", {
+              budgetId,
+              budgetDescription: budget.description,
+              liveBudgetDueDate: normalizeToLocalDay(
+                budget.dueDate,
+              ).toISOString(),
+              keptSnapshotId: keep.id,
+              keptSnapshotDueDate: normalizeToLocalDay(
+                keep.dueDate,
+              ).toISOString(),
+              deletedSnapshotIds,
+              preservedLinkedSnapshotIds,
+            });
+          }
+        }
+      }
+
       const oneYearFromNow = new Date();
       oneYearFromNow.setHours(0, 0, 0, 0);
       oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
@@ -199,37 +356,52 @@ const BudgetPage: React.FC = () => {
   };
 
   // Calculate amount paid for a specific budget occurrence
+  // Coerce snapshot IDs to numeric type to handle type drift from imports/restores
   const getAmountPaidForOccurrence = (
     budgetSnapshotId: number | undefined,
-    budgetId: number,
+    _budgetId: number,
     occurrenceDate: Date,
   ): number => {
+    if (budgetSnapshotId !== undefined) {
+      const numericSnapshotId = Number(budgetSnapshotId);
+      return transactions
+        .filter((txn) => Number(txn.budgetSnapshotId) === numericSnapshotId)
+        .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
+    }
+
+    // Legacy fallback: rows without snapshot linkage, matched by occurrence date.
+    const targetTime = occurrenceDate.getTime();
     return transactions
       .filter(
         (txn) =>
-          (budgetSnapshotId !== undefined &&
-            txn.budgetSnapshotId === budgetSnapshotId) ||
-          (txn.budgetId === budgetId &&
-            txn.occurrenceDate &&
-            new Date(txn.occurrenceDate).getTime() ===
-              occurrenceDate.getTime()),
+          txn.budgetSnapshotId === undefined &&
+          txn.occurrenceDate &&
+          new Date(txn.occurrenceDate).getTime() === targetTime,
       )
       .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
   };
 
   // Get linked transactions for a specific occurrence
+  // Coerce snapshot IDs to numeric type to handle type drift from imports/restores
   const getLinkedTransactionsForOccurrence = (
     budgetSnapshotId: number | undefined,
-    budgetId: number,
+    _budgetId: number,
     occurrenceDate: Date,
   ): Transaction[] => {
+    if (budgetSnapshotId !== undefined) {
+      const numericSnapshotId = Number(budgetSnapshotId);
+      return transactions.filter(
+        (txn) => Number(txn.budgetSnapshotId) === numericSnapshotId,
+      );
+    }
+
+    // Legacy fallback: rows without snapshot linkage, matched by occurrence date.
+    const targetTime = occurrenceDate.getTime();
     return transactions.filter(
       (txn) =>
-        (budgetSnapshotId !== undefined &&
-          txn.budgetSnapshotId === budgetSnapshotId) ||
-        (txn.budgetId === budgetId &&
-          txn.occurrenceDate &&
-          new Date(txn.occurrenceDate).getTime() === occurrenceDate.getTime()),
+        txn.budgetSnapshotId === undefined &&
+        txn.occurrenceDate &&
+        new Date(txn.occurrenceDate).getTime() === targetTime,
     );
   };
 
@@ -258,6 +430,20 @@ const BudgetPage: React.FC = () => {
       const existing = uniqueSnapshots.get(key);
 
       if (!existing) {
+        uniqueSnapshots.set(key, snapshot);
+        return;
+      }
+
+      // Choose the most recently updated snapshot for this occurrence
+      // Prefer ones with linked transactions when available
+      const existingHasLinks = transactions.some(
+        (txn) => Number(txn.budgetSnapshotId) === existing.id,
+      );
+      const candidateHasLinks = transactions.some(
+        (txn) => Number(txn.budgetSnapshotId) === snapshot.id,
+      );
+
+      if (candidateHasLinks && !existingHasLinks) {
         uniqueSnapshots.set(key, snapshot);
         return;
       }
@@ -339,6 +525,10 @@ const BudgetPage: React.FC = () => {
 
     occurrences.push(...snapshotOccurrences);
 
+    const snapshotBudgetIdsInRange = new Set(
+      snapshotOccurrences.map((occurrence) => occurrence.budgetId),
+    );
+
     // Legacy fallback for active budgets with no snapshot rows yet.
     budgets
       .filter((budget) => budget.isActive)
@@ -346,14 +536,16 @@ const BudgetPage: React.FC = () => {
         const budgetId = budget.id;
         if (!budgetId) return;
 
-        const hasSnapshots = snapshotOccurrences.some(
-          (occ) => occ.budgetId === budgetId,
-        );
+        const hasSnapshots = snapshotBudgetIdsInRange.has(budgetId);
         if (hasSnapshots) return;
 
         if (budget.frequency === "once") {
           const dueDate = new Date(budget.dueDate);
           dueDate.setHours(0, 0, 0, 0);
+
+          if (dueDate > horizonDate) {
+            return;
+          }
 
           const amountPaid = getAmountPaidForOccurrence(
             undefined,
@@ -701,39 +893,74 @@ const BudgetPage: React.FC = () => {
     return sortedGroups;
   };
 
-  // Handle delete click
+  // Analyze delete options based on snapshots and their linked transactions
+  // Use type-safe snapshot ID coercion for robust linkage resolution
+  const analyzeBudgetDeleteOptions = (budgetId: number) => {
+    const budgetSnapshotsForId = budgetSnapshots.filter(
+      (s) => s.budgetId === budgetId,
+    );
+    const linkedSnapshots = budgetSnapshotsForId.filter((snapshot) => {
+      return transactions.some(
+        (txn) => Number(txn.budgetSnapshotId) === snapshot.id,
+      );
+    });
+    const unlinkedSnapshots = budgetSnapshotsForId.filter((snapshot) => {
+      return !transactions.some(
+        (txn) => Number(txn.budgetSnapshotId) === snapshot.id,
+      );
+    });
+
+    return {
+      totalSnapshots: budgetSnapshotsForId.length,
+      linkedSnapshots,
+      unlinkedSnapshots,
+    };
+  };
+
+  // Handle delete click - run preflight analysis
   const handleDeleteClick = (budgetId: number) => {
-    const linkedTxns = transactions.filter((txn) => txn.budgetId === budgetId);
-    setBudgetDeleteHasTransactions(linkedTxns.length > 0);
+    const analysis = analyzeBudgetDeleteOptions(budgetId);
+    setDeleteAnalysis(analysis);
     setBudgetToDelete(budgetId);
     setShowDeleteConfirm(true);
   };
 
-  // Handle delete confirmation
-  const handleConfirmDelete = async () => {
-    if (budgetToDelete === undefined) return;
+  // Handle delete confirmation - execute selected action
+  const handleConfirmDelete = async (
+    action: "delete" | "deleteUnlinked" | "deactivate",
+  ) => {
+    if (budgetToDelete === undefined || !deleteAnalysis) return;
 
     try {
-      if (budgetDeleteHasTransactions) {
-        // Has linked transactions - deactivate instead
-        const budget = budgets.find((b) => b.id === budgetToDelete);
-        if (budget) {
-          await db.budgets.update(budgetToDelete, { isActive: false });
-          setSuccessMsg("Budget deactivated (has linked transactions)");
-        }
-      } else {
-        // No linked transactions - delete
+      if (action === "delete") {
+        // Delete budget only (no snapshots exist)
         await db.budgets.delete(budgetToDelete);
         setSuccessMsg("Budget deleted successfully");
+      } else if (action === "deleteUnlinked") {
+        // Delete unlinked snapshots
+        for (const snapshot of deleteAnalysis.unlinkedSnapshots) {
+          if (snapshot.id) {
+            await db.budgetSnapshots.delete(snapshot.id);
+          }
+        }
+        const count = deleteAnalysis.unlinkedSnapshots.length;
+        setSuccessMsg(
+          `${count} snapshot${count !== 1 ? "s" : ""} deleted successfully`,
+        );
+      } else if (action === "deactivate") {
+        // Deactivate budget
+        await db.budgets.update(budgetToDelete, { isActive: false });
+        setSuccessMsg("Budget deactivated (has linked transactions)");
       }
 
       setShowSuccessToast(true);
       loadData();
       setShowDeleteConfirm(false);
       setBudgetToDelete(undefined);
+      setDeleteAnalysis(null);
     } catch (err) {
-      console.error("Error deleting budget:", err);
-      setError("Failed to delete budget");
+      console.error("Error during delete action:", err);
+      setError("Failed to complete delete action");
     }
   };
 
@@ -1169,7 +1396,36 @@ const BudgetPage: React.FC = () => {
   );
 
   const allGoals = useMemo(() => {
-    const goals = visibleBudgetOccurrences.filter((occ) => occ.budget.isGoal);
+    const visibleGoals = visibleBudgetOccurrences.filter(
+      (occ) => occ.budget.isGoal,
+    );
+
+    const visibleGoalBudgetIds = new Set(
+      visibleGoals.map((goal) => goal.budgetId),
+    );
+
+    const extendedGoalOccurrences = generateBudgetOccurrences(
+      GOAL_CAROUSEL_EXTENDED_HORIZON_DAYS,
+    ).filter((occ) => occ.budget.isGoal);
+
+    // Only append one representative occurrence for goal budgets hidden by
+    // the normal 30-day horizon; keep currently visible goal entries intact.
+    const hiddenGoalsByBudget = new Map<number, BudgetOccurrence>();
+    extendedGoalOccurrences.forEach((goalOcc) => {
+      if (visibleGoalBudgetIds.has(goalOcc.budgetId)) {
+        return;
+      }
+
+      const existing = hiddenGoalsByBudget.get(goalOcc.budgetId);
+      if (!existing || goalOcc.dueDate.getTime() < existing.dueDate.getTime()) {
+        hiddenGoalsByBudget.set(goalOcc.budgetId, goalOcc);
+      }
+    });
+
+    const goals = [
+      ...visibleGoals,
+      ...Array.from(hiddenGoalsByBudget.values()),
+    ];
 
     // Sort completed goals first, then incomplete; due date ascending within each group.
     return goals.sort((a, b) => {
@@ -1198,6 +1454,7 @@ const BudgetPage: React.FC = () => {
       // Keep deterministic order when due dates are equal.
       return (a.budgetId || 0) - (b.budgetId || 0);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleBudgetOccurrences, getEffectiveBudgetTarget]);
 
   const activeGoals = useMemo(
@@ -1253,6 +1510,48 @@ const BudgetPage: React.FC = () => {
     setCurrentGoalIndex(getInitialGoalIndex());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, allGoals.length]);
+
+  useEffect(() => {
+    if (!isDebugModeEnabled()) {
+      return;
+    }
+
+    const selectedGoal = allGoals[currentGoalIndex];
+    console.info("Goal carousel diagnostics", {
+      currentGoalIndex,
+      totalGoals: allGoals.length,
+      selectedGoal: selectedGoal
+        ? {
+            budgetId: selectedGoal.budgetId,
+            description: selectedGoal.budget.description,
+            budgetSnapshotId: selectedGoal.budgetSnapshotId,
+            dueDate: selectedGoal.dueDate.toISOString(),
+            amountPaid: selectedGoal.amountPaid,
+            linkedTransactions: selectedGoal.linkedTransactions.length,
+            linkedTransactionSnapshotIds: Array.from(
+              new Set(
+                selectedGoal.linkedTransactions.map(
+                  (txn) => txn.budgetSnapshotId,
+                ),
+              ),
+            ),
+            isCompleted: selectedGoal.isCompleted,
+          }
+        : null,
+      goals: allGoals.map((goal) => ({
+        budgetId: goal.budgetId,
+        description: goal.budget.description,
+        budgetSnapshotId: goal.budgetSnapshotId,
+        dueDate: goal.dueDate.toISOString(),
+        amountPaid: goal.amountPaid,
+        linkedTransactions: goal.linkedTransactions.length,
+        linkedTransactionSnapshotIds: Array.from(
+          new Set(goal.linkedTransactions.map((txn) => txn.budgetSnapshotId)),
+        ),
+        isCompleted: goal.isCompleted,
+      })),
+    });
+  }, [allGoals, currentGoalIndex]);
 
   const handleGoalPrevious = () => {
     if (allGoals.length <= 1) return;
@@ -1313,28 +1612,76 @@ const BudgetPage: React.FC = () => {
       </IonHeader>
 
       <IonContent className="ion-padding">
-        {/* Delete Confirmation */}
+        {/* Delete Confirmation - Multi-Option */}
         <IonAlert
           isOpen={showDeleteConfirm}
-          onDidDismiss={() => setShowDeleteConfirm(false)}
+          onDidDismiss={() => {
+            setShowDeleteConfirm(false);
+            setDeleteAnalysis(null);
+          }}
           header="Delete Budget"
           message={
-            budgetDeleteHasTransactions
-              ? "This budget has linked transactions. It will be deactivated instead of deleted. You can reactivate it later if needed."
-              : "Are you sure you want to delete this budget? This action cannot be undone."
+            deleteAnalysis
+              ? deleteAnalysis.totalSnapshots === 0
+                ? "This budget has no snapshots. Delete it?"
+                : deleteAnalysis.linkedSnapshots.length > 0 &&
+                    deleteAnalysis.unlinkedSnapshots.length > 0
+                  ? `This budget has ${deleteAnalysis.unlinkedSnapshots.length} snapshot(s) with no transactions and ${deleteAnalysis.linkedSnapshots.length} snapshot(s) with linked transactions. Choose an action below.`
+                  : deleteAnalysis.linkedSnapshots.length > 0
+                    ? `This budget has ${deleteAnalysis.linkedSnapshots.length} snapshot(s) with linked transactions. Deactivate to keep history.`
+                    : `This budget has ${deleteAnalysis.unlinkedSnapshots.length} snapshot(s) with no linked transactions. Delete them?`
+              : "Loading..."
           }
-          buttons={[
-            {
-              text: "Cancel",
-              role: "cancel",
-              handler: () => setShowDeleteConfirm(false),
-            },
-            {
-              text: budgetDeleteHasTransactions ? "Deactivate" : "Delete",
-              role: "destructive",
-              handler: handleConfirmDelete,
-            },
-          ]}
+          buttons={
+            deleteAnalysis
+              ? [
+                  {
+                    text: "Cancel",
+                    role: "cancel",
+                    handler: () => {
+                      setShowDeleteConfirm(false);
+                      setDeleteAnalysis(null);
+                    },
+                  },
+                  // Option 1: Delete Budget (only if no snapshots)
+                  ...(deleteAnalysis.totalSnapshots === 0
+                    ? [
+                        {
+                          text: "Delete Budget",
+                          role: "destructive" as const,
+                          handler: () => handleConfirmDelete("delete"),
+                        },
+                      ]
+                    : []),
+                  // Option 2: Delete Unlinked Snapshots (only if unlinked exist)
+                  ...(deleteAnalysis.unlinkedSnapshots.length > 0
+                    ? [
+                        {
+                          text: `Delete Unlinked Snapshots (${deleteAnalysis.unlinkedSnapshots.length})`,
+                          role: "destructive" as const,
+                          handler: () => handleConfirmDelete("deleteUnlinked"),
+                        },
+                      ]
+                    : []),
+                  // Option 3: Deactivate Budget (if linked snapshots exist)
+                  ...(deleteAnalysis.linkedSnapshots.length > 0
+                    ? [
+                        {
+                          text: "Deactivate Budget",
+                          role: "destructive" as const,
+                          handler: () => handleConfirmDelete("deactivate"),
+                        },
+                      ]
+                    : []),
+                ]
+              : [
+                  {
+                    text: "Cancel",
+                    role: "cancel",
+                    handler: () => setShowDeleteConfirm(false),
+                  },
+                ]
+          }
         />
 
         {/* Success Toast */}

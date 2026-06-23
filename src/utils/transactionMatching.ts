@@ -16,11 +16,12 @@ export const findMatchingTransactions = (
   allTransactions: Transaction[],
   budgetDescription: string,
   budgetCategoryId: number,
-  budgetRecipientId: number | undefined
+  budgetRecipientId: number | undefined,
 ): Transaction[] => {
   // Filter unlinked transactions only
   const unlinkedTransactions = allTransactions.filter(
-    (txn) => txn.budgetId === null || txn.budgetId === undefined
+    (txn) =>
+      txn.budgetSnapshotId === null || txn.budgetSnapshotId === undefined,
   );
 
   // Score and sort by relevance

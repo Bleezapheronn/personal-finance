@@ -479,10 +479,25 @@ const AddBudget: React.FC = () => {
     if (isEditMode && id) {
       const checkLinkedTransactions = async () => {
         try {
-          const linkedTxns = await db.transactions
-            .where("budgetId")
-            .equals(Number(id))
-            .toArray();
+          const [allSnapshots, allTransactions] = await Promise.all([
+            db.budgetSnapshots.where("budgetId").equals(Number(id)).toArray(),
+            db.transactions.toArray(),
+          ]);
+
+          const snapshotIds = new Set(
+            allSnapshots
+              .map((snapshot) => snapshot.id)
+              .filter(
+                (snapshotId): snapshotId is number => snapshotId !== undefined,
+              ),
+          );
+
+          const linkedTxns = allTransactions.filter(
+            (txn) =>
+              txn.budgetSnapshotId !== undefined &&
+              snapshotIds.has(txn.budgetSnapshotId),
+          );
+
           setHasLinkedTransactions(linkedTxns.length > 0);
         } catch (err) {
           console.error("Failed to check linked transactions:", err);

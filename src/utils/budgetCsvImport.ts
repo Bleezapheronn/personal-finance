@@ -63,7 +63,7 @@ interface FrequencyDetails {
 }
 
 export const importBudgetsFromCSV = async (
-  csvContent: string
+  csvContent: string,
 ): Promise<BudgetImportResult> => {
   const result: BudgetImportResult = {
     success: 0,
@@ -123,7 +123,7 @@ export const importBudgetsFromCSV = async (
 
         // Find category
         const category = categories.find(
-          (c) => c.name?.toLowerCase() === categoryName.toLowerCase()
+          (c) => c.name?.toLowerCase() === categoryName.toLowerCase(),
         );
         if (!category) {
           result.errors.push({
@@ -138,7 +138,7 @@ export const importBudgetsFromCSV = async (
         let recipientId: number | undefined;
         if (recipientName) {
           const existingRecipient = recipients.find(
-            (r) => r.name?.toLowerCase() === recipientName.toLowerCase()
+            (r) => r.name?.toLowerCase() === recipientName.toLowerCase(),
           );
           if (!existingRecipient) {
             const now = new Date();
@@ -158,7 +158,7 @@ export const importBudgetsFromCSV = async (
         let accountId: number | undefined;
         if (accountName) {
           const account = accounts.find(
-            (a) => a.name?.toLowerCase() === accountName.toLowerCase()
+            (a) => a.name?.toLowerCase() === accountName.toLowerCase(),
           );
           if (account) {
             accountId = account.id;
@@ -192,7 +192,7 @@ export const importBudgetsFromCSV = async (
         if (frequencyDetailsStr) {
           try {
             frequencyDetails = JSON.parse(
-              frequencyDetailsStr
+              frequencyDetailsStr,
             ) as FrequencyDetails;
           } catch {
             frequencyDetails = undefined;
@@ -273,18 +273,8 @@ export const importBudgetsFromCSV = async (
  * Maps old budget IDs to new ones
  */
 export const remapTransactionBudgetIds = async (
-  budgetIdMap: Map<number, number>
+  budgetIdMap: Map<number, number>,
 ): Promise<void> => {
-  if (budgetIdMap.size === 0) return;
-
-  const transactions = await db.transactions.toArray();
-
-  for (const txn of transactions) {
-    if (txn.budgetId && budgetIdMap.has(txn.budgetId)) {
-      const newBudgetId = budgetIdMap.get(txn.budgetId)!;
-      await db.transactions.update(txn.id!, {
-        budgetId: newBudgetId,
-      });
-    }
-  }
+  // budgetSnapshotId is the linkage source of truth; this legacy remap no longer mutates transactions.
+  void budgetIdMap;
 };
