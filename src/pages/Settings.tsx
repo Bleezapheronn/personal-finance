@@ -40,6 +40,7 @@ import {
   exportBudgetsToCSV,
   downloadBudgetsCSV,
 } from "../utils/budgetCsvExport";
+import { createFullBackup, downloadFullBackup } from "../utils/fullBackup";
 import "./Settings.css";
 
 interface MigrationLog {
@@ -467,6 +468,40 @@ const Settings: React.FC = () => {
     }
   };
 
+  const handleExportFullBackup = async () => {
+    try {
+      setLoading(true);
+      const backup = await createFullBackup();
+      const filename = downloadFullBackup(backup);
+      const totalRecords = Object.values(backup.integrity.counts).reduce(
+        (sum, count) => sum + count,
+        0
+      );
+
+      addMigrationLog(
+        "Download Full JSON Backup",
+        true,
+        `Exported ${totalRecords} records to ${filename}`,
+        totalRecords
+      );
+      setToastMessage("✅ Full JSON backup downloaded successfully");
+      setToastColor("success");
+      setShowToast(true);
+    } catch (err) {
+      console.error("Full backup export error:", err);
+      addMigrationLog(
+        "Download Full JSON Backup",
+        false,
+        `Error: ${err instanceof Error ? err.message : "Unknown error"}`
+      );
+      setToastMessage("Full JSON backup failed");
+      setToastColor("danger");
+      setShowToast(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleClearLogs = () => {
     setMigrationLogs([]);
     setToastMessage("Migration logs cleared");
@@ -718,6 +753,17 @@ const Settings: React.FC = () => {
                 >
                   <IonIcon slot="start" icon={downloadOutline} />
                   Export Budgets to CSV
+                </IonButton>
+
+                <IonButton
+                  expand="block"
+                  fill="outline"
+                  onClick={handleExportFullBackup}
+                  disabled={loading || isMigrating}
+                  style={{ marginTop: "8px" }}
+                >
+                  <IonIcon slot="start" icon={downloadOutline} />
+                  Download Full JSON Backup
                 </IonButton>
 
                 <IonText color="medium">
