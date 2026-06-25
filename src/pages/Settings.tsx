@@ -41,6 +41,12 @@ import {
   downloadBudgetsCSV,
 } from "../utils/budgetCsvExport";
 import { createFullBackup, downloadFullBackup } from "../utils/fullBackup";
+import {
+  DbHealthReport,
+  DbHealthSeverity,
+  downloadDbHealthReport,
+  runDbHealthCheck,
+} from "../utils/dbHealth";
 import "./Settings.css";
 
 interface MigrationLog {
@@ -72,6 +78,9 @@ const Settings: React.FC = () => {
   const [toastColor, setToastColor] = useState("success");
   const [migratingProgress, setMigratingProgress] = useState(0);
   const [isMigrating, setIsMigrating] = useState(false);
+  const [healthReport, setHealthReport] = useState<DbHealthReport | null>(
+    null
+  );
 
   useEffect(() => {
     // Load debug mode from localStorage
@@ -502,6 +511,56 @@ const Settings: React.FC = () => {
     }
   };
 
+  const handleRunHealthCheck = async () => {
+    try {
+      setLoading(true);
+      const report = await runDbHealthCheck();
+      const totalIssues =
+        report.issues.error.length +
+        report.issues.warning.length +
+        report.issues.info.length;
+
+      setHealthReport(report);
+      addMigrationLog(
+        "Database Health Check",
+        true,
+        `Found ${report.issues.error.length} errors, ${report.issues.warning.length} warnings, and ${report.issues.info.length} info messages`,
+        totalIssues
+      );
+      setToastMessage("✅ Database health check complete");
+      setToastColor("success");
+      setShowToast(true);
+    } catch (err) {
+      console.error("Database health check error:", err);
+      addMigrationLog(
+        "Database Health Check",
+        false,
+        `Error: ${err instanceof Error ? err.message : "Unknown error"}`
+      );
+      setToastMessage("Database health check failed");
+      setToastColor("danger");
+      setShowToast(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDownloadHealthReport = () => {
+    if (!healthReport) {
+      return;
+    }
+
+    const filename = downloadDbHealthReport(healthReport);
+    addMigrationLog(
+      "Download Health Report JSON",
+      true,
+      `Exported database health report to ${filename}`
+    );
+    setToastMessage("✅ Health report downloaded successfully");
+    setToastColor("success");
+    setShowToast(true);
+  };
+
   const handleClearLogs = () => {
     setMigrationLogs([]);
     setToastMessage("Migration logs cleared");
@@ -516,6 +575,74 @@ const Settings: React.FC = () => {
       console.log("📝 Migration Logs:", migrationLogs);
       window.open("chrome://inspect/#databases", "_blank");
     }
+  };
+
+  const renderIssueList = (severity: DbHealthSeverity) => {
+    const issues = healthReport?.issues[severity] ?? [];
+
+    if (issues.length === 0) {
+      return null;
+    }
+
+    return (
+      <div style={{ marginTop: "12px" }}>
+        <IonText
+          color={
+            severity === "error"
+              ? "danger"
+              : severity === "warning"
+                ? "warning"
+                : "medium"
+          }
+        >
+          <h4 style={{ textTransform: "capitalize" }}>
+            {severity}s ({issues.length})
+          </h4>
+        </IonText>
+        <div style={{ maxHeight: "240px", overflowY: "auto" }}>
+          {issues.map((issue, index) => (
+            <div
+              key={`${issue.code}-${issue.recordId ?? "none"}-${index}`}
+              style={{
+                padding: "10px",
+                marginBottom: "8px",
+                borderLeft: `4px solid ${
+                  severity === "error"
+                    ? "#eb445c"
+                    : severity === "warning"
+                      ? "#ffc409"
+                      : "#92949c"
+                }`,
+                backgroundColor: "var(--ion-color-light)",
+                borderRadius: "4px",
+              }}
+            >
+              <IonText>
+                <p style={{ margin: "0 0 4px 0", fontWeight: 600 }}>
+                  {issue.code}
+                </p>
+              </IonText>
+              <IonText color="medium">
+                <p style={{ margin: "0" }}>{issue.message}</p>
+                <p style={{ margin: "4px 0 0 0", fontSize: "0.75rem" }}>
+                  Table: {issue.table}
+                  {issue.recordId !== undefined
+                    ? ` · Record ID: ${issue.recordId}`
+                    : ""}
+                </p>
+                {issue.details && (
+                  <p style={{ margin: "4px 0 0 0", fontSize: "0.75rem" }}>
+                    {Object.entries(issue.details)
+                      .map(([key, value]) => `${key}: ${value ?? "missing"}`)
+                      .join(" · ")}
+                  </p>
+                )}
+              </IonText>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -771,6 +898,102 @@ const Settings: React.FC = () => {
                     Exports current data with timestamp in filename
                   </p>
                 </IonText>
+              </IonCardContent>
+            </IonCard>
+
+            {/* Database Health Check */}
+            <IonCard>
+              <IonCardHeader>
+                <IonText>
+                  <h3>Database Health Check</h3>
+                </IonText>
+              </IonCardHeader>
+              <IonCardContent>
+                <IonButton
+                  expand="block"
+                  fill="outline"
+                  onClick={handleRunHealthCheck}
+                  disabled={loading || isMigrating}
+                >
+                  <IonIcon slot="start" icon={bugOutline} />
+                  Run Database Health Check
+                </IonButton>
+
+                {healthReport && (
+                  <>
+                    <IonGrid style={{ marginTop: "12px" }}>
+                      <IonRow>
+                        <IonCol size="4">
+                          <div className="stat-item">
+                            <IonText color="danger">
+                              <h4>{healthReport.issues.error.length}</h4>
+                            </IonText>
+                            <IonText color="medium">
+                              <p>Errors</p>
+                            </IonText>
+                          </div>
+                        </IonCol>
+                        <IonCol size="4">
+                          <div className="stat-item">
+                            <IonText color="warning">
+                              <h4>{healthReport.issues.warning.length}</h4>
+                            </IonText>
+                            <IonText color="medium">
+                              <p>Warnings</p>
+                            </IonText>
+                          </div>
+                        </IonCol>
+                        <IonCol size="4">
+                          <div className="stat-item">
+                            <IonText color="medium">
+                              <h4>{healthReport.issues.info.length}</h4>
+                            </IonText>
+                            <IonText color="medium">
+                              <p>Info</p>
+                            </IonText>
+                          </div>
+                        </IonCol>
+                      </IonRow>
+                    </IonGrid>
+
+                    <IonText color="medium">
+                      <p style={{ fontSize: "0.75rem", marginTop: "8px" }}>
+                        Generated:{" "}
+                        {new Date(healthReport.generatedAt).toLocaleString()}
+                      </p>
+                    </IonText>
+
+                    <IonGrid>
+                      <IonRow>
+                        {Object.entries(healthReport.rowCounts).map(
+                          ([tableName, count]) => (
+                            <IonCol size="6" key={tableName}>
+                              <IonText>
+                                <p style={{ margin: "4px 0" }}>
+                                  <strong>{tableName}:</strong> {count}
+                                </p>
+                              </IonText>
+                            </IonCol>
+                          )
+                        )}
+                      </IonRow>
+                    </IonGrid>
+
+                    <IonButton
+                      expand="block"
+                      fill="outline"
+                      onClick={handleDownloadHealthReport}
+                      style={{ marginTop: "8px" }}
+                    >
+                      <IonIcon slot="start" icon={downloadOutline} />
+                      Download Health Report JSON
+                    </IonButton>
+
+                    {renderIssueList("error")}
+                    {renderIssueList("warning")}
+                    {renderIssueList("info")}
+                  </>
+                )}
               </IonCardContent>
             </IonCard>
 
