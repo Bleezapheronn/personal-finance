@@ -29,6 +29,47 @@ export interface DbHealthReport {
   generatedAt: string;
   rowCounts: Record<FullBackupTableName, number>;
   issues: Record<DbHealthSeverity, DbHealthIssue[]>;
+  repairPreviews: {
+    selfReferencedTransfers: SelfReferencedTransferRepairCandidate[];
+  };
+}
+
+export interface SelfReferencedTransferRepairCandidate {
+  outgoingTransactionId: number;
+  incomingTransactionId: number;
+  outgoingCurrentTransferPairId: number;
+  incomingCurrentTransferPairId: number;
+  outgoingProposedTransferPairId: number;
+  incomingProposedTransferPairId: number;
+  transactionReference: string;
+  date: string;
+  description: string;
+  amount: number;
+}
+
+export interface SelfReferencedTransferUpdatedPair {
+  outgoingTransactionId: number;
+  incomingTransactionId: number;
+  outgoingPreviousTransferPairId: number;
+  incomingPreviousTransferPairId: number;
+  outgoingNewTransferPairId: number;
+  incomingNewTransferPairId: number;
+  transactionReference: string;
+}
+
+export interface SelfReferencedTransferSkippedPair {
+  outgoingTransactionId: number;
+  incomingTransactionId: number;
+  transactionReference: string;
+  reason: string;
+}
+
+export interface SelfReferencedTransferRepairSummary {
+  candidateCount: number;
+  updatedTransactionCount: number;
+  skippedCandidateCount: number;
+  updatedPairs: SelfReferencedTransferUpdatedPair[];
+  skippedPairs: SelfReferencedTransferSkippedPair[];
 }
 
 interface TableData {
@@ -337,6 +378,23 @@ const checkTransfers = (report: DbHealthReport, data: TableData): void => {
       return;
     }
 
+    if (
+      transaction.id !== undefined &&
+      transaction.transferPairId === transaction.id
+    ) {
+      addIssue(report, {
+        severity: "error",
+        code: "transfer_pair_self_reference",
+        table: "transactions",
+        recordId: transaction.id,
+        message: "Transfer transaction points to itself as its transfer pair.",
+        details: {
+          transferPairId: transaction.transferPairId,
+        },
+      });
+      return;
+    }
+
     const pair = transactionsById.get(transaction.transferPairId);
     if (!pair) {
       addIssue(report, {
@@ -386,6 +444,181 @@ const checkTransfers = (report: DbHealthReport, data: TableData): void => {
     }
   });
 };
+
+const createSelfReferencedTransferCandidate = (
+  first: Transaction,
+  second: Transaction,
+): SelfReferencedTransferRepairCandidate | null => {
+  if (
+    first.id === undefined ||
+    second.id === undefined ||
+    first.transferPairId !== first.id ||
+    second.transferPairId !== second.id ||
+    !first.isTransfer ||
+    !second.isTransfer ||
+    !first.transactionReference ||
+    first.transactionReference !== second.transactionReference ||
+    new Date(first.date).getTime() !== new Date(second.date).getTime() ||
+    (first.description ?? "") !== (second.description ?? "") ||
+    first.categoryId !== second.categoryId ||
+    Math.abs(first.amount) !== Math.abs(second.amount) ||
+    first.amount * second.amount >= 0 ||
+    first.accountId === undefined ||
+    second.accountId === undefined ||
+    first.accountId === second.accountId
+  ) {
+    return null;
+  }
+
+  const outgoing = first.amount < 0 ? first : second;
+  const incoming = first.amount > 0 ? first : second;
+
+  if (
+    outgoing.id === undefined ||
+    incoming.id === undefined ||
+    outgoing.transferPairId === undefined ||
+    incoming.transferPairId === undefined ||
+    !outgoing.transactionReference
+  ) {
+    return null;
+  }
+
+  return {
+    outgoingTransactionId: outgoing.id,
+    incomingTransactionId: incoming.id,
+    outgoingCurrentTransferPairId: outgoing.transferPairId,
+    incomingCurrentTransferPairId: incoming.transferPairId,
+    outgoingProposedTransferPairId: incoming.id,
+    incomingProposedTransferPairId: outgoing.id,
+    transactionReference: outgoing.transactionReference,
+    date: dateKey(outgoing.date),
+    description: outgoing.description ?? "",
+    amount: Math.abs(outgoing.amount),
+  };
+};
+
+const getSelfReferencedTransferRepairCandidates = (
+  transactions: Transaction[],
+): SelfReferencedTransferRepairCandidate[] => {
+  const groups = new Map<string, Transaction[]>();
+
+  transactions.forEach((transaction) => {
+    if (
+      !transaction.isTransfer ||
+      transaction.id === undefined ||
+      transaction.transferPairId !== transaction.id ||
+      !transaction.transactionReference
+    ) {
+      return;
+    }
+
+    const key = [
+      transaction.transactionReference,
+      new Date(transaction.date).getTime(),
+      transaction.description ?? "",
+      transaction.categoryId,
+      Math.abs(transaction.amount),
+    ].join("|");
+
+    const group = groups.get(key) ?? [];
+    group.push(transaction);
+    groups.set(key, group);
+  });
+
+  const candidates: SelfReferencedTransferRepairCandidate[] = [];
+
+  groups.forEach((group) => {
+    if (group.length !== 2) {
+      return;
+    }
+
+    const [first, second] = group;
+    const candidate = createSelfReferencedTransferCandidate(first, second);
+
+    if (candidate) {
+      candidates.push(candidate);
+    }
+  });
+
+  return candidates.sort(
+    (a, b) => a.outgoingTransactionId - b.outgoingTransactionId,
+  );
+};
+
+export const applySelfReferencedTransferRepairs =
+  async (): Promise<SelfReferencedTransferRepairSummary> => {
+    const data = await readAllTables();
+    const candidates = getSelfReferencedTransferRepairCandidates(
+      data.transactions,
+    );
+    const summary: SelfReferencedTransferRepairSummary = {
+      candidateCount: candidates.length,
+      updatedTransactionCount: 0,
+      skippedCandidateCount: 0,
+      updatedPairs: [],
+      skippedPairs: [],
+    };
+
+    await db.transaction("rw", db.transactions, async () => {
+      for (const candidate of candidates) {
+        const [outgoing, incoming] = await Promise.all([
+          db.transactions.get(candidate.outgoingTransactionId),
+          db.transactions.get(candidate.incomingTransactionId),
+        ]);
+
+        if (!outgoing || !incoming) {
+          summary.skippedCandidateCount += 1;
+          summary.skippedPairs.push({
+            outgoingTransactionId: candidate.outgoingTransactionId,
+            incomingTransactionId: candidate.incomingTransactionId,
+            transactionReference: candidate.transactionReference,
+            reason: "One or both transactions no longer exist.",
+          });
+          continue;
+        }
+
+        const currentCandidate = createSelfReferencedTransferCandidate(
+          outgoing,
+          incoming,
+        );
+
+        if (!currentCandidate) {
+          summary.skippedCandidateCount += 1;
+          summary.skippedPairs.push({
+            outgoingTransactionId: candidate.outgoingTransactionId,
+            incomingTransactionId: candidate.incomingTransactionId,
+            transactionReference: candidate.transactionReference,
+            reason: "Candidate no longer matches high-confidence repair criteria.",
+          });
+          continue;
+        }
+
+        await db.transactions.update(currentCandidate.outgoingTransactionId, {
+          transferPairId: currentCandidate.incomingTransactionId,
+        });
+        await db.transactions.update(currentCandidate.incomingTransactionId, {
+          transferPairId: currentCandidate.outgoingTransactionId,
+        });
+
+        summary.updatedTransactionCount += 2;
+        summary.updatedPairs.push({
+          outgoingTransactionId: currentCandidate.outgoingTransactionId,
+          incomingTransactionId: currentCandidate.incomingTransactionId,
+          outgoingPreviousTransferPairId:
+            currentCandidate.outgoingCurrentTransferPairId,
+          incomingPreviousTransferPairId:
+            currentCandidate.incomingCurrentTransferPairId,
+          outgoingNewTransferPairId:
+            currentCandidate.outgoingProposedTransferPairId,
+          incomingNewTransferPairId:
+            currentCandidate.incomingProposedTransferPairId,
+          transactionReference: currentCandidate.transactionReference,
+        });
+      }
+    });
+
+    return summary;
+  };
 
 const checkBudgetReferences = (
   report: DbHealthReport,
@@ -500,6 +733,9 @@ export const runDbHealthCheck = async (): Promise<DbHealthReport> => {
       warning: [],
       info: [],
     },
+    repairPreviews: {
+      selfReferencedTransfers: [],
+    },
   };
 
   checkTransactionReferences(report, data);
@@ -508,6 +744,8 @@ export const runDbHealthCheck = async (): Promise<DbHealthReport> => {
   checkBudgetReferences(report, data);
   checkCategoryReferences(report, data);
   checkLegacyTableReferences(report, data);
+  report.repairPreviews.selfReferencedTransfers =
+    getSelfReferencedTransferRepairCandidates(data.transactions);
 
   if (
     report.issues.error.length === 0 &&

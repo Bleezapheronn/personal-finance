@@ -44,6 +44,8 @@ import { createFullBackup, downloadFullBackup } from "../utils/fullBackup";
 import {
   DbHealthReport,
   DbHealthSeverity,
+  SelfReferencedTransferRepairSummary,
+  applySelfReferencedTransferRepairs,
   downloadDbHealthReport,
   runDbHealthCheck,
 } from "../utils/dbHealth";
@@ -73,6 +75,8 @@ const Settings: React.FC = () => {
   const [dbStats, setDbStats] = useState<DbStats | null>(null);
   const [migrationLogs, setMigrationLogs] = useState<MigrationLog[]>([]);
   const [showMigrationAlert, setShowMigrationAlert] = useState(false);
+  const [showTransferRepairAlert, setShowTransferRepairAlert] =
+    useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [toastColor, setToastColor] = useState("success");
@@ -81,6 +85,8 @@ const Settings: React.FC = () => {
   const [healthReport, setHealthReport] = useState<DbHealthReport | null>(
     null
   );
+  const [transferRepairSummary, setTransferRepairSummary] =
+    useState<SelfReferencedTransferRepairSummary | null>(null);
 
   useEffect(() => {
     // Load debug mode from localStorage
@@ -561,6 +567,41 @@ const Settings: React.FC = () => {
     setShowToast(true);
   };
 
+  const handleApplySelfReferencedTransferRepairs = async () => {
+    try {
+      setShowTransferRepairAlert(false);
+      setLoading(true);
+      const summary = await applySelfReferencedTransferRepairs();
+      const refreshedReport = await runDbHealthCheck();
+
+      setTransferRepairSummary(summary);
+      setHealthReport(refreshedReport);
+      addMigrationLog(
+        "Apply Self-Referenced Transfer Repairs",
+        true,
+        `Updated ${summary.updatedTransactionCount} transactions across ${summary.updatedPairs.length} pairs; skipped ${summary.skippedCandidateCount} candidates`,
+        summary.updatedTransactionCount
+      );
+      setToastMessage(
+        `✅ Updated ${summary.updatedTransactionCount} transfer pair links`
+      );
+      setToastColor("success");
+      setShowToast(true);
+    } catch (err) {
+      console.error("Self-referenced transfer repair error:", err);
+      addMigrationLog(
+        "Apply Self-Referenced Transfer Repairs",
+        false,
+        `Error: ${err instanceof Error ? err.message : "Unknown error"}`
+      );
+      setToastMessage("Self-referenced transfer repair failed");
+      setToastColor("danger");
+      setShowToast(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleClearLogs = () => {
     setMigrationLogs([]);
     setToastMessage("Migration logs cleared");
@@ -989,6 +1030,151 @@ const Settings: React.FC = () => {
                       Download Health Report JSON
                     </IonButton>
 
+                    <div style={{ marginTop: "16px" }}>
+                      <IonText>
+                        <h4>Self-referenced transfer repair candidates</h4>
+                      </IonText>
+                      <IonText color="medium">
+                        <p style={{ margin: "4px 0", fontSize: "0.85rem" }}>
+                          Preview only. No transaction data was changed.
+                        </p>
+                      </IonText>
+                      <IonGrid>
+                        <IonRow>
+                          <IonCol size="6">
+                            <div className="stat-item">
+                              <IonText color="primary">
+                                <h4>
+                                  {
+                                    healthReport.repairPreviews
+                                      .selfReferencedTransfers.length
+                                  }
+                                </h4>
+                              </IonText>
+                              <IonText color="medium">
+                                <p>Candidates</p>
+                              </IonText>
+                            </div>
+                          </IonCol>
+                          <IonCol size="6">
+                            <div className="stat-item">
+                              <IonText color="primary">
+                                <h4>
+                                  {healthReport.repairPreviews
+                                    .selfReferencedTransfers.length * 2}
+                                </h4>
+                              </IonText>
+                              <IonText color="medium">
+                                <p>Affected Transactions</p>
+                              </IonText>
+                            </div>
+                          </IonCol>
+                        </IonRow>
+                      </IonGrid>
+
+                      {healthReport.repairPreviews.selfReferencedTransfers
+                        .slice(0, 5)
+                        .map((candidate) => (
+                          <div
+                            key={`${candidate.outgoingTransactionId}-${candidate.incomingTransactionId}`}
+                            style={{
+                              padding: "10px",
+                              marginBottom: "8px",
+                              backgroundColor: "var(--ion-color-light)",
+                              borderRadius: "4px",
+                            }}
+                          >
+                            <IonText>
+                              <p style={{ margin: "0 0 4px 0" }}>
+                                <strong>
+                                  {candidate.outgoingTransactionId} →{" "}
+                                  {candidate.incomingTransactionId}
+                                </strong>
+                              </p>
+                            </IonText>
+                            <IonText color="medium">
+                              <p
+                                style={{
+                                  margin: "0",
+                                  fontSize: "0.75rem",
+                                }}
+                              >
+                                Ref: {candidate.transactionReference} · Amount:{" "}
+                                {candidate.amount} · Current:{" "}
+                                {candidate.outgoingCurrentTransferPairId}/
+                                {candidate.incomingCurrentTransferPairId} ·
+                                Proposed:{" "}
+                                {candidate.outgoingProposedTransferPairId}/
+                                {candidate.incomingProposedTransferPairId}
+                              </p>
+                              <p
+                                style={{
+                                  margin: "4px 0 0 0",
+                                  fontSize: "0.75rem",
+                                }}
+                              >
+                                {new Date(candidate.date).toLocaleString()} ·{" "}
+                                {candidate.description}
+                              </p>
+                            </IonText>
+                          </div>
+                        ))}
+
+                      {healthReport.repairPreviews.selfReferencedTransfers
+                        .length > 0 && (
+                        <IonButton
+                          expand="block"
+                          color="warning"
+                          onClick={() => setShowTransferRepairAlert(true)}
+                          disabled={loading || isMigrating}
+                          style={{ marginTop: "8px" }}
+                        >
+                          <IonIcon slot="start" icon={warningOutline} />
+                          Apply Self-Referenced Transfer Repairs
+                        </IonButton>
+                      )}
+
+                      {transferRepairSummary && (
+                        <div
+                          style={{
+                            padding: "10px",
+                            marginTop: "12px",
+                            backgroundColor: "var(--ion-color-light)",
+                            borderRadius: "4px",
+                          }}
+                        >
+                          <IonText>
+                            <p style={{ margin: "0 0 4px 0" }}>
+                              <strong>Latest repair summary</strong>
+                            </p>
+                          </IonText>
+                          <IonText color="medium">
+                            <p style={{ margin: "0", fontSize: "0.75rem" }}>
+                              Candidates:{" "}
+                              {transferRepairSummary.candidateCount} · Updated
+                              transactions:{" "}
+                              {transferRepairSummary.updatedTransactionCount} ·
+                              Updated pairs:{" "}
+                              {transferRepairSummary.updatedPairs.length} ·
+                              Skipped:{" "}
+                              {transferRepairSummary.skippedCandidateCount}
+                            </p>
+                            {transferRepairSummary.skippedPairs.length > 0 && (
+                              <p
+                                style={{
+                                  margin: "4px 0 0 0",
+                                  fontSize: "0.75rem",
+                                }}
+                              >
+                                First skip:{" "}
+                                {transferRepairSummary.skippedPairs[0].reason}
+                              </p>
+                            )}
+                          </IonText>
+                        </div>
+                      )}
+                    </div>
+
                     {renderIssueList("error")}
                     {renderIssueList("warning")}
                     {renderIssueList("info")}
@@ -1191,6 +1377,32 @@ const Settings: React.FC = () => {
             handler: () => {
               setShowMigrationAlert(false);
               handleMigratePaymentMethods();
+            },
+          },
+        ]}
+      />
+
+      {/* Transfer Repair Confirmation Alert */}
+      <IonAlert
+        isOpen={showTransferRepairAlert}
+        onDidDismiss={() => setShowTransferRepairAlert(false)}
+        header="Confirm Transfer Repair"
+        message={`This will update only transferPairId fields for ${
+          healthReport?.repairPreviews.selfReferencedTransfers.length ?? 0
+        } candidate pairs (${
+          (healthReport?.repairPreviews.selfReferencedTransfers.length ?? 0) *
+          2
+        } transactions). No amounts or financial values will be changed. Download a full JSON backup before continuing.`}
+        buttons={[
+          {
+            text: "Cancel",
+            role: "cancel",
+          },
+          {
+            text: "Apply Repairs",
+            role: "destructive",
+            handler: () => {
+              handleApplySelfReferencedTransferRepairs();
             },
           },
         ]}
