@@ -34,6 +34,7 @@ import {
 import {
   deleteFutureUnlinkedSnapshotsForBudget,
   ensureBudgetSnapshotCoverage,
+  updateUnlockedSnapshotsForBudget,
 } from "../utils/budgetSnapshots";
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
@@ -647,16 +648,29 @@ const AddBudget: React.FC = () => {
       if (isEditMode && id) {
         await db.budgets.update(Number(id), budgetData);
 
+        let unlockedSnapshotsUpdated = 0;
+        const updatedBudget = await db.budgets.get(Number(id));
+        if (updatedBudget) {
+          // Keep historical snapshots immutable, but sync upcoming snapshot values.
+          unlockedSnapshotsUpdated = await updateUnlockedSnapshotsForBudget(
+            updatedBudget,
+            new Date(),
+          );
+        }
+
         // Preserve immutable history by only pruning future snapshots that have no linked transactions.
         await deleteFutureUnlinkedSnapshotsForBudget(Number(id), new Date());
-        const updatedBudget = await db.budgets.get(Number(id));
         if (updatedBudget) {
           const oneYearFromNow = new Date();
           oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
           await ensureBudgetSnapshotCoverage(updatedBudget, oneYearFromNow);
         }
 
-        setSuccessToastMessage("Budget updated successfully!");
+        setSuccessToastMessage(
+          `Budget updated successfully (${unlockedSnapshotsUpdated} upcoming snapshot${
+            unlockedSnapshotsUpdated === 1 ? "" : "s"
+          } updated).`,
+        );
         setShowSuccessToast(true);
       } else {
         await db.budgets.add(budgetData);
