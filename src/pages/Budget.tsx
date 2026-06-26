@@ -499,10 +499,7 @@ const BudgetPage: React.FC = () => {
         );
 
         const effectiveTarget = getEffectiveBudgetTarget(snapshotBudget);
-        const isExpense =
-          snapshotBudget.goalDirection === "expense" ||
-          (snapshotBudget.goalDirection === undefined &&
-            snapshotBudget.amount < 0);
+        const isExpense = isExpenseBudget(snapshotBudget);
         const isCompleted = isExpense
           ? amountPaid <= -effectiveTarget
           : amountPaid >= effectiveTarget;
@@ -553,9 +550,7 @@ const BudgetPage: React.FC = () => {
             dueDate,
           );
           const onceTarget = getEffectiveBudgetTarget(budget);
-          const isOnceExpense =
-            budget.goalDirection === "expense" ||
-            (budget.goalDirection === undefined && budget.amount < 0);
+          const isOnceExpense = isExpenseBudget(budget);
           const isCompleted = isOnceExpense
             ? amountPaid <= -onceTarget
             : amountPaid >= onceTarget;
@@ -587,10 +582,9 @@ const BudgetPage: React.FC = () => {
               currentDueDate,
             );
             const recurringTarget = getEffectiveBudgetTarget(budget);
-            const isCompleted =
-              budget.amount < 0
-                ? amountPaid <= -recurringTarget
-                : amountPaid >= recurringTarget;
+            const isCompleted = isExpenseBudget(budget)
+              ? amountPaid <= -recurringTarget
+              : amountPaid >= recurringTarget;
 
             occurrences.push({
               budgetId,
@@ -1111,10 +1105,16 @@ const BudgetPage: React.FC = () => {
   const isExpenseBudget = (
     budget: Pick<Budget, "goalDirection" | "amount">,
   ): boolean => {
-    return (
-      budget.goalDirection === "expense" ||
-      (budget.goalDirection === undefined && budget.amount < 0)
-    );
+    if (budget.goalDirection === "expense") {
+      return true;
+    }
+
+    if (budget.goalDirection === "income") {
+      return false;
+    }
+
+    // Some older/restored records may contain null for optional fields.
+    return budget.amount < 0;
   };
 
   const getProgressPercentage = (occ: BudgetOccurrence): number => {
@@ -1187,9 +1187,7 @@ const BudgetPage: React.FC = () => {
       occDate.setHours(0, 0, 0, 0);
 
       const effectiveAbs = getEffectiveBudgetTarget(occ.budget);
-      const isExpense =
-        occ.budget.goalDirection === "expense" ||
-        (occ.budget.goalDirection === undefined && occ.budget.amount < 0);
+      const isExpense = isExpenseBudget(occ.budget);
       const budgetAmount = isExpense ? -effectiveAbs : effectiveAbs;
 
       // Planned amounts are based on budget due date and active budgets only.
