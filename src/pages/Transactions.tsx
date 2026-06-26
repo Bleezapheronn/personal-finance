@@ -30,8 +30,6 @@ import {
   IonFab,
   IonFabButton,
   IonToast,
-  IonInfiniteScroll,
-  IonInfiniteScrollContent,
 } from "@ionic/react";
 
 import { useHistory } from "react-router-dom";
@@ -768,9 +766,44 @@ const Transactions: React.FC = () => {
     setHasMoreTransactions(hasOlder);
   }, [filteredTransactions, selectedDateFrom, visibleTransactionWindowDays]);
 
-  const loadOlderTransactions = (event: CustomEvent<void>) => {
+  const loadOlderTransactions = () => {
     setVisibleTransactionWindowDays((prev) => prev + TRANSACTION_BATCH_DAYS);
-    (event.target as HTMLIonInfiniteScrollElement | null)?.complete();
+  };
+
+  const loadAllTransactions = () => {
+    if (selectedDateFrom || filteredTransactions.length === 0) {
+      return;
+    }
+
+    const today = normalizeToLocalDay(new Date());
+    const oldestTransactionDate = filteredTransactions.reduce<Date | null>(
+      (oldest, txn) => {
+        const txnDate = normalizeToLocalDay(txn.date);
+        if (txnDate > today) {
+          return oldest;
+        }
+
+        if (!oldest || txnDate < oldest) {
+          return txnDate;
+        }
+
+        return oldest;
+      },
+      null,
+    );
+
+    if (!oldestTransactionDate) {
+      setVisibleTransactionWindowDays(TRANSACTION_BATCH_DAYS);
+      return;
+    }
+
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const daysToOldest = Math.ceil(
+      (today.getTime() - oldestTransactionDate.getTime()) / millisecondsPerDay,
+    );
+    setVisibleTransactionWindowDays(
+      Math.max(TRANSACTION_BATCH_DAYS, daysToOldest),
+    );
   };
 
   // Add this helper function before the return statement (after calculateAccountTotals)
@@ -1675,13 +1708,39 @@ const Transactions: React.FC = () => {
               </div>
             ))}
 
-            <IonInfiniteScroll
-              onIonInfinite={loadOlderTransactions}
-              threshold="120px"
-              disabled={Boolean(selectedDateFrom) || !hasMoreTransactions}
-            >
-              <IonInfiniteScrollContent loadingText="Loading older transactions..." />
-            </IonInfiniteScroll>
+            {!selectedDateFrom && (
+              <div style={{ padding: "16px 0 32px" }}>
+                {hasMoreTransactions ? (
+                  <>
+                    <IonButton
+                      expand="block"
+                      fill="outline"
+                      onClick={loadOlderTransactions}
+                    >
+                      <IonIcon slot="start" icon={arrowDownCircle} />
+                      Load 30 More Days
+                    </IonButton>
+                    <IonButton
+                      expand="block"
+                      fill="outline"
+                      onClick={loadAllTransactions}
+                      style={{ marginTop: "8px" }}
+                    >
+                      <IonIcon slot="start" icon={downloadOutline} />
+                      Load All Transactions
+                    </IonButton>
+                  </>
+                ) : (
+                  filteredTransactions.length > 0 && (
+                    <IonText color="medium">
+                      <p style={{ textAlign: "center", fontSize: "0.85rem" }}>
+                        All transactions loaded
+                      </p>
+                    </IonText>
+                  )
+                )}
+              </div>
+            )}
           </>
         )}
 

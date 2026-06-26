@@ -29,8 +29,6 @@ import {
   IonButton,
   IonAvatar,
   IonImg,
-  IonInfiniteScroll,
-  IonInfiniteScrollContent,
 } from "@ionic/react";
 import {
   addOutline,
@@ -167,6 +165,8 @@ const BudgetPage: React.FC = () => {
   const [currentGoalIndex, setCurrentGoalIndex] = useState(0);
   const [visibleBudgetHorizonDays, setVisibleBudgetHorizonDays] =
     useState(BUDGET_BATCH_DAYS);
+  const [isLoadingMoreBudgetOccurrences, setIsLoadingMoreBudgetOccurrences] =
+    useState(false);
 
   // Load all data
   useIonViewWillEnter(() => {
@@ -687,10 +687,11 @@ const BudgetPage: React.FC = () => {
     return false;
   };
 
-  const loadMoreBudgetOccurrences = async (event: CustomEvent<void>) => {
+  const loadMoreBudgetOccurrences = async () => {
     const nextHorizon = visibleBudgetHorizonDays + BUDGET_BATCH_DAYS;
 
     try {
+      setIsLoadingMoreBudgetOccurrences(true);
       const horizonDate = new Date();
       horizonDate.setHours(0, 0, 0, 0);
       horizonDate.setDate(horizonDate.getDate() + nextHorizon);
@@ -705,7 +706,7 @@ const BudgetPage: React.FC = () => {
       setBudgetSnapshots(refreshedSnapshots);
       setVisibleBudgetHorizonDays(nextHorizon);
     } finally {
-      (event.target as HTMLIonInfiniteScrollElement | null)?.complete();
+      setIsLoadingMoreBudgetOccurrences(false);
     }
   };
 
@@ -2225,13 +2226,29 @@ const BudgetPage: React.FC = () => {
                   </div>
                 ))}
 
-                <IonInfiniteScroll
-                  onIonInfinite={loadMoreBudgetOccurrences}
-                  threshold="120px"
-                  disabled={!hasMoreBudgetOccurrences}
-                >
-                  <IonInfiniteScrollContent loadingText="Loading more budget occurrences..." />
-                </IonInfiniteScroll>
+                <div style={{ padding: "16px 0 32px" }}>
+                  {hasMoreBudgetOccurrences ? (
+                    <IonButton
+                      expand="block"
+                      fill="outline"
+                      onClick={loadMoreBudgetOccurrences}
+                      disabled={isLoadingMoreBudgetOccurrences}
+                    >
+                      {isLoadingMoreBudgetOccurrences ? (
+                        <IonSpinner slot="start" name="crescent" />
+                      ) : (
+                        <IonIcon slot="start" icon={arrowDownCircle} />
+                      )}
+                      Load 30 More Days
+                    </IonButton>
+                  ) : (
+                    <IonText color="medium">
+                      <p style={{ textAlign: "center", fontSize: "0.85rem" }}>
+                        No more budget items to load
+                      </p>
+                    </IonText>
+                  )}
+                </div>
               </>
             )}
           </>
