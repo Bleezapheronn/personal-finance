@@ -19,6 +19,7 @@ import {
   IonItem,
   IonLabel,
   IonToggle,
+  IonInput,
   IonGrid,
   IonRow,
   IonCol,
@@ -43,7 +44,9 @@ import {
 import { createFullBackup, downloadFullBackup } from "../utils/fullBackup";
 import {
   FullBackupRestoreValidationReport,
+  FullBackupRestoreSummary,
   downloadFullBackupValidationReport,
+  restoreFullBackupToIndexedDb,
   validateFullBackupRestoreDryRun,
 } from "../utils/fullBackupRestore";
 import {
@@ -101,6 +104,16 @@ const Settings: React.FC = () => {
   const [backupValidationReport, setBackupValidationReport] =
     useState<FullBackupRestoreValidationReport | null>(null);
   const backupValidationInputRef = useRef<HTMLInputElement | null>(null);
+  const [restoreValidationReport, setRestoreValidationReport] =
+    useState<FullBackupRestoreValidationReport | null>(null);
+  const [restoreBackupPayload, setRestoreBackupPayload] =
+    useState<unknown | null>(null);
+  const [restoreConfirmationPhrase, setRestoreConfirmationPhrase] =
+    useState("");
+  const [showFullRestoreAlert, setShowFullRestoreAlert] = useState(false);
+  const [restoreSummary, setRestoreSummary] =
+    useState<FullBackupRestoreSummary | null>(null);
+  const restoreBackupInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     // Load debug mode from localStorage
@@ -595,6 +608,147 @@ const Settings: React.FC = () => {
     setShowToast(true);
   };
 
+  const handleSelectRestoreBackupFile = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const text = await file.text();
+      const parsedBackup = JSON.parse(text);
+      const report = validateFullBackupRestoreDryRun(parsedBackup);
+
+      setRestoreValidationReport(report);
+      setRestoreBackupPayload(parsedBackup);
+      setRestoreConfirmationPhrase("");
+      setRestoreSummary(null);
+      addMigrationLog(
+        "Select Restore Backup",
+        report.valid,
+        `Validated restore candidate ${file.name}: ${report.errors.length} errors, ${report.warnings.length} warnings`,
+        report.errors.length + report.warnings.length
+      );
+      setToastMessage(
+        report.errors.length === 0
+          ? "✅ Backup is eligible for restore"
+          : "Backup cannot be restored until validation errors are fixed"
+      );
+      setToastColor(report.errors.length === 0 ? "success" : "danger");
+      setShowToast(true);
+    } catch (err) {
+      console.error("Restore backup selection error:", err);
+      setRestoreValidationReport(null);
+      setRestoreBackupPayload(null);
+      setRestoreConfirmationPhrase("");
+      addMigrationLog(
+        "Select Restore Backup",
+        false,
+        `Error: ${err instanceof Error ? err.message : "Unknown error"}`
+      );
+      setToastMessage("Restore backup selection failed");
+      setToastColor("danger");
+      setShowToast(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRestoreFullBackup = async () => {
+    if (
+      !restoreBackupPayload ||
+      !restoreValidationReport ||
+      restoreValidationReport.errors.length > 0
+    ) {
+      setToastMessage("Restore is blocked until a valid backup is selected");
+      setToastColor("danger");
+      setShowToast(true);
+      return;
+    }
+
+    if (restoreConfirmationPhrase !== "RESTORE MY FINANCE DATABASE") {
+      setToastMessage("Restore confirmation phrase does not match");
+      setToastColor("danger");
+      setShowToast(true);
+      return;
+    }
+
+    try {
+      setShowFullRestoreAlert(false);
+      setLoading(true);
+      const summary = await restoreFullBackupToIndexedDb(restoreBackupPayload);
+      setRestoreSummary(summary);
+
+      if (!summary.success) {
+        addMigrationLog(
+          "Restore Full Backup",
+          false,
+          summary.errorMessage ?? "Restore failed",
+          summary.validationErrorCount
+        );
+        setToastMessage("Full backup restore failed");
+        setToastColor("danger");
+        setShowToast(true);
+        return;
+      }
+
+      const refreshedReport = await runDbHealthCheck();
+      setHealthReport(refreshedReport);
+      addMigrationLog(
+        "Restore Full Backup",
+        true,
+        `Restored ${Object.values(summary.restoredRowCounts).reduce(
+          (sum, count) => sum + count,
+          0
+        )} rows from backup`,
+        Object.values(summary.restoredRowCounts).reduce(
+          (sum, count) => sum + count,
+          0
+        )
+      );
+      setToastMessage("✅ Full backup restored. Refresh or reopen the app if anything looks stale.");
+      setToastColor("success");
+      setShowToast(true);
+    } catch (err) {
+      console.error("Full backup restore error:", err);
+      const summary: FullBackupRestoreSummary = {
+        restoredAt: new Date().toISOString(),
+        backupExportedAt: restoreValidationReport.backupExportedAt,
+        restoredRowCounts: {
+          transactions: 0,
+          budgets: 0,
+          budgetSnapshots: 0,
+          buckets: 0,
+          categories: 0,
+          accounts: 0,
+          paymentMethods: 0,
+          recipients: 0,
+          smsImportTemplates: 0,
+        },
+        validationErrorCount: restoreValidationReport.errors.length,
+        validationWarningCount: restoreValidationReport.warnings.length,
+        success: false,
+        errorMessage: err instanceof Error ? err.message : "Unknown restore error",
+      };
+      setRestoreSummary(summary);
+      addMigrationLog(
+        "Restore Full Backup",
+        false,
+        summary.errorMessage ?? "Unknown restore error"
+      );
+      setToastMessage("Full backup restore failed");
+      setToastColor("danger");
+      setShowToast(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleRunHealthCheck = async () => {
     try {
       setLoading(true);
@@ -860,6 +1014,10 @@ const Settings: React.FC = () => {
   ).length;
   const manualReviewSnapshotCount =
     orphanedBudgetSnapshotCandidates.length - safeToDeleteSnapshotCount;
+  const restoreValidationHasNoErrors =
+    restoreValidationReport?.errors.length === 0;
+  const restorePhraseMatches =
+    restoreConfirmationPhrase === "RESTORE MY FINANCE DATABASE";
 
   return (
     <IonPage>
@@ -1251,6 +1409,195 @@ const Settings: React.FC = () => {
                       "medium"
                     )}
                   </>
+                )}
+              </IonCardContent>
+            </IonCard>
+
+            {/* Full Backup Restore */}
+            <IonCard>
+              <IonCardHeader>
+                <IonText>
+                  <h3>Restore Full Backup</h3>
+                </IonText>
+              </IonCardHeader>
+              <IonCardContent>
+                <IonButton
+                  expand="block"
+                  fill="outline"
+                  color="warning"
+                  onClick={() => restoreBackupInputRef.current?.click()}
+                  disabled={loading || isMigrating}
+                >
+                  <IonIcon slot="start" icon={warningOutline} />
+                  Select Backup JSON for Restore
+                </IonButton>
+                <input
+                  ref={restoreBackupInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleSelectRestoreBackupFile}
+                  style={{ display: "none" }}
+                />
+                <IonText color="medium">
+                  <p style={{ fontSize: "0.75rem", marginTop: "12px" }}>
+                    Restore replaces the active local IndexedDB database in this
+                    browser. Select a backup to validate it before any restore
+                    controls are enabled.
+                  </p>
+                </IonText>
+
+                {restoreValidationReport && (
+                  <>
+                    <IonGrid style={{ marginTop: "12px" }}>
+                      <IonRow>
+                        <IonCol size="4">
+                          <div className="stat-item">
+                            <IonText
+                              color={
+                                restoreValidationHasNoErrors
+                                  ? "success"
+                                  : "danger"
+                              }
+                            >
+                              <h4>
+                                {restoreValidationHasNoErrors
+                                  ? "Eligible"
+                                  : "Blocked"}
+                              </h4>
+                            </IonText>
+                            <IonText color="medium">
+                              <p>Restore</p>
+                            </IonText>
+                          </div>
+                        </IonCol>
+                        <IonCol size="4">
+                          <div className="stat-item">
+                            <IonText color="danger">
+                              <h4>{restoreValidationReport.errors.length}</h4>
+                            </IonText>
+                            <IonText color="medium">
+                              <p>Errors</p>
+                            </IonText>
+                          </div>
+                        </IonCol>
+                        <IonCol size="4">
+                          <div className="stat-item">
+                            <IonText color="warning">
+                              <h4>{restoreValidationReport.warnings.length}</h4>
+                            </IonText>
+                            <IonText color="medium">
+                              <p>Warnings</p>
+                            </IonText>
+                          </div>
+                        </IonCol>
+                      </IonRow>
+                    </IonGrid>
+
+                    <IonGrid>
+                      <IonRow>
+                        {Object.entries(restoreValidationReport.rowCounts).map(
+                          ([tableName, count]) => (
+                            <IonCol size="6" key={tableName}>
+                              <IonText>
+                                <p style={{ margin: "4px 0" }}>
+                                  <strong>{tableName}:</strong> {count}
+                                </p>
+                              </IonText>
+                            </IonCol>
+                          )
+                        )}
+                      </IonRow>
+                    </IonGrid>
+
+                    {restoreValidationHasNoErrors && (
+                      <>
+                        <IonText color="medium">
+                          <p style={{ fontSize: "0.75rem", marginTop: "12px" }}>
+                            Type RESTORE MY FINANCE DATABASE to enable the
+                            restore confirmation.
+                          </p>
+                        </IonText>
+                        <IonInput
+                          value={restoreConfirmationPhrase}
+                          placeholder="RESTORE MY FINANCE DATABASE"
+                          onIonInput={(event) =>
+                            setRestoreConfirmationPhrase(
+                              String(event.detail.value ?? "")
+                            )
+                          }
+                          style={{ marginTop: "4px" }}
+                        />
+                        <IonButton
+                          expand="block"
+                          color="danger"
+                          onClick={() => setShowFullRestoreAlert(true)}
+                          disabled={
+                            loading ||
+                            isMigrating ||
+                            !restoreBackupPayload ||
+                            !restorePhraseMatches
+                          }
+                          style={{ marginTop: "8px" }}
+                        >
+                          <IonIcon slot="start" icon={warningOutline} />
+                          Restore Full Backup
+                        </IonButton>
+                      </>
+                    )}
+
+                    {renderBackupValidationMessages(
+                      "Restore Validation Errors",
+                      restoreValidationReport.errors,
+                      "danger"
+                    )}
+                    {renderBackupValidationMessages(
+                      "Restore Validation Warnings",
+                      restoreValidationReport.warnings,
+                      "warning"
+                    )}
+                  </>
+                )}
+
+                {restoreSummary && (
+                  <div
+                    style={{
+                      padding: "10px",
+                      marginTop: "12px",
+                      backgroundColor: "var(--ion-color-light)",
+                      borderRadius: "4px",
+                    }}
+                  >
+                    <IonText color={restoreSummary.success ? "success" : "danger"}>
+                      <p style={{ margin: "0 0 4px 0" }}>
+                        <strong>
+                          Restore {restoreSummary.success ? "succeeded" : "failed"}
+                        </strong>
+                      </p>
+                    </IonText>
+                    <IonText color="medium">
+                      <p style={{ margin: "0", fontSize: "0.75rem" }}>
+                        Restored:{" "}
+                        {Object.values(restoreSummary.restoredRowCounts).reduce(
+                          (sum, count) => sum + count,
+                          0
+                        )}{" "}
+                        rows · Validation errors:{" "}
+                        {restoreSummary.validationErrorCount} · Warnings:{" "}
+                        {restoreSummary.validationWarningCount}
+                      </p>
+                      {restoreSummary.errorMessage && (
+                        <p style={{ margin: "4px 0 0 0", fontSize: "0.75rem" }}>
+                          Error: {restoreSummary.errorMessage}
+                        </p>
+                      )}
+                      {restoreSummary.success && (
+                        <p style={{ margin: "4px 0 0 0", fontSize: "0.75rem" }}>
+                          Refresh or reopen the app if any screen still shows
+                          stale data.
+                        </p>
+                      )}
+                    </IonText>
+                  </div>
                 )}
               </IonCardContent>
             </IonCard>
@@ -1896,6 +2243,27 @@ const Settings: React.FC = () => {
             role: "destructive",
             handler: () => {
               handleDeleteSafeOrphanedBudgetSnapshots();
+            },
+          },
+        ]}
+      />
+
+      {/* Full Restore Confirmation Alert */}
+      <IonAlert
+        isOpen={showFullRestoreAlert}
+        onDidDismiss={() => setShowFullRestoreAlert(false)}
+        header="Replace Local Database?"
+        message="This will replace the current local database in this browser. Existing local data in this browser will be cleared. The backup file contents will be imported. Export a full backup of the current browser first if it contains anything important. Do not proceed unless you understand this destructive restore."
+        buttons={[
+          {
+            text: "Cancel",
+            role: "cancel",
+          },
+          {
+            text: "Restore Database",
+            role: "destructive",
+            handler: () => {
+              handleRestoreFullBackup();
             },
           },
         ]}

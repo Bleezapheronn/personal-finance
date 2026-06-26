@@ -1,3 +1,5 @@
+import type { Table } from "dexie";
+import { db } from "../db";
 import {
   FULL_BACKUP_TABLE_NAMES,
   FullBackupTableName,
@@ -23,6 +25,26 @@ export interface FullBackupRestoreValidationReport {
   warnings: RestoreValidationMessage[];
   info: RestoreValidationMessage[];
 }
+
+export interface FullBackupRestoreSummary {
+  restoredAt: string;
+  backupExportedAt?: string;
+  restoredRowCounts: Record<FullBackupTableName, number>;
+  validationErrorCount: number;
+  validationWarningCount: number;
+  success: boolean;
+  errorMessage?: string;
+}
+
+type DeserializedValue =
+  | null
+  | string
+  | number
+  | boolean
+  | Date
+  | Blob
+  | DeserializedValue[]
+  | { [key: string]: DeserializedValue };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -595,6 +617,96 @@ const validateTransferPairs = (
   });
 };
 
+const base64ToBlob = (base64: string, mimeType: string): Blob => {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new Blob([bytes], { type: mimeType });
+};
+
+const deserializeBackupValue = (value: unknown): DeserializedValue => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => deserializeBackupValue(item));
+  }
+
+  if (!isRecord(value)) {
+    return String(value);
+  }
+
+  if (value.__type === "Date" && typeof value.value === "string") {
+    return new Date(value.value);
+  }
+
+  if (
+    value.__type === "Blob" &&
+    typeof value.base64 === "string" &&
+    typeof value.mimeType === "string"
+  ) {
+    return base64ToBlob(value.base64, value.mimeType);
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => [
+      key,
+      deserializeBackupValue(entryValue),
+    ]),
+  );
+};
+
+const getRequiredBackupTables = (
+  parsedBackup: unknown,
+): Record<FullBackupTableName, Record<string, DeserializedValue>[]> => {
+  if (!isRecord(parsedBackup)) {
+    throw new Error("Backup is missing tables.");
+  }
+
+  const tables = parsedBackup.tables;
+  if (!isRecord(tables)) {
+    throw new Error("Backup is missing tables.");
+  }
+
+  return Object.fromEntries(
+    FULL_BACKUP_TABLE_NAMES.map((tableName) => {
+      const tableRows = tables[tableName];
+      if (!Array.isArray(tableRows)) {
+        throw new Error(`Backup table ${tableName} is missing or invalid.`);
+      }
+
+      const deserializedRows = tableRows.map((row) => {
+        const deserialized = deserializeBackupValue(row);
+        if (!isRecord(deserialized)) {
+          throw new Error(`Backup table ${tableName} contains a non-object row.`);
+        }
+
+        return deserialized as Record<string, DeserializedValue>;
+      });
+
+      return [tableName, deserializedRows];
+    }),
+  ) as Record<FullBackupTableName, Record<string, DeserializedValue>[]>;
+};
+
+const getRestoreTable = (
+  tableName: FullBackupTableName,
+): Table<Record<string, DeserializedValue>, number> =>
+  db[tableName] as unknown as Table<Record<string, DeserializedValue>, number>;
+
 const buildTimestampForFilename = (date: Date): string => {
   const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -646,6 +758,70 @@ export const validateFullBackupRestoreDryRun = (
 
   report.valid = report.errors.length === 0;
   return report;
+};
+
+export const restoreFullBackupToIndexedDb = async (
+  parsedBackup: unknown,
+): Promise<FullBackupRestoreSummary> => {
+  const validationReport = validateFullBackupRestoreDryRun(parsedBackup);
+  const summary: FullBackupRestoreSummary = {
+    restoredAt: new Date().toISOString(),
+    backupExportedAt: validationReport.backupExportedAt,
+    restoredRowCounts: Object.fromEntries(
+      FULL_BACKUP_TABLE_NAMES.map((tableName) => [tableName, 0]),
+    ) as Record<FullBackupTableName, number>,
+    validationErrorCount: validationReport.errors.length,
+    validationWarningCount: validationReport.warnings.length,
+    success: false,
+  };
+
+  if (validationReport.errors.length > 0) {
+    return {
+      ...summary,
+      errorMessage:
+        "Restore blocked because the backup dry-run validation has errors.",
+    };
+  }
+
+  try {
+    const deserializedTables = getRequiredBackupTables(parsedBackup);
+    await db.transaction("rw", [
+      db.transactions,
+      db.budgets,
+      db.budgetSnapshots,
+      db.buckets,
+      db.categories,
+      db.accounts,
+      db.paymentMethods,
+      db.recipients,
+      db.smsImportTemplates,
+    ], async () => {
+      for (const tableName of FULL_BACKUP_TABLE_NAMES) {
+        await getRestoreTable(tableName).clear();
+      }
+
+      for (const tableName of FULL_BACKUP_TABLE_NAMES) {
+        const rows = deserializedTables[tableName];
+        if (rows.length > 0) {
+          await getRestoreTable(tableName).bulkPut(rows);
+        }
+        summary.restoredRowCounts[tableName] = rows.length;
+      }
+    });
+
+    return {
+      ...summary,
+      restoredAt: new Date().toISOString(),
+      success: true,
+    };
+  } catch (err) {
+    return {
+      ...summary,
+      restoredAt: new Date().toISOString(),
+      success: false,
+      errorMessage: err instanceof Error ? err.message : "Unknown restore error",
+    };
+  }
 };
 
 export const getFullBackupValidationReportFilename = (
