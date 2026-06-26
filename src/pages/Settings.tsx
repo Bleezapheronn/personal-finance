@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import {
   IonPage,
   IonHeader,
@@ -41,6 +41,11 @@ import {
   downloadBudgetsCSV,
 } from "../utils/budgetCsvExport";
 import { createFullBackup, downloadFullBackup } from "../utils/fullBackup";
+import {
+  FullBackupRestoreValidationReport,
+  downloadFullBackupValidationReport,
+  validateFullBackupRestoreDryRun,
+} from "../utils/fullBackupRestore";
 import {
   DbHealthReport,
   DbHealthSeverity,
@@ -93,6 +98,9 @@ const Settings: React.FC = () => {
     useState<SelfReferencedTransferRepairSummary | null>(null);
   const [orphanedSnapshotCleanupSummary, setOrphanedSnapshotCleanupSummary] =
     useState<OrphanedBudgetSnapshotCleanupSummary | null>(null);
+  const [backupValidationReport, setBackupValidationReport] =
+    useState<FullBackupRestoreValidationReport | null>(null);
+  const backupValidationInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     // Load debug mode from localStorage
@@ -523,6 +531,70 @@ const Settings: React.FC = () => {
     }
   };
 
+  const handleValidateBackupFile = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const text = await file.text();
+      const parsedBackup = JSON.parse(text);
+      const report = validateFullBackupRestoreDryRun(parsedBackup);
+      const totalMessages =
+        report.errors.length + report.warnings.length + report.info.length;
+
+      setBackupValidationReport(report);
+      addMigrationLog(
+        "Validate Backup JSON",
+        report.valid,
+        `Validated ${file.name}: ${report.errors.length} errors, ${report.warnings.length} warnings, ${report.info.length} info messages`,
+        totalMessages
+      );
+      setToastMessage(
+        report.valid
+          ? "✅ Backup JSON passed dry-run validation"
+          : "Backup JSON validation found errors"
+      );
+      setToastColor(report.valid ? "success" : "danger");
+      setShowToast(true);
+    } catch (err) {
+      console.error("Backup validation error:", err);
+      setBackupValidationReport(null);
+      addMigrationLog(
+        "Validate Backup JSON",
+        false,
+        `Error: ${err instanceof Error ? err.message : "Unknown error"}`
+      );
+      setToastMessage("Backup JSON validation failed");
+      setToastColor("danger");
+      setShowToast(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDownloadBackupValidationReport = () => {
+    if (!backupValidationReport) {
+      return;
+    }
+
+    const filename = downloadFullBackupValidationReport(backupValidationReport);
+    addMigrationLog(
+      "Download Validation Report JSON",
+      true,
+      `Exported backup validation report to ${filename}`
+    );
+    setToastMessage("✅ Validation report downloaded successfully");
+    setToastColor("success");
+    setShowToast(true);
+  };
+
   const handleRunHealthCheck = async () => {
     try {
       setLoading(true);
@@ -715,6 +787,60 @@ const Settings: React.FC = () => {
                 {issue.details && (
                   <p style={{ margin: "4px 0 0 0", fontSize: "0.75rem" }}>
                     {Object.entries(issue.details)
+                      .map(([key, value]) => `${key}: ${value ?? "missing"}`)
+                      .join(" · ")}
+                  </p>
+                )}
+              </IonText>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderBackupValidationMessages = (
+    title: string,
+    messages: FullBackupRestoreValidationReport["errors"],
+    color: string
+  ) => {
+    if (messages.length === 0) {
+      return null;
+    }
+
+    return (
+      <div style={{ marginTop: "12px" }}>
+        <IonText color={color}>
+          <h4>
+            {title} ({messages.length})
+          </h4>
+        </IonText>
+        <div style={{ maxHeight: "220px", overflowY: "auto" }}>
+          {messages.map((message, index) => (
+            <div
+              key={`${message.code}-${message.path ?? "root"}-${index}`}
+              style={{
+                padding: "10px",
+                marginBottom: "8px",
+                backgroundColor: "var(--ion-color-light)",
+                borderRadius: "4px",
+              }}
+            >
+              <IonText>
+                <p style={{ margin: "0 0 4px 0", fontWeight: 600 }}>
+                  {message.code}
+                </p>
+              </IonText>
+              <IonText color="medium">
+                <p style={{ margin: "0" }}>{message.message}</p>
+                {message.path && (
+                  <p style={{ margin: "4px 0 0 0", fontSize: "0.75rem" }}>
+                    Path: {message.path}
+                  </p>
+                )}
+                {message.details && (
+                  <p style={{ margin: "4px 0 0 0", fontSize: "0.75rem" }}>
+                    {Object.entries(message.details)
                       .map(([key, value]) => `${key}: ${value ?? "missing"}`)
                       .join(" · ")}
                   </p>
@@ -988,6 +1114,144 @@ const Settings: React.FC = () => {
                     Exports current data with timestamp in filename
                   </p>
                 </IonText>
+              </IonCardContent>
+            </IonCard>
+
+            {/* Backup Restore Dry-Run Validation */}
+            <IonCard>
+              <IonCardHeader>
+                <IonText>
+                  <h3>Backup Restore Dry-Run Validation</h3>
+                </IonText>
+              </IonCardHeader>
+              <IonCardContent>
+                <IonButton
+                  expand="block"
+                  fill="outline"
+                  onClick={() => backupValidationInputRef.current?.click()}
+                  disabled={loading || isMigrating}
+                >
+                  <IonIcon slot="start" icon={bugOutline} />
+                  Validate Backup JSON
+                </IonButton>
+                <input
+                  ref={backupValidationInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleValidateBackupFile}
+                  style={{ display: "none" }}
+                />
+                <IonText color="medium">
+                  <p style={{ fontSize: "0.75rem", marginTop: "12px" }}>
+                    Dry-run validation only. No database data is changed and no
+                    restore is performed.
+                  </p>
+                </IonText>
+
+                {backupValidationReport && (
+                  <>
+                    <IonGrid style={{ marginTop: "12px" }}>
+                      <IonRow>
+                        <IonCol size="4">
+                          <div className="stat-item">
+                            <IonText
+                              color={
+                                backupValidationReport.valid
+                                  ? "success"
+                                  : "danger"
+                              }
+                            >
+                              <h4>
+                                {backupValidationReport.valid
+                                  ? "Valid"
+                                  : "Invalid"}
+                              </h4>
+                            </IonText>
+                            <IonText color="medium">
+                              <p>Status</p>
+                            </IonText>
+                          </div>
+                        </IonCol>
+                        <IonCol size="4">
+                          <div className="stat-item">
+                            <IonText color="danger">
+                              <h4>{backupValidationReport.errors.length}</h4>
+                            </IonText>
+                            <IonText color="medium">
+                              <p>Errors</p>
+                            </IonText>
+                          </div>
+                        </IonCol>
+                        <IonCol size="4">
+                          <div className="stat-item">
+                            <IonText color="warning">
+                              <h4>{backupValidationReport.warnings.length}</h4>
+                            </IonText>
+                            <IonText color="medium">
+                              <p>Warnings</p>
+                            </IonText>
+                          </div>
+                        </IonCol>
+                      </IonRow>
+                    </IonGrid>
+
+                    <IonText color="medium">
+                      <p style={{ fontSize: "0.75rem", marginTop: "8px" }}>
+                        Checked:{" "}
+                        {new Date(
+                          backupValidationReport.checkedAt
+                        ).toLocaleString()}
+                        {backupValidationReport.backupExportedAt
+                          ? ` · Backup exported: ${new Date(
+                              backupValidationReport.backupExportedAt
+                            ).toLocaleString()}`
+                          : ""}
+                      </p>
+                    </IonText>
+
+                    <IonGrid>
+                      <IonRow>
+                        {Object.entries(backupValidationReport.rowCounts).map(
+                          ([tableName, count]) => (
+                            <IonCol size="6" key={tableName}>
+                              <IonText>
+                                <p style={{ margin: "4px 0" }}>
+                                  <strong>{tableName}:</strong> {count}
+                                </p>
+                              </IonText>
+                            </IonCol>
+                          )
+                        )}
+                      </IonRow>
+                    </IonGrid>
+
+                    <IonButton
+                      expand="block"
+                      fill="outline"
+                      onClick={handleDownloadBackupValidationReport}
+                      style={{ marginTop: "8px" }}
+                    >
+                      <IonIcon slot="start" icon={downloadOutline} />
+                      Download Validation Report JSON
+                    </IonButton>
+
+                    {renderBackupValidationMessages(
+                      "Errors",
+                      backupValidationReport.errors,
+                      "danger"
+                    )}
+                    {renderBackupValidationMessages(
+                      "Warnings",
+                      backupValidationReport.warnings,
+                      "warning"
+                    )}
+                    {renderBackupValidationMessages(
+                      "Info",
+                      backupValidationReport.info,
+                      "medium"
+                    )}
+                  </>
+                )}
               </IonCardContent>
             </IonCard>
 
