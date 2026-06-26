@@ -31,7 +31,38 @@ export interface DbHealthReport {
   issues: Record<DbHealthSeverity, DbHealthIssue[]>;
   repairPreviews: {
     selfReferencedTransfers: SelfReferencedTransferRepairCandidate[];
+    orphanedBudgetSnapshots: OrphanedBudgetSnapshotCleanupCandidate[];
   };
+}
+
+export type OrphanedBudgetSnapshotRecommendedAction =
+  | "safe_to_delete"
+  | "manual_review_required";
+
+export interface OrphanedBudgetSnapshotCleanupCandidate {
+  snapshotId?: number;
+  missingBudgetId: number;
+  description: string;
+  dueDate: string;
+  occurrenceDate: string;
+  amount: number;
+  hasLinkedTransactions: boolean;
+  linkedTransactionIds: number[];
+  recommendedAction: OrphanedBudgetSnapshotRecommendedAction;
+}
+
+export interface OrphanedBudgetSnapshotSkippedCleanup {
+  snapshotId?: number;
+  missingBudgetId?: number;
+  reason: string;
+}
+
+export interface OrphanedBudgetSnapshotCleanupSummary {
+  candidateCount: number;
+  deletedSnapshotCount: number;
+  skippedSnapshotCount: number;
+  deletedSnapshotIds: number[];
+  skippedSnapshots: OrphanedBudgetSnapshotSkippedCleanup[];
 }
 
 export interface SelfReferencedTransferRepairCandidate {
@@ -359,6 +390,55 @@ const checkBudgetSnapshots = (
   });
 };
 
+const getOrphanedBudgetSnapshotCleanupCandidates = (
+  data: TableData,
+): OrphanedBudgetSnapshotCleanupCandidate[] => {
+  const budgetIds = idSet(data.budgets);
+  const linkedTransactionIdsBySnapshotId = new Map<number, number[]>();
+
+  data.transactions.forEach((transaction) => {
+    if (
+      transaction.id === undefined ||
+      transaction.budgetSnapshotId === undefined
+    ) {
+      return;
+    }
+
+    const linkedIds =
+      linkedTransactionIdsBySnapshotId.get(transaction.budgetSnapshotId) ?? [];
+    linkedIds.push(transaction.id);
+    linkedTransactionIdsBySnapshotId.set(
+      transaction.budgetSnapshotId,
+      linkedIds,
+    );
+  });
+
+  return data.budgetSnapshots
+    .filter((snapshot) => !budgetIds.has(snapshot.budgetId))
+    .map((snapshot) => {
+      const linkedTransactionIds =
+        snapshot.id !== undefined
+          ? (linkedTransactionIdsBySnapshotId.get(snapshot.id) ?? [])
+          : [];
+      const hasLinkedTransactions = linkedTransactionIds.length > 0;
+      const recommendedAction: OrphanedBudgetSnapshotRecommendedAction =
+        hasLinkedTransactions ? "manual_review_required" : "safe_to_delete";
+
+      return {
+        snapshotId: snapshot.id,
+        missingBudgetId: snapshot.budgetId,
+        description: snapshot.description,
+        dueDate: dateKey(snapshot.dueDate),
+        occurrenceDate: dateKey(snapshot.occurrenceDate),
+        amount: snapshot.amount,
+        hasLinkedTransactions,
+        linkedTransactionIds,
+        recommendedAction,
+      };
+    })
+    .sort((a, b) => (a.snapshotId ?? 0) - (b.snapshotId ?? 0));
+};
+
 const checkTransfers = (report: DbHealthReport, data: TableData): void => {
   const transactionsById = idMap(data.transactions);
 
@@ -620,6 +700,93 @@ export const applySelfReferencedTransferRepairs =
     return summary;
   };
 
+export const deleteSafeOrphanedBudgetSnapshots =
+  async (): Promise<OrphanedBudgetSnapshotCleanupSummary> => {
+    const data = await readAllTables();
+    const candidates = getOrphanedBudgetSnapshotCleanupCandidates(data);
+    const summary: OrphanedBudgetSnapshotCleanupSummary = {
+      candidateCount: candidates.length,
+      deletedSnapshotCount: 0,
+      skippedSnapshotCount: 0,
+      deletedSnapshotIds: [],
+      skippedSnapshots: [],
+    };
+
+    await db.transaction(
+      "rw",
+      db.budgetSnapshots,
+      db.budgets,
+      db.transactions,
+      async () => {
+        for (const candidate of candidates) {
+          if (candidate.recommendedAction !== "safe_to_delete") {
+            summary.skippedSnapshotCount += 1;
+            summary.skippedSnapshots.push({
+              snapshotId: candidate.snapshotId,
+              missingBudgetId: candidate.missingBudgetId,
+              reason: "Candidate has linked transactions and requires manual review.",
+            });
+            continue;
+          }
+
+          if (candidate.snapshotId === undefined) {
+            summary.skippedSnapshotCount += 1;
+            summary.skippedSnapshots.push({
+              missingBudgetId: candidate.missingBudgetId,
+              reason: "Snapshot has no id.",
+            });
+            continue;
+          }
+
+          const snapshot = await db.budgetSnapshots.get(candidate.snapshotId);
+
+          if (!snapshot) {
+            summary.skippedSnapshotCount += 1;
+            summary.skippedSnapshots.push({
+              snapshotId: candidate.snapshotId,
+              missingBudgetId: candidate.missingBudgetId,
+              reason: "Snapshot no longer exists.",
+            });
+            continue;
+          }
+
+          const budget = await db.budgets.get(snapshot.budgetId);
+
+          if (budget) {
+            summary.skippedSnapshotCount += 1;
+            summary.skippedSnapshots.push({
+              snapshotId: candidate.snapshotId,
+              missingBudgetId: snapshot.budgetId,
+              reason: "Snapshot budget now exists.",
+            });
+            continue;
+          }
+
+          const linkedTransactionCount = await db.transactions
+            .where("budgetSnapshotId")
+            .equals(candidate.snapshotId)
+            .count();
+
+          if (linkedTransactionCount > 0) {
+            summary.skippedSnapshotCount += 1;
+            summary.skippedSnapshots.push({
+              snapshotId: candidate.snapshotId,
+              missingBudgetId: snapshot.budgetId,
+              reason: "Snapshot now has linked transactions.",
+            });
+            continue;
+          }
+
+          await db.budgetSnapshots.delete(candidate.snapshotId);
+          summary.deletedSnapshotCount += 1;
+          summary.deletedSnapshotIds.push(candidate.snapshotId);
+        }
+      },
+    );
+
+    return summary;
+  };
+
 const checkBudgetReferences = (
   report: DbHealthReport,
   data: TableData,
@@ -735,6 +902,7 @@ export const runDbHealthCheck = async (): Promise<DbHealthReport> => {
     },
     repairPreviews: {
       selfReferencedTransfers: [],
+      orphanedBudgetSnapshots: [],
     },
   };
 
@@ -746,6 +914,8 @@ export const runDbHealthCheck = async (): Promise<DbHealthReport> => {
   checkLegacyTableReferences(report, data);
   report.repairPreviews.selfReferencedTransfers =
     getSelfReferencedTransferRepairCandidates(data.transactions);
+  report.repairPreviews.orphanedBudgetSnapshots =
+    getOrphanedBudgetSnapshotCleanupCandidates(data);
 
   if (
     report.issues.error.length === 0 &&

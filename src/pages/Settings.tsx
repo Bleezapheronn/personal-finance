@@ -44,8 +44,10 @@ import { createFullBackup, downloadFullBackup } from "../utils/fullBackup";
 import {
   DbHealthReport,
   DbHealthSeverity,
+  OrphanedBudgetSnapshotCleanupSummary,
   SelfReferencedTransferRepairSummary,
   applySelfReferencedTransferRepairs,
+  deleteSafeOrphanedBudgetSnapshots,
   downloadDbHealthReport,
   runDbHealthCheck,
 } from "../utils/dbHealth";
@@ -77,6 +79,8 @@ const Settings: React.FC = () => {
   const [showMigrationAlert, setShowMigrationAlert] = useState(false);
   const [showTransferRepairAlert, setShowTransferRepairAlert] =
     useState(false);
+  const [showOrphanedSnapshotCleanupAlert, setShowOrphanedSnapshotCleanupAlert] =
+    useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [toastColor, setToastColor] = useState("success");
@@ -87,6 +91,8 @@ const Settings: React.FC = () => {
   );
   const [transferRepairSummary, setTransferRepairSummary] =
     useState<SelfReferencedTransferRepairSummary | null>(null);
+  const [orphanedSnapshotCleanupSummary, setOrphanedSnapshotCleanupSummary] =
+    useState<OrphanedBudgetSnapshotCleanupSummary | null>(null);
 
   useEffect(() => {
     // Load debug mode from localStorage
@@ -602,6 +608,41 @@ const Settings: React.FC = () => {
     }
   };
 
+  const handleDeleteSafeOrphanedBudgetSnapshots = async () => {
+    try {
+      setShowOrphanedSnapshotCleanupAlert(false);
+      setLoading(true);
+      const summary = await deleteSafeOrphanedBudgetSnapshots();
+      const refreshedReport = await runDbHealthCheck();
+
+      setOrphanedSnapshotCleanupSummary(summary);
+      setHealthReport(refreshedReport);
+      addMigrationLog(
+        "Delete Safe Orphaned Budget Snapshots",
+        true,
+        `Deleted ${summary.deletedSnapshotCount} snapshots; skipped ${summary.skippedSnapshotCount}`,
+        summary.deletedSnapshotCount
+      );
+      setToastMessage(
+        `✅ Deleted ${summary.deletedSnapshotCount} orphaned budget snapshots`
+      );
+      setToastColor("success");
+      setShowToast(true);
+    } catch (err) {
+      console.error("Orphaned budget snapshot cleanup error:", err);
+      addMigrationLog(
+        "Delete Safe Orphaned Budget Snapshots",
+        false,
+        `Error: ${err instanceof Error ? err.message : "Unknown error"}`
+      );
+      setToastMessage("Orphaned budget snapshot cleanup failed");
+      setToastColor("danger");
+      setShowToast(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleClearLogs = () => {
     setMigrationLogs([]);
     setToastMessage("Migration logs cleared");
@@ -685,6 +726,14 @@ const Settings: React.FC = () => {
       </div>
     );
   };
+
+  const orphanedBudgetSnapshotCandidates =
+    healthReport?.repairPreviews.orphanedBudgetSnapshots ?? [];
+  const safeToDeleteSnapshotCount = orphanedBudgetSnapshotCandidates.filter(
+    (candidate) => candidate.recommendedAction === "safe_to_delete"
+  ).length;
+  const manualReviewSnapshotCount =
+    orphanedBudgetSnapshotCandidates.length - safeToDeleteSnapshotCount;
 
   return (
     <IonPage>
@@ -1175,6 +1224,163 @@ const Settings: React.FC = () => {
                       )}
                     </div>
 
+                    <div style={{ marginTop: "16px" }}>
+                      <IonText>
+                        <h4>Orphaned budget snapshot cleanup candidates</h4>
+                      </IonText>
+                      <IonText color="medium">
+                        <p style={{ margin: "4px 0", fontSize: "0.85rem" }}>
+                          Preview only. No budget snapshot data was changed.
+                        </p>
+                      </IonText>
+                      <IonGrid>
+                        <IonRow>
+                          <IonCol size="4">
+                            <div className="stat-item">
+                              <IonText color="primary">
+                                <h4>
+                                  {orphanedBudgetSnapshotCandidates.length}
+                                </h4>
+                              </IonText>
+                              <IonText color="medium">
+                                <p>Total</p>
+                              </IonText>
+                            </div>
+                          </IonCol>
+                          <IonCol size="4">
+                            <div className="stat-item">
+                              <IonText color="success">
+                                <h4>{safeToDeleteSnapshotCount}</h4>
+                              </IonText>
+                              <IonText color="medium">
+                                <p>Safe to Delete</p>
+                              </IonText>
+                            </div>
+                          </IonCol>
+                          <IonCol size="4">
+                            <div className="stat-item">
+                              <IonText color="warning">
+                                <h4>{manualReviewSnapshotCount}</h4>
+                              </IonText>
+                              <IonText color="medium">
+                                <p>Manual Review</p>
+                              </IonText>
+                            </div>
+                          </IonCol>
+                        </IonRow>
+                      </IonGrid>
+
+                      <div style={{ maxHeight: "220px", overflowY: "auto" }}>
+                        {orphanedBudgetSnapshotCandidates.map((candidate) => (
+                          <div
+                            key={candidate.snapshotId ?? candidate.missingBudgetId}
+                            style={{
+                              padding: "10px",
+                              marginBottom: "8px",
+                              backgroundColor: "var(--ion-color-light)",
+                              borderRadius: "4px",
+                            }}
+                          >
+                            <IonText>
+                              <p style={{ margin: "0 0 4px 0" }}>
+                                <strong>
+                                  Snapshot {candidate.snapshotId ?? "missing id"}
+                                </strong>{" "}
+                                · {candidate.recommendedAction}
+                              </p>
+                            </IonText>
+                            <IonText color="medium">
+                              <p style={{ margin: "0", fontSize: "0.75rem" }}>
+                                Missing budgetId: {candidate.missingBudgetId} ·
+                                Amount: {candidate.amount}
+                              </p>
+                              <p
+                                style={{
+                                  margin: "4px 0 0 0",
+                                  fontSize: "0.75rem",
+                                }}
+                              >
+                                Linked transactions:{" "}
+                                {candidate.linkedTransactionIds.length > 0
+                                  ? candidate.linkedTransactionIds.join(", ")
+                                  : "none"}
+                              </p>
+                            </IonText>
+                          </div>
+                        ))}
+                      </div>
+
+                      {safeToDeleteSnapshotCount > 0 && (
+                        <IonButton
+                          expand="block"
+                          color="warning"
+                          onClick={() =>
+                            setShowOrphanedSnapshotCleanupAlert(true)
+                          }
+                          disabled={loading || isMigrating}
+                          style={{ marginTop: "8px" }}
+                        >
+                          <IonIcon slot="start" icon={warningOutline} />
+                          Delete Safe Orphaned Budget Snapshots
+                        </IonButton>
+                      )}
+
+                      {orphanedSnapshotCleanupSummary && (
+                        <div
+                          style={{
+                            padding: "10px",
+                            marginTop: "12px",
+                            backgroundColor: "var(--ion-color-light)",
+                            borderRadius: "4px",
+                          }}
+                        >
+                          <IonText>
+                            <p style={{ margin: "0 0 4px 0" }}>
+                              <strong>Latest cleanup summary</strong>
+                            </p>
+                          </IonText>
+                          <IonText color="medium">
+                            <p style={{ margin: "0", fontSize: "0.75rem" }}>
+                              Candidates:{" "}
+                              {orphanedSnapshotCleanupSummary.candidateCount} ·
+                              Deleted:{" "}
+                              {
+                                orphanedSnapshotCleanupSummary.deletedSnapshotCount
+                              }{" "}
+                              · Skipped:{" "}
+                              {
+                                orphanedSnapshotCleanupSummary.skippedSnapshotCount
+                              }
+                            </p>
+                            <p style={{ margin: "4px 0 0 0", fontSize: "0.75rem" }}>
+                              Deleted IDs:{" "}
+                              {orphanedSnapshotCleanupSummary.deletedSnapshotIds
+                                .length > 0
+                                ? orphanedSnapshotCleanupSummary.deletedSnapshotIds.join(
+                                    ", "
+                                  )
+                                : "none"}
+                            </p>
+                            {orphanedSnapshotCleanupSummary.skippedSnapshots
+                              .length > 0 && (
+                              <p
+                                style={{
+                                  margin: "4px 0 0 0",
+                                  fontSize: "0.75rem",
+                                }}
+                              >
+                                First skip:{" "}
+                                {
+                                  orphanedSnapshotCleanupSummary.skippedSnapshots[0]
+                                    .reason
+                                }
+                              </p>
+                            )}
+                          </IonText>
+                        </div>
+                      )}
+                    </div>
+
                     {renderIssueList("error")}
                     {renderIssueList("warning")}
                     {renderIssueList("info")}
@@ -1403,6 +1609,29 @@ const Settings: React.FC = () => {
             role: "destructive",
             handler: () => {
               handleApplySelfReferencedTransferRepairs();
+            },
+          },
+        ]}
+      />
+
+      {/* Orphaned Snapshot Cleanup Confirmation Alert */}
+      <IonAlert
+        isOpen={showOrphanedSnapshotCleanupAlert}
+        onDidDismiss={() => setShowOrphanedSnapshotCleanupAlert(false)}
+        header="Confirm Snapshot Cleanup"
+        message={`This will delete only unlinked budgetSnapshots whose budgets no longer exist. ${
+          safeToDeleteSnapshotCount
+        } snapshots are currently eligible for deletion. No transactions will be changed. No budgets will be changed. Linked snapshots will be skipped. Download a full JSON backup before continuing.`}
+        buttons={[
+          {
+            text: "Cancel",
+            role: "cancel",
+          },
+          {
+            text: "Delete Snapshots",
+            role: "destructive",
+            handler: () => {
+              handleDeleteSafeOrphanedBudgetSnapshots();
             },
           },
         ]}
