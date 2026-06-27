@@ -61,6 +61,16 @@ export const countTransactionsForRecipient = async (
   ).length;
 };
 
+export const listTransactionsForRecipient = async (
+  recipientId: number,
+): Promise<Transaction[]> => {
+  return db.transactions
+    .where("recipientId")
+    .equals(recipientId)
+    .reverse()
+    .sortBy("date");
+};
+
 export const getLatestTransactions = async (
   limit: number,
 ): Promise<Transaction[]> => {

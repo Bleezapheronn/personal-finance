@@ -25,6 +25,12 @@ import {
 import { useParams, useHistory } from "react-router-dom";
 import { createOutline, calendar, trash } from "ionicons/icons";
 import { db, Transaction, Category, Recipient, Account, Budget } from "../db";
+import {
+  accountRepository,
+  categoryRepository,
+  recipientRepository,
+  transactionRepository,
+} from "../repositories";
 
 const TransactionDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -39,16 +45,18 @@ const TransactionDetails: React.FC = () => {
 
   useIonViewWillEnter(() => {
     const fetchDetail = async () => {
-      const transaction = await db.transactions.get(Number(id));
+      const transaction = await transactionRepository.getTransactionById(
+        Number(id),
+      );
       setTxn(transaction || null);
       if (transaction) {
         // Fetch related data
         const [cat, rec, acc] = await Promise.all([
-          db.categories.get(transaction.categoryId),
-          db.recipients.get(transaction.recipientId),
+          categoryRepository.getCategoryById(transaction.categoryId),
+          recipientRepository.getRecipientById(transaction.recipientId),
           // CHANGED: Fetch account directly using accountId instead of going through paymentMethods
           transaction.accountId
-            ? db.accounts.get(transaction.accountId)
+            ? accountRepository.getAccountById(transaction.accountId)
             : Promise.resolve(null),
         ]);
         setCategory(cat || null);
@@ -71,11 +79,10 @@ const TransactionDetails: React.FC = () => {
         }
 
         // Fetch recent history for same recipient
-        const allForRecipient = await db.transactions
-          .where("recipientId")
-          .equals(transaction.recipientId)
-          .reverse()
-          .sortBy("date");
+        const allForRecipient =
+          await transactionRepository.listTransactionsForRecipient(
+            transaction.recipientId,
+          );
         setHistory(
           allForRecipient.filter((t) => t.id !== transaction.id).slice(0, 3),
         );
