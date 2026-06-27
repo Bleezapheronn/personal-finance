@@ -1,0 +1,20 @@
+{
+  "name": "personal-finance-local-api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Prototype-only local API skeleton for personal-finance.",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "fastify": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
