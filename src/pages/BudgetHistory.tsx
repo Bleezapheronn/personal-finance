@@ -293,10 +293,16 @@ const BudgetHistory: React.FC = () => {
   const isExpenseBudget = (
     budget: Pick<Budget, "goalDirection" | "amount">,
   ): boolean => {
-    return (
-      budget.goalDirection === "expense" ||
-      (budget.goalDirection === undefined && budget.amount < 0)
-    );
+    if (budget.goalDirection === "expense") {
+      return true;
+    }
+
+    if (budget.goalDirection === "income") {
+      return false;
+    }
+
+    // Some older/restored records may contain null for optional fields.
+    return budget.amount < 0;
   };
 
   const getEffectiveBudgetTarget = (budget: Budget): number => {
