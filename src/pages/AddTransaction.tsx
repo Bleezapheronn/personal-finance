@@ -52,6 +52,11 @@ import {
   assertValidTransferPairRows,
   resolveTransferPairEditLinks,
 } from "../utils/transferPairs";
+import {
+  accountRepository,
+  categoryRepository,
+  recipientRepository,
+} from "../repositories";
 
 interface DuplicateTransactionPrefill {
   transactionType: "expense" | "income" | "transfer";
@@ -182,10 +187,10 @@ const AddTransaction: React.FC = () => {
   const loadLookupData = async () => {
     try {
       const [b, c, a, r, allTemplates] = await Promise.all([
-        db.buckets.toArray(),
-        db.categories.toArray(),
-        db.accounts.toArray(),
-        db.recipients.toArray(),
+        categoryRepository.listBuckets(),
+        categoryRepository.listCategories(),
+        accountRepository.listAccounts(),
+        recipientRepository.listRecipients(),
         db.smsImportTemplates.toArray(),
       ]);
 
