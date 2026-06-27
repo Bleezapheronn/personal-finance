@@ -55,6 +55,7 @@ import { CompleteBudgetModal } from "../components/CompleteBudgetModal";
 import { EditSnapshotModal } from "../components/EditSnapshotModal";
 import { LinkPastTransactionsModal } from "../components/LinkPastTransactionsModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
+import { budgetRepository } from "../repositories";
 import { findMatchingTransactions } from "../utils/transactionMatching";
 import "./Budget.css";
 
@@ -190,8 +191,8 @@ const BudgetHistory: React.FC = () => {
         recs,
         accs,
       ] = await Promise.all([
-        db.budgetSnapshots.toArray(),
-        db.budgets.toArray(),
+        budgetRepository.listBudgetSnapshots(),
+        budgetRepository.listBudgets(),
         db.transactions.toArray(),
         db.categories.toArray(),
         db.buckets.toArray(),
