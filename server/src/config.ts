@@ -3,6 +3,17 @@ export const DEFAULT_SERVER_PORT = 3147;
 
 export const SERVICE_NAME = "personal-finance-local-api" as const;
 export const SERVICE_MODE = "prototype" as const;
+export const API_VERSION = "0.1.0" as const;
+export const READONLY_MODE = true as const;
+export const TOKEN_HEADER_NAME = "x-personal-finance-token" as const;
+export const TOKEN_FILE_NAME = ".server-token" as const;
+
+export const ALLOWED_ORIGINS = new Set([
+  "http://localhost:8100",
+  "http://127.0.0.1:8100",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+]);
 
 export const getServerPort = (): number => {
   const rawPort = process.env.PORT;
@@ -16,4 +27,8 @@ export const getServerPort = (): number => {
   }
 
   return parsedPort;
+};
+
+export const getDataDir = (): string => {
+  return process.env.PERSONAL_FINANCE_DATA_DIR || "C:\\dev\\personal-finance-data";
 };
