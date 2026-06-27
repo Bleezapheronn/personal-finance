@@ -23,15 +23,14 @@ import {
   useIonViewWillEnter,
 } from "@ionic/react";
 import { chevronBack, chevronForward } from "ionicons/icons";
-import { db } from "../db";
 import {
-  generatePeriodReport,
   getPreviousPeriod,
   getNextPeriod,
   PeriodReport,
   PeriodType,
   formatCurrency,
 } from "../utils/reportService";
+import { reportRepository } from "../repositories";
 import BucketCategoryPieModal from "../components/BucketCategoryPieModal";
 import SpendingChart from "../components/SpendingChart";
 import "./Reports.css";
@@ -52,7 +51,10 @@ const Reports: React.FC = () => {
     setLoading(true);
     setError("");
     try {
-      const newReport = await generatePeriodReport(periodType, currentDate);
+      const newReport = await reportRepository.generatePeriodReport(
+        periodType,
+        currentDate,
+      );
       setReport(newReport);
     } catch (err) {
       setError("Failed to generate report. Please try again.");
@@ -88,8 +90,7 @@ const Reports: React.FC = () => {
     }
 
     try {
-      const buckets = await db.buckets.toArray();
-      const incomeBucket = buckets.find((bucket) => bucket.excludeFromReports);
+      const incomeBucket = await reportRepository.getExcludedReportBucket();
 
       if (!incomeBucket?.id) {
         return;

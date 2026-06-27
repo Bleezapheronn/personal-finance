@@ -23,9 +23,9 @@ import {
 import {
   BucketCategoryBreakdownResult,
   formatCurrency,
-  getCategoryBreakdownForBucket,
   PeriodType,
 } from "../utils/reportService";
+import { reportRepository } from "../repositories";
 import "./BucketCategoryPieModal.css";
 
 interface BucketCategoryPieModalProps {
@@ -89,7 +89,7 @@ const BucketCategoryPieModal: React.FC<BucketCategoryPieModalProps> = ({
       setError("");
 
       try {
-        const result = await getCategoryBreakdownForBucket(
+        const result = await reportRepository.getCategoryBreakdownForBucket(
           periodType,
           periodDate,
           bucketId,

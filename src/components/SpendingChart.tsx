@@ -18,12 +18,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { db } from "../db";
-import {
-  formatCurrency,
-  getMonthlyChartData,
-  MonthlyChartRow,
-} from "../utils/reportService";
+import { formatCurrency } from "../utils/reportService";
+import { reportRepository } from "../repositories";
+import type { MonthlyChartRow } from "../repositories/reportRepository";
 import { SearchableFilterSelect } from "./SearchableFilterSelect";
 import "./SpendingChart.css";
 
@@ -87,16 +84,7 @@ const SpendingChart: React.FC = () => {
 
   useEffect(() => {
     const loadBuckets = async () => {
-      const activeBuckets = (await db.buckets.toArray())
-        .filter(
-          (bucket) =>
-            bucket.isActive && !bucket.excludeFromReports && bucket.id,
-        )
-        .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
-        .map((bucket) => ({
-          id: bucket.id as number,
-          name: bucket.name || "Unnamed",
-        }));
+      const activeBuckets = await reportRepository.listActiveReportBuckets();
 
       setBuckets(activeBuckets);
       if (activeBuckets.length > 0) {
@@ -115,15 +103,8 @@ const SpendingChart: React.FC = () => {
         return;
       }
 
-      const bucketCategories = (
-        await db.categories.where("bucketId").equals(selectedBucketId).toArray()
-      )
-        .filter((category) => category.isActive && category.id)
-        .map((category) => ({
-          id: category.id as number,
-          name: category.name || "Unnamed",
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name));
+      const bucketCategories =
+        await reportRepository.listActiveCategoriesForBucket(selectedBucketId);
 
       setCategories(bucketCategories);
       setSelectedCategoryIds([]);
@@ -151,7 +132,7 @@ const SpendingChart: React.FC = () => {
       setError("");
 
       try {
-        const result = await getMonthlyChartData({
+        const result = await reportRepository.getMonthlyChartData({
           bucketId: selectedBucketId,
           categoryIds: selectedCategoryIds,
           startMonth,
