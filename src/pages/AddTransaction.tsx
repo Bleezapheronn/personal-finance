@@ -47,6 +47,7 @@ import { SmsImportModal } from "../components/SmsImportModal";
 import { ParsedSmsData } from "../hooks/useSmsParser";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import { SelectableDropdown } from "../components/SelectableDropdown";
+import { resolveTransferPairEditLinks } from "../utils/transferPairs";
 
 interface DuplicateTransactionPrefill {
   transactionType: "expense" | "income" | "transfer";
@@ -612,23 +613,38 @@ const AddTransaction: React.FC = () => {
           transferPairId: editingTransaction?.id || undefined,
         };
 
-        if (
-          isEditMode &&
-          editingTransaction?.id &&
-          editingTransaction?.transferPairId
-        ) {
-          const outgoingTxId =
-            editingTransaction.amount < 0
-              ? editingTransaction.id
-              : editingTransaction.transferPairId;
+        if (isEditMode) {
+          if (!editingTransaction?.id) {
+            throw new Error(
+              "Transfer edit failed: the edited transaction could not be loaded.",
+            );
+          }
 
-          const incomingTxId =
-            editingTransaction.amount < 0
-              ? editingTransaction.transferPairId
-              : editingTransaction.id;
+          const pairedTransaction =
+            editingTransaction.transferPairId === undefined
+              ? undefined
+              : await db.transactions.get(editingTransaction.transferPairId);
+          const transferPairLinks = resolveTransferPairEditLinks(
+            editingTransaction,
+            pairedTransaction,
+          );
 
-          await db.transactions.update(outgoingTxId, outgoingTx);
-          await db.transactions.update(incomingTxId, incomingTx);
+          await db.transaction("rw", db.transactions, async () => {
+            await db.transactions.update(
+              transferPairLinks.outgoingTransactionId,
+              {
+                ...outgoingTx,
+                transferPairId: transferPairLinks.outgoingTransferPairId,
+              },
+            );
+            await db.transactions.update(
+              transferPairLinks.incomingTransactionId,
+              {
+                ...incomingTx,
+                transferPairId: transferPairLinks.incomingTransferPairId,
+              },
+            );
+          });
 
           setSuccessToastMessage("Transfer transaction updated successfully!");
           setShowSuccessToast(true);
@@ -713,9 +729,11 @@ const AddTransaction: React.FC = () => {
     } catch (error) {
       console.error("Error adding transaction:", error);
       setErrorMsg(
-        `Failed to ${
-          isEditMode ? "update" : "add"
-        } transaction. Please try again.`,
+        error instanceof Error
+          ? error.message
+          : `Failed to ${
+              isEditMode ? "update" : "add"
+            } transaction. Please try again.`,
       );
     }
   };
