@@ -5,6 +5,8 @@ type TransferPairTransaction = Pick<
   "id" | "amount" | "transferPairId"
 >;
 
+type TransferPairPatch = Pick<Transaction, "amount" | "transferPairId">;
+
 export interface TransferPairEditLinks {
   outgoingTransactionId: number;
   incomingTransactionId: number;
@@ -87,4 +89,94 @@ export const resolveTransferPairEditLinks = (
     outgoingTransferPairId: incomingTransactionId,
     incomingTransferPairId: outgoingTransactionId,
   };
+};
+
+const assertNumber = (value: number | undefined, message: string) => {
+  if (typeof value !== "number") {
+    throw new Error(message);
+  }
+};
+
+export const assertValidTransferPairPatches = (
+  outgoingId: number,
+  outgoingPatch: TransferPairPatch,
+  incomingId: number,
+  incomingPatch: TransferPairPatch,
+) => {
+  assertNumber(
+    outgoingPatch.transferPairId,
+    "Transfer write blocked: outgoing patch is missing transferPairId.",
+  );
+  assertNumber(
+    incomingPatch.transferPairId,
+    "Transfer write blocked: incoming patch is missing transferPairId.",
+  );
+
+  if (outgoingId === outgoingPatch.transferPairId) {
+    throw new Error(
+      "Transfer write blocked: outgoing transaction would point to itself.",
+    );
+  }
+
+  if (incomingId === incomingPatch.transferPairId) {
+    throw new Error(
+      "Transfer write blocked: incoming transaction would point to itself.",
+    );
+  }
+
+  if (outgoingPatch.transferPairId !== incomingId) {
+    throw new Error(
+      "Transfer write blocked: outgoing transaction would not point to the incoming transaction.",
+    );
+  }
+
+  if (incomingPatch.transferPairId !== outgoingId) {
+    throw new Error(
+      "Transfer write blocked: incoming transaction would not point to the outgoing transaction.",
+    );
+  }
+
+  if (outgoingPatch.amount >= 0) {
+    throw new Error(
+      "Transfer write blocked: outgoing transaction amount must be negative.",
+    );
+  }
+
+  if (incomingPatch.amount <= 0) {
+    throw new Error(
+      "Transfer write blocked: incoming transaction amount must be positive.",
+    );
+  }
+};
+
+export const assertValidTransferPairRows = (
+  outgoingId: number,
+  outgoingTransaction: TransferPairTransaction | undefined,
+  incomingId: number,
+  incomingTransaction: TransferPairTransaction | undefined,
+) => {
+  if (!outgoingTransaction || !incomingTransaction) {
+    throw new Error(
+      "Transfer write verification failed: one or both transfer rows could not be read.",
+    );
+  }
+
+  if (outgoingTransaction.id !== outgoingId) {
+    throw new Error(
+      "Transfer write verification failed: outgoing row id does not match.",
+    );
+  }
+
+  if (incomingTransaction.id !== incomingId) {
+    throw new Error(
+      "Transfer write verification failed: incoming row id does not match.",
+    );
+  }
+
+  assertValidTransferPairPatches(
+    outgoingId,
+    outgoingTransaction,
+    incomingId,
+    incomingTransaction,
+  );
 };

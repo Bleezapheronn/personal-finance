@@ -47,7 +47,11 @@ import { SmsImportModal } from "../components/SmsImportModal";
 import { ParsedSmsData } from "../hooks/useSmsParser";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import { SelectableDropdown } from "../components/SelectableDropdown";
-import { resolveTransferPairEditLinks } from "../utils/transferPairs";
+import {
+  assertValidTransferPairPatches,
+  assertValidTransferPairRows,
+  resolveTransferPairEditLinks,
+} from "../utils/transferPairs";
 
 interface DuplicateTransactionPrefill {
   transactionType: "expense" | "income" | "transfer";
@@ -68,6 +72,9 @@ interface DuplicateTransactionPrefill {
 interface AddTransactionLocationState {
   duplicatePrefill?: DuplicateTransactionPrefill;
 }
+
+type TransferContentPayload = Omit<Transaction, "id" | "transferPairId">;
+type TransferUpdatePatch = TransferContentPayload & { transferPairId: number };
 
 const AddTransaction: React.FC = () => {
   const history = useHistory();
@@ -576,7 +583,7 @@ const AddTransaction: React.FC = () => {
     try {
       if (transactionType === "transfer") {
         // Outgoing transaction
-        const outgoingTx: Omit<Transaction, "id"> = {
+        const outgoingTx: TransferContentPayload = {
           date: selectedDateTime,
           amount: -Math.abs(numericAmountRaw),
           transactionCost: numericCost,
@@ -591,11 +598,10 @@ const AddTransaction: React.FC = () => {
           recipientId: recipientId!,
           description: description || undefined,
           isTransfer: true,
-          transferPairId: editingTransaction?.transferPairId || undefined,
         };
 
         // Incoming transaction
-        const incomingTx: Omit<Transaction, "id"> = {
+        const incomingTx: TransferContentPayload = {
           date: selectedDateTime,
           amount: Math.abs(numericAmountRaw),
           transactionCost: undefined,
@@ -610,7 +616,6 @@ const AddTransaction: React.FC = () => {
           recipientId: transferRecipientId!,
           description: description || undefined,
           isTransfer: true,
-          transferPairId: editingTransaction?.id || undefined,
         };
 
         if (isEditMode) {
@@ -628,35 +633,85 @@ const AddTransaction: React.FC = () => {
             editingTransaction,
             pairedTransaction,
           );
+          const outgoingPatch: TransferUpdatePatch = {
+            ...outgoingTx,
+            transferPairId: transferPairLinks.incomingTransactionId,
+          };
+          const incomingPatch: TransferUpdatePatch = {
+            ...incomingTx,
+            transferPairId: transferPairLinks.outgoingTransactionId,
+          };
+
+          assertValidTransferPairPatches(
+            transferPairLinks.outgoingTransactionId,
+            outgoingPatch,
+            transferPairLinks.incomingTransactionId,
+            incomingPatch,
+          );
 
           await db.transaction("rw", db.transactions, async () => {
             await db.transactions.update(
               transferPairLinks.outgoingTransactionId,
-              {
-                ...outgoingTx,
-                transferPairId: transferPairLinks.outgoingTransferPairId,
-              },
+              outgoingPatch,
             );
             await db.transactions.update(
               transferPairLinks.incomingTransactionId,
-              {
-                ...incomingTx,
-                transferPairId: transferPairLinks.incomingTransferPairId,
-              },
+              incomingPatch,
+            );
+
+            const savedOutgoing = await db.transactions.get(
+              transferPairLinks.outgoingTransactionId,
+            );
+            const savedIncoming = await db.transactions.get(
+              transferPairLinks.incomingTransactionId,
+            );
+
+            assertValidTransferPairRows(
+              transferPairLinks.outgoingTransactionId,
+              savedOutgoing,
+              transferPairLinks.incomingTransactionId,
+              savedIncoming,
             );
           });
 
           setSuccessToastMessage("Transfer transaction updated successfully!");
           setShowSuccessToast(true);
         } else {
-          const outgoingId = await db.transactions.add(outgoingTx);
-          const incomingId = await db.transactions.add(incomingTx);
+          await db.transaction("rw", db.transactions, async () => {
+            const outgoingId = await db.transactions.add(outgoingTx);
+            const incomingId = await db.transactions.add(incomingTx);
+            const outgoingPairPatch = {
+              amount: outgoingTx.amount,
+              transferPairId: incomingId,
+            };
+            const incomingPairPatch = {
+              amount: incomingTx.amount,
+              transferPairId: outgoingId,
+            };
 
-          await db.transactions.update(outgoingId, {
-            transferPairId: incomingId,
-          });
-          await db.transactions.update(incomingId, {
-            transferPairId: outgoingId,
+            assertValidTransferPairPatches(
+              outgoingId,
+              outgoingPairPatch,
+              incomingId,
+              incomingPairPatch,
+            );
+
+            await db.transactions.update(outgoingId, {
+              transferPairId: outgoingPairPatch.transferPairId,
+            });
+            await db.transactions.update(incomingId, {
+              transferPairId: incomingPairPatch.transferPairId,
+            });
+
+            const savedOutgoing = await db.transactions.get(outgoingId);
+            const savedIncoming = await db.transactions.get(incomingId);
+
+            assertValidTransferPairRows(
+              outgoingId,
+              savedOutgoing,
+              incomingId,
+              savedIncoming,
+            );
           });
 
           setSuccessToastMessage("Transfer transaction added successfully!");
