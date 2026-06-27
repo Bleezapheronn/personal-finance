@@ -18,6 +18,21 @@ CSV export/import exists for transaction-oriented workflows, but it is not a ful
 
 The current setup is safer than it was before backup validation, guarded restore, and health checks. The long-term concern remains that the active database lives inside one browser profile's IndexedDB.
 
+## Provisional Decisions
+
+These decisions reflect the latest planning discussion. They are direction-setting, not permission to implement a migration without a separate plan, tests, backup path, and user approval.
+
+- **Desktop target**: local API server plus local SQLite database file.
+- **Migration bridge**: repository/data-access abstraction first.
+- **Preferred backend stack**: Node + TypeScript + Fastify + `better-sqlite3`.
+- **Data folder**: sibling local folder outside the repo, for example `C:\dev\personal-finance-data`.
+- **Repo boundary**: backend code may live in this repo; real SQLite databases, backup files, exports, logs with sensitive data, and local runtime data must not be committed to Git.
+- **Backup cadence**: at least every 24 hours, plus immediately before migrations and restores.
+- **Mobile**: deferred. Preserve the path through repository adapters, but do not design the desktop local server as the mobile answer.
+- **Security baseline**: bind to `127.0.0.1` only, require a local API token, restrict CORS/origins, and keep sensitive financial data out of the repo and logs.
+- **At rest definition**: financial data stored on disk in SQLite files, backup files, exported reports, and logs.
+- **Starting/stopping**: use development scripts first. Consider a packaged launcher or tray app later. Do not start with a Windows service.
+
 ## Main Goals
 
 Future data-layer work should aim for:
@@ -172,6 +187,8 @@ Good long-term mobile candidate, but it should be evaluated separately from the 
 
 Run a local backend on `localhost` and store data in a local SQLite database file. The Ionic React frontend talks to the local API instead of directly reading/writing IndexedDB.
 
+The provisional preferred desktop stack is Node + TypeScript + Fastify + `better-sqlite3`. The SQLite database file should live outside the Git repo in a sibling local data folder such as `C:\dev\personal-finance-data`.
+
 ### Pros
 
 - Best match for browser-agnostic local desktop access.
@@ -189,6 +206,7 @@ Run a local backend on `localhost` and store data in a local SQLite database fil
 - Desktop packaging and startup become more complex.
 - Security still matters even on localhost.
 - Mobile would likely need a separate adapter or sync/import story.
+- A separate data folder and strict `.gitignore`/logging discipline are required to avoid committing real financial data.
 
 ### Data-Loss Risk
 
@@ -200,7 +218,7 @@ Strong. SQLite files and API logs are much easier to inspect than browser Indexe
 
 ### Browser-Agnostic Suitability
 
-Strong. This is the clearest path to using the same local data from different browsers on the same machine.
+Strong. This is the chosen desktop target for using the same local data from different browsers on the same machine.
 
 ### Mobile Suitability
 
@@ -212,7 +230,7 @@ High. Requires repository abstraction, API design, SQLite schema design, migrati
 
 ### Fit For This App
 
-Likely best desktop long-term direction because it directly addresses browser-agnostic local access and inspectability while preserving local-first operation.
+Best current desktop target because it directly addresses browser-agnostic local access and inspectability while preserving local-first operation.
 
 ## Option E: Hybrid Repository Abstraction With Multiple Adapters
 
@@ -265,9 +283,9 @@ Short term: keep Dexie / IndexedDB. The app now has full JSON backup, dry-run va
 
 Medium term: introduce a data-access/repository abstraction before any backend migration. The first adapter should still be Dexie, so behavior can be preserved while direct database access is gradually reduced.
 
-Desktop long term: local API server plus a local SQLite database file is likely the best match for browser-agnostic `localhost` access, easier inspection/debugging, and AI-agent-friendly diagnostics.
+Desktop long term: local API server plus a local SQLite database file is the provisional target for browser-agnostic `localhost` access, easier inspection/debugging, and AI-agent-friendly diagnostics. The preferred stack is Node + TypeScript + Fastify + `better-sqlite3`.
 
-Mobile long term: evaluate Capacitor/native SQLite separately. Mobile should not be treated as automatically solved by the desktop local server design.
+Mobile long term: defer mobile storage decisions and evaluate Capacitor/native SQLite separately. Mobile should not be treated as automatically solved by the desktop local server design.
 
 Do not move directly from Dexie to a new database without a tested export/restore, health-check, row-count, and comparison strategy. The safest migration is one that can prove the old and new data layers produce the same transactions, budgets, reports, and integrity results before the new layer becomes authoritative.
 
@@ -295,7 +313,10 @@ Do not move directly from Dexie to a new database without a tested export/restor
 ### Phase 4: Prototype Local API + SQLite Separately
 
 - Build a proof-of-concept in a separate branch or small prototype.
-- Choose a minimal local server approach only after testing startup, shutdown, file paths, backups, and API ergonomics.
+- Use the provisional stack: Node + TypeScript + Fastify + `better-sqlite3`.
+- Store runtime data in a sibling folder such as `C:\dev\personal-finance-data`, not in the app repo.
+- Bind the API to `127.0.0.1`, use a local API token, and restrict CORS/origins from the first prototype.
+- Start and stop the backend with development scripts first.
 - Do not connect the main app to the prototype until comparison tooling exists.
 
 ### Phase 5: Build Data Comparison Tools
@@ -312,6 +333,7 @@ Do not move directly from Dexie to a new database without a tested export/restor
 - Require matching Transactions, Budget, and Reports behavior.
 - Require restore tests and backup tests.
 - Keep a rollback path to the Dexie backup.
+- Require at least one pre-migration backup and one successful post-migration backup.
 
 ### Phase 7: Revisit Mobile Adapter Separately
 
@@ -327,18 +349,21 @@ Do not move directly from Dexie to a new database without a tested export/restor
 - No automatic destructive migration.
 - No schema rewrite bundled with a budget model rewrite.
 - No backend implementation in the planning/documentation phase.
+- No Windows service as the initial local backend runtime.
+- No real database, backup, export, or sensitive log files committed to Git.
 
 ## Open Questions
 
-- Where should the SQLite file live on Windows?
-- Should the local backend be Node/Express, Fastify, or another minimal server?
-- Should the backend live in the same repo?
-- How should backups be scheduled once a local backend exists?
+- What exact subdirectory layout should `C:\dev\personal-finance-data` use for the live database, backups, exports, and logs?
+- What should the API token generation, storage, and rotation flow look like?
+- Which localhost origins should be allowed during development and packaged use?
+- How should the "at least every 24 hours" backup cadence be implemented and monitored?
 - How should mobile and desktop data stay conceptually aligned if they use different adapters?
-- How should sensitive financial data be protected at rest?
-- How should the local server be started, stopped, updated, and recovered if it fails?
-- How should API access be limited so localhost convenience does not become a local security problem?
+- Should sensitive data at rest be protected only by OS/user-profile permissions at first, or should app-level encryption be evaluated early?
+- How should the local server be updated and recovered if it fails?
+- How should logs stay useful while guaranteeing no sensitive financial data is written to them?
+- What comparison reports are sufficient before declaring the SQLite backend equivalent to Dexie?
 
 ## Practical Decision For Now
 
-Do not migrate yet. Keep the Dexie app stable, use full JSON backups, and treat the next architecture step as an adapter/repository design exercise. The most likely future desktop target is a local API server with a local SQLite database file, but that should be proven through a prototype and comparison tooling before it touches real finance data.
+Do not migrate yet. Keep the Dexie app stable, use full JSON backups, and treat the next architecture step as an adapter/repository design exercise. The provisional desktop target is a local API server with a local SQLite database file, using Node + TypeScript + Fastify + `better-sqlite3`, but that must be proven through a prototype and comparison tooling before it touches real finance data.
