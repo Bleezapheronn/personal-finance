@@ -10,6 +10,27 @@ export const getTransactionById = async (
   return db.transactions.get(id);
 };
 
+export const getTransferPairById = async (
+  pairId: number,
+): Promise<Transaction | undefined> => {
+  return getTransactionById(pairId);
+};
+
+export const getPairedTransaction = async (
+  transaction: Transaction,
+): Promise<Transaction | undefined> => {
+  if (!transaction.isTransfer || !transaction.transferPairId) {
+    return undefined;
+  }
+
+  return getTransferPairById(transaction.transferPairId);
+};
+
+export const isTransferTransaction = async (id: number): Promise<boolean> => {
+  const transaction = await getTransactionById(id);
+  return transaction?.isTransfer ?? false;
+};
+
 export const listTransactionsInDateRange = async (
   startDate: Date,
   endDate: Date,

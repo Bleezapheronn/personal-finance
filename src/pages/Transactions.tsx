@@ -233,7 +233,7 @@ const Transactions: React.FC = () => {
     };
 
     if (txn.isTransfer && txn.transferPairId) {
-      const pairedTxn = await db.transactions.get(txn.transferPairId);
+      const pairedTxn = await transactionRepository.getPairedTransaction(txn);
       const outgoingTxn = txn.amount < 0 ? txn : pairedTxn;
       const incomingTxn = txn.amount < 0 ? pairedTxn : txn;
 
@@ -267,20 +267,10 @@ const Transactions: React.FC = () => {
   // Handler to delete a transaction with confirmation
   const handleDeleteClick = async (id?: number) => {
     if (id === undefined) return;
-    const isTransfer = await isTransferTransaction(id);
+    const isTransfer = await transactionRepository.isTransferTransaction(id);
     setIsTransferDelete(isTransfer);
     setTransactionToDelete(id);
     setShowDeleteConfirm(true);
-  };
-
-  // Add this helper to check if transaction is a transfer
-  const isTransferTransaction = async (id: number): Promise<boolean> => {
-    try {
-      const txn = await db.transactions.get(id);
-      return txn?.isTransfer ?? false;
-    } catch {
-      return false;
-    }
   };
 
   const handleConfirmDelete = async () => {
