@@ -1,4 +1,10 @@
 import { db } from "../db";
+import {
+  accountRepository,
+  categoryRepository,
+  recipientRepository,
+  transactionRepository,
+} from "../repositories";
 
 export const exportTransactionsToCSV = async (): Promise<string> => {
   try {
@@ -12,11 +18,11 @@ export const exportTransactionsToCSV = async (): Promise<string> => {
       budgets,
       budgetSnapshots,
     ] = await Promise.all([
-      db.transactions.toArray(),
-      db.categories.toArray(),
-      db.recipients.toArray(),
-      db.accounts.toArray(),
-      db.buckets.toArray(),
+      transactionRepository.listTransactions(),
+      categoryRepository.listCategories(),
+      recipientRepository.listRecipients(),
+      accountRepository.listAccounts(),
+      categoryRepository.listBuckets(),
       db.budgets.toArray(),
       db.budgetSnapshots.toArray(),
     ]);
