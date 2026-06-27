@@ -137,3 +137,24 @@ dist
 
 # Ignore grouped design assets
 /design/
+
+# Local finance runtime data and prototype backend secrets
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+.server-token
+.local-data/
+local-data/
+personal-finance-data/
+backups/
+exports/
+logs/
+temp/
+personal-finance-full-backup-*.json
+personal-finance-health-report-*.json
+personal-finance-backup-validation-*.json
+personal-finance-restore-summary-*.json
+transactions_*.csv
+budgets_*.csv

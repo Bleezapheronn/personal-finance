@@ -58,6 +58,12 @@ Rules:
 - Do not commit sensitive logs.
 - Keep local API tokens outside the repo.
 
+Repository guardrails:
+
+- Real runtime data must live outside this repo, with `C:\dev\personal-finance-data` as the suggested local folder.
+- SQLite files, backups, exports, logs, and local API tokens must never be committed.
+- `.gitignore` includes defensive patterns for common local data files, but it is not a substitute for checking `git status` carefully before every commit.
+
 ## Non-Goals
 
 - No production migration.
