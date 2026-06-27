@@ -36,6 +36,13 @@ export const getTransactionCount = async (): Promise<number> => {
   return db.transactions.count();
 };
 
+export const accountHasTransactions = async (
+  accountId: number,
+): Promise<boolean> => {
+  const transactions = await listTransactions();
+  return transactions.some((transaction) => transaction.accountId === accountId);
+};
+
 export const getLatestTransactions = async (
   limit: number,
 ): Promise<Transaction[]> => {

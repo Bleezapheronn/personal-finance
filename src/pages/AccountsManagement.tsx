@@ -51,6 +51,7 @@ import {
 } from "ionicons/icons";
 import { db } from "../db";
 import { AddAccountModal } from "../components/AddAccountModal";
+import { accountRepository, transactionRepository } from "../repositories";
 
 import type { Account } from "../db";
 
@@ -106,7 +107,7 @@ const AccountsManagement: React.FC = () => {
       });
       blobUrlsRef.current.clear();
 
-      const fetched: Account[] = await db.accounts.toArray();
+      const fetched: Account[] = await accountRepository.listAccounts();
       const withPreview: LocalAccount[] = fetched.map((a) => {
         let preview: string | undefined;
         if (a.imageBlob) {
@@ -148,8 +149,7 @@ const AccountsManagement: React.FC = () => {
    */
   const checkAccountUsage = async (accountId: number): Promise<boolean> => {
     try {
-      const transactions = await db.transactions.toArray();
-      return transactions.some((txn) => txn.accountId === accountId);
+      return transactionRepository.accountHasTransactions(accountId);
     } catch (error) {
       console.error("Error checking account usage:", error);
       return false;
