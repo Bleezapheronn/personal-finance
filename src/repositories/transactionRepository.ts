@@ -1,0 +1,46 @@
+import { db, Transaction } from "../db";
+
+export const listTransactions = async (): Promise<Transaction[]> => {
+  return db.transactions.toArray();
+};
+
+export const getTransactionById = async (
+  id: number,
+): Promise<Transaction | undefined> => {
+  return db.transactions.get(id);
+};
+
+export const listTransactionsInDateRange = async (
+  startDate: Date,
+  endDate: Date,
+): Promise<Transaction[]> => {
+  return db.transactions
+    .where("date")
+    .between(startDate, endDate, true, true)
+    .toArray();
+};
+
+export const listTransactionsBeforeDate = async (
+  date: Date,
+): Promise<Transaction[]> => {
+  return db.transactions.where("date").below(date).toArray();
+};
+
+export const listTransactionsAfterDate = async (
+  date: Date,
+): Promise<Transaction[]> => {
+  return db.transactions.where("date").above(date).toArray();
+};
+
+export const getTransactionCount = async (): Promise<number> => {
+  return db.transactions.count();
+};
+
+export const getLatestTransactions = async (
+  limit: number,
+): Promise<Transaction[]> => {
+  const transactions = await listTransactions();
+  return transactions
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, limit);
+};

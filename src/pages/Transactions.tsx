@@ -49,6 +49,12 @@ import { db, Transaction, Category, Recipient, Bucket, Account } from "../db";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import { exportTransactionsToCSV, downloadCSV } from "../utils/csvExport";
 import { ImportModal } from "../components/ImportModal";
+import {
+  accountRepository,
+  categoryRepository,
+  recipientRepository,
+  transactionRepository,
+} from "../repositories";
 import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
@@ -128,11 +134,11 @@ const Transactions: React.FC = () => {
 
     try {
       const [allTransactions, cats, bkts, recs, accs] = await Promise.all([
-        db.transactions.toArray(),
-        db.categories.toArray(),
-        db.buckets.toArray(),
-        db.recipients.toArray(),
-        db.accounts.toArray(),
+        transactionRepository.listTransactions(),
+        categoryRepository.listCategories(),
+        categoryRepository.listBuckets(),
+        recipientRepository.listRecipients(),
+        accountRepository.listAccounts(),
       ]);
 
       // REMOVED: paymentMethods fetch - no longer needed
