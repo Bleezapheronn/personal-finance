@@ -43,6 +43,24 @@ export const accountHasTransactions = async (
   return transactions.some((transaction) => transaction.accountId === accountId);
 };
 
+export const recipientHasTransactions = async (
+  recipientId: number,
+): Promise<boolean> => {
+  const transactions = await listTransactions();
+  return transactions.some(
+    (transaction) => transaction.recipientId === recipientId,
+  );
+};
+
+export const countTransactionsForRecipient = async (
+  recipientId: number,
+): Promise<number> => {
+  const transactions = await listTransactions();
+  return transactions.filter(
+    (transaction) => transaction.recipientId === recipientId,
+  ).length;
+};
+
 export const getLatestTransactions = async (
   limit: number,
 ): Promise<Transaction[]> => {

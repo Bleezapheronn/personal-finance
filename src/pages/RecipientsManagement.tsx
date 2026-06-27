@@ -35,6 +35,7 @@ import { db } from "../db";
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { findAllDuplicatePairs } from "../utils/recipientMerge";
 import { MergeRecipientsModal } from "../components/MergeRecipientsModal";
+import { recipientRepository, transactionRepository } from "../repositories";
 import type { Recipient } from "../db";
 
 type DeleteState =
@@ -82,10 +83,10 @@ const RecipientsManagement: React.FC = () => {
   const fetchRecipients = async () => {
     try {
       setLoading(true);
-      const all = await db.recipients.toArray();
+      const all = await recipientRepository.listRecipients();
 
       // Get transactions to count usage
-      const transactions = await db.transactions.toArray();
+      const transactions = await transactionRepository.listTransactions();
       const counts = new Map<number, number>();
 
       transactions.forEach((txn) => {
@@ -271,7 +272,7 @@ const RecipientsManagement: React.FC = () => {
     excludeId?: number
   ): Promise<Recipient | null> => {
     try {
-      const allRecipients = await db.recipients.toArray();
+      const allRecipients = await recipientRepository.listRecipients();
 
       return (
         allRecipients.find((r) => {
