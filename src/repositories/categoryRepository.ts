@@ -30,6 +30,12 @@ export const getBucketById = async (
   return db.buckets.get(id);
 };
 
+export const listCategoriesForBucket = async (
+  bucketId: number,
+): Promise<Category[]> => {
+  return db.categories.where("bucketId").equals(bucketId).toArray();
+};
+
 export const listCategoriesWithActiveBuckets = async (): Promise<
   Category[]
 > => {

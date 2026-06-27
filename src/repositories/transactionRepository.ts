@@ -73,6 +73,24 @@ export const recipientHasTransactions = async (
   );
 };
 
+export const categoryHasTransactions = async (
+  categoryId: number,
+): Promise<boolean> => {
+  const transactions = await listTransactions();
+  return transactions.some(
+    (transaction) => transaction.categoryId === categoryId,
+  );
+};
+
+export const categoriesHaveTransactions = async (
+  categoryIds: Array<number | undefined>,
+): Promise<boolean> => {
+  const transactions = await listTransactions();
+  return transactions.some((transaction) =>
+    categoryIds.includes(transaction.categoryId),
+  );
+};
+
 export const countTransactionsForRecipient = async (
   recipientId: number,
 ): Promise<number> => {

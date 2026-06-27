@@ -40,6 +40,7 @@ import {
 } from "ionicons/icons";
 import { db, Bucket, Category } from "../db";
 import { AddCategoryModal } from "../components/AddCategoryModal";
+import { categoryRepository, transactionRepository } from "../repositories";
 
 /**
  * BucketsManagement
@@ -113,7 +114,7 @@ const BucketsManagement: React.FC = () => {
 
   const fetchBuckets = async () => {
     try {
-      const all = await db.buckets.toArray();
+      const all = await categoryRepository.listBuckets();
       // Sort by displayOrder
       all.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
       setBuckets(all);
@@ -126,7 +127,7 @@ const BucketsManagement: React.FC = () => {
 
   const fetchCategories = async () => {
     try {
-      const all = await db.categories.toArray();
+      const all = await categoryRepository.listCategories();
       setCategories(all);
     } catch (err) {
       console.error(err);
@@ -387,13 +388,11 @@ const BucketsManagement: React.FC = () => {
    */
   const checkBucketUsage = async (bucketId: number): Promise<boolean> => {
     try {
-      const transactions = await db.transactions.toArray();
-      const categories = await db.categories
-        .where("bucketId")
-        .equals(bucketId)
-        .toArray();
+      const categories = await categoryRepository.listCategoriesForBucket(
+        bucketId
+      );
       const categoryIds = categories.map((c) => c.id);
-      return transactions.some((txn) => categoryIds.includes(txn.categoryId));
+      return transactionRepository.categoriesHaveTransactions(categoryIds);
     } catch (error) {
       console.error("Error checking bucket usage:", error);
       return false;
@@ -405,8 +404,7 @@ const BucketsManagement: React.FC = () => {
    */
   const checkCategoryUsage = async (categoryId: number): Promise<boolean> => {
     try {
-      const transactions = await db.transactions.toArray();
-      return transactions.some((txn) => txn.categoryId === categoryId);
+      return transactionRepository.categoryHasTransactions(categoryId);
     } catch (error) {
       console.error("Error checking category usage:", error);
       return false;
