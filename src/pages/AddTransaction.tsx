@@ -56,6 +56,7 @@ import {
   accountRepository,
   categoryRepository,
   recipientRepository,
+  smsImportTemplateRepository,
 } from "../repositories";
 
 interface DuplicateTransactionPrefill {
@@ -191,7 +192,7 @@ const AddTransaction: React.FC = () => {
         categoryRepository.listCategories(),
         accountRepository.listAccounts(),
         recipientRepository.listRecipients(),
-        db.smsImportTemplates.toArray(),
+        smsImportTemplateRepository.listTemplates(),
       ]);
 
       // When in EDIT MODE: Include deactivated items

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { SmsImportTemplate, db, Recipient } from "../db";
+import { SmsImportTemplate, Recipient } from "../db";
+import { recipientRepository } from "../repositories";
 
 export interface ParsedSmsData {
   reference?: string;
@@ -57,7 +58,7 @@ export const useSmsParser = (
     if (!recipientName) return null;
 
     try {
-      const allRecipients = await db.recipients.toArray();
+      const allRecipients = await recipientRepository.listRecipients();
       const searchName = recipientName.toLowerCase().trim();
 
       // First check exact name match

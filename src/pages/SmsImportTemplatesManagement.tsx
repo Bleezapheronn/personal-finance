@@ -34,6 +34,10 @@ import {
   closeCircleOutline,
 } from "ionicons/icons";
 import { db, SmsImportTemplate, Account } from "../db";
+import {
+  accountRepository,
+  smsImportTemplateRepository,
+} from "../repositories";
 
 type LocalAccount = Account & { previewUrl?: string };
 
@@ -97,8 +101,8 @@ const SmsImportTemplatesManagement: React.FC = () => {
       blobUrlsRef.current.clear();
 
       const [temps, accs] = await Promise.all([
-        db.smsImportTemplates.toArray(),
-        db.accounts.toArray(),
+        smsImportTemplateRepository.listTemplates(),
+        accountRepository.listAccounts(),
       ]);
 
       // Convert accounts to include preview URLs
