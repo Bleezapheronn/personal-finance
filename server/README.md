@@ -49,6 +49,13 @@ npm run start
 
 The server binds to `127.0.0.1` only. The default port is `3147`.
 
+## Schema Draft
+
+The future disposable SQLite prototype schema is documented, but no SQLite runtime code or database files exist yet:
+
+- [schema/prototype-schema.sql](schema/prototype-schema.sql)
+- [docs/sqlite-schema-notes.md](docs/sqlite-schema-notes.md)
+
 ## Token Commands
 
 Show the local development token:
