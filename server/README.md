@@ -56,6 +56,13 @@ The future disposable SQLite prototype schema is documented, but no SQLite runti
 - [schema/prototype-schema.sql](schema/prototype-schema.sql)
 - [docs/sqlite-schema-notes.md](docs/sqlite-schema-notes.md)
 
+## Import And Comparison Designs
+
+Future backup import and comparison tooling is documented only. No importer, SQLite runtime code, database files, or financial API endpoints exist yet:
+
+- [docs/backup-import-design.md](docs/backup-import-design.md)
+- [docs/comparison-report-design.md](docs/comparison-report-design.md)
+
 ## Token Commands
 
 Show the local development token:
