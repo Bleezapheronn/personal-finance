@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "import:backup": "tsx src/importBackup.ts",
     "compare:counts": "tsx src/compareBackupSqlite.ts",
+    "compare:integrity": "tsx src/compareIntegrity.ts",
     "token:show": "tsx src/tokenCli.ts show",
     "token:rotate": "tsx src/tokenCli.ts rotate"
   },

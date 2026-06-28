@@ -97,6 +97,18 @@ npm run compare:counts -- -- --backup C:\dev\personal-finance-data\exports\perso
 
 The comparison report output is optional. If supplied, repo-local output is refused unless `--allow-repo-output-for-tests` is supplied.
 
+## Structural Integrity Comparison
+
+The structural comparison CLI checks transfer-pair integrity and budget snapshot link integrity for a full backup and a disposable SQLite database. It compares count-level issue summaries only; it does not print transaction descriptions, account names, amounts, or raw rows.
+
+Matching issue counts mean the import preserved the same structural state. They do not prove the source data is healthy. If backup and SQLite both contain the same issue count, the comparison can pass while still reporting source issues.
+
+Keep generated reports outside the repository:
+
+```bash
+npm run compare:integrity -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\temp\structural-integrity-comparison.json
+```
+
 ## Token Commands
 
 Show the local development token:
