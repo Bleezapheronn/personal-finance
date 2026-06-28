@@ -58,10 +58,30 @@ The future disposable SQLite prototype schema is documented, but no SQLite runti
 
 ## Import And Comparison Designs
 
-Future backup import and comparison tooling is documented only. No importer, SQLite runtime code, database files, or financial API endpoints exist yet:
+Backup import and future comparison tooling are documented here. The importer CLI is prototype-only, comparison tooling is still design-only, and no financial API endpoints exist:
 
 - [docs/backup-import-design.md](docs/backup-import-design.md)
 - [docs/comparison-report-design.md](docs/comparison-report-design.md)
+
+## Disposable Backup Importer
+
+The prototype importer creates a disposable SQLite database from a full JSON backup. Dexie / IndexedDB remains authoritative, and no API routes expose imported financial data.
+
+Use only backup input and SQLite output paths outside the repository. The generated `<output>.import-summary.json` should also be treated as sensitive and kept outside the repository.
+
+Example:
+
+```bash
+npm run import:backup -- -- --input C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --output C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite
+```
+
+If the disposable output already exists, replace it explicitly:
+
+```bash
+npm run import:backup -- -- --input C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --output C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --overwrite-disposable
+```
+
+The importer refuses repo-local output unless `--allow-repo-output-for-tests` is supplied. Do not use that flag for real backups.
 
 ## Token Commands
 

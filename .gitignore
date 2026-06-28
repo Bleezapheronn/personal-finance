@@ -156,5 +156,6 @@ personal-finance-full-backup-*.json
 personal-finance-health-report-*.json
 personal-finance-backup-validation-*.json
 personal-finance-restore-summary-*.json
+*.import-summary.json
 transactions_*.csv
 budgets_*.csv
