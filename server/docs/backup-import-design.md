@@ -167,6 +167,12 @@ Importer behavior:
 
 - reject non-numeric values for numeric fields unless the field is optional and null
 - reject non-boolean values for required boolean fields unless a compatibility rule is explicitly documented
+- legacy account rows with missing or `null` `accounts.isCredit` import as `false`
+  and record a non-sensitive `legacy_defaulted_boolean` warning with table, field,
+  default value, and count
+- legacy budget and budget snapshot rows with missing or `null`
+  `budgets.isFlexible` or `budgetSnapshots.isFlexible` import as `false` and
+  record separate aggregated `legacy_defaulted_boolean` warnings
 - preserve transaction signs exactly
 - preserve `transactionCost` separately from `amount`
 

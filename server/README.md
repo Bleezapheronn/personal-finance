@@ -58,7 +58,7 @@ The future disposable SQLite prototype schema is documented, but no SQLite runti
 
 ## Import And Comparison Designs
 
-Backup import and future comparison tooling are documented here. The importer CLI is prototype-only, comparison tooling is still design-only, and no financial API endpoints exist:
+Backup import and comparison tooling are documented here. The importer and row-count comparison CLIs are prototype-only, and no financial API endpoints exist:
 
 - [docs/backup-import-design.md](docs/backup-import-design.md)
 - [docs/comparison-report-design.md](docs/comparison-report-design.md)
@@ -82,6 +82,20 @@ npm run import:backup -- -- --input C:\dev\personal-finance-data\exports\persona
 ```
 
 The importer refuses repo-local output unless `--allow-repo-output-for-tests` is supplied. Do not use that flag for real backups.
+
+## Row-Count Comparison
+
+The first comparison CLI checks only full-backup table lengths, optional backup `integrity.counts`, and row counts in a disposable SQLite database. It opens SQLite read-only and does not expose row-level financial data.
+
+Keep backup files, SQLite databases, and comparison reports outside the repository. Reports contain only counts and basenames, but should still be treated as local data artifacts.
+
+Example:
+
+```bash
+npm run compare:counts -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\temp\row-count-comparison.json
+```
+
+The comparison report output is optional. If supplied, repo-local output is refused unless `--allow-repo-output-for-tests` is supplied.
 
 ## Token Commands
 
