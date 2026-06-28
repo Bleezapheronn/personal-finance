@@ -109,6 +109,18 @@ Keep generated reports outside the repository:
 npm run compare:integrity -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\temp\structural-integrity-comparison.json
 ```
 
+## Financial Aggregate Comparison
+
+The financial aggregate comparison CLI checks monthly transaction totals and account balances between a full backup and disposable SQLite database. It compares aggregate values only; it does not print raw transactions, account names, descriptions, or recipient names.
+
+Monthly totals include transfers, matching the app's normal transaction/report aggregation. Account balances are calculated by account ID as `amount + transactionCost`. Aggregate values are rounded to 2 decimals before exact comparison to match cents-level currency precision.
+
+Financial aggregate reports contain sensitive financial totals and must remain outside the repository:
+
+```bash
+npm run compare:financial -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\temp\financial-aggregate-comparison.json
+```
+
 ## Token Commands
 
 Show the local development token:

@@ -11,6 +11,7 @@
     "import:backup": "tsx src/importBackup.ts",
     "compare:counts": "tsx src/compareBackupSqlite.ts",
     "compare:integrity": "tsx src/compareIntegrity.ts",
+    "compare:financial": "tsx src/compareFinancialAggregates.ts",
     "token:show": "tsx src/tokenCli.ts show",
     "token:rotate": "tsx src/tokenCli.ts rotate"
   },
