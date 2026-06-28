@@ -121,6 +121,16 @@ Financial aggregate reports contain sensitive financial totals and must remain o
 npm run compare:financial -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\temp\financial-aggregate-comparison.json
 ```
 
+## Report Totals Comparison
+
+The report totals comparison CLI checks top-level monthly, quarterly, and yearly report totals between a full backup and disposable SQLite database. It mirrors the current report formula for `totalIncome`, `totalExpense`, and `netTotal`: transactions contribute `amount + transactionCost`, the first bucket with `excludeFromReports` is treated as income, and transfers are included like normal transaction rows.
+
+This slice intentionally does not compare bucket totals, category breakdowns, report labels, chart layout, or raw rows. Report totals are rounded to 2 decimals before exact comparison. Generated reports contain aggregate financial data and must remain outside the repository:
+
+```bash
+npm run compare:reports -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\temp\report-totals-comparison.json
+```
+
 ## Token Commands
 
 Show the local development token:
