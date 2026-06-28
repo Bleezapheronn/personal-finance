@@ -131,6 +131,24 @@ This slice intentionally does not compare bucket totals, category breakdowns, re
 npm run compare:reports -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\temp\report-totals-comparison.json
 ```
 
+## Transaction Sample Comparison
+
+The transaction sample comparison CLI checks selected transaction rows from a full backup against a disposable SQLite database. It compares field-level import parity for IDs, dates, numeric fields, references, transfer linkage, and budget snapshot linkage without printing raw transaction rows.
+
+If `--ids` is provided, only those transaction IDs are compared. Without `--ids`, the CLI chooses a deterministic sample from the backup covering representative cases where available, including expense, income, transfer, transaction cost, original currency fields, budget snapshot linkage, oldest transaction, and recent transaction.
+
+Console output is summary-only. JSON reports include transaction IDs and mismatch field names. Raw `description` and `transactionReference` values are never written; those fields are reported only by presence and match status. Reports may still contain sensitive transaction IDs and field-level financial values, so keep them outside the repository:
+
+```bash
+npm run compare:transactions -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --sample-size 12 --output C:\dev\personal-finance-data\temp\transaction-sample-comparison.json
+```
+
+Explicit IDs:
+
+```bash
+npm run compare:transactions -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --ids 1,2,3 --output C:\dev\personal-finance-data\temp\transaction-sample-comparison.json
+```
+
 ## Token Commands
 
 Show the local development token:
