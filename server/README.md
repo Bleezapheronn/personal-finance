@@ -193,6 +193,24 @@ The `--sample-size` option applies to transaction sample and Budget History comp
 npm run verify:sqlite -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --sample-size 20 --output-dir C:\dev\personal-finance-data\temp\verification
 ```
 
+## API Smoke Test
+
+The API smoke-test CLI checks a running local API server. Start the server first with `PERSONAL_FINANCE_SQLITE_PATH` pointing at a verified disposable SQLite database outside the repository.
+
+Use a token file so the token is not printed in the command:
+
+```bash
+npm run smoke:api -- -- --base-url http://127.0.0.1:3147 --token-file C:\dev\personal-finance-data\.server-token
+```
+
+If you want the smoke test to send an allowed browser-style origin for protected success checks:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --origin http://localhost:5173
+```
+
+The smoke test checks public, protected, rejected-origin, invalid-table, and invalid-pagination behavior. It does not print tokens, table rows, transaction data, account names, or SQLite paths. The table-read endpoint itself returns sensitive personal finance rows, so keep using it only for local prototype diagnostics. SQLite remains disposable and Dexie / IndexedDB remains authoritative.
+
 ## Token Commands
 
 Show the local development token:
