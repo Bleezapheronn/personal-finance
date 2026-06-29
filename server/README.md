@@ -149,6 +149,18 @@ Explicit IDs:
 npm run compare:transactions -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --ids 1,2,3 --output C:\dev\personal-finance-data\temp\transaction-sample-comparison.json
 ```
 
+## Budget History Comparison
+
+The Budget History comparison CLI checks read-only occurrence summaries derived from budget snapshots and linked transactions. It compares backup-derived summaries to disposable SQLite-derived summaries without invoking frontend snapshot lifecycle helpers, generating missing snapshots, pruning duplicates, or mutating data.
+
+The comparison mirrors the current Budget History page at the summary level: past snapshots only, live-budget joins by `budgetId`, dedupe by budget and local due date, linked transactions by `budgetSnapshotId`, `amount + transactionCost` totals, and the fixed `goalDirection: null` fallback to amount sign. It does not compare UI grouping labels, layout, styling, names, descriptions, or raw rows.
+
+Budget History reports contain financial aggregates and IDs. Keep reports outside the repository:
+
+```bash
+npm run compare:budget-history -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\temp\budget-history-comparison.json
+```
+
 ## Token Commands
 
 Show the local development token:

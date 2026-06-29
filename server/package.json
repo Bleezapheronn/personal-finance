@@ -14,6 +14,7 @@
     "compare:financial": "tsx src/compareFinancialAggregates.ts",
     "compare:reports": "tsx src/compareReportTotals.ts",
     "compare:transactions": "tsx src/compareTransactionSamples.ts",
+    "compare:budget-history": "tsx src/compareBudgetHistory.ts",
     "token:show": "tsx src/tokenCli.ts show",
     "token:rotate": "tsx src/tokenCli.ts rotate"
   },
