@@ -1,22 +1,19 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const FULL_BACKUP_TABLE_NAMES = [
-  "transactions",
-  "budgets",
-  "budgetSnapshots",
-  "buckets",
-  "categories",
-  "accounts",
-  "paymentMethods",
-  "recipients",
-  "smsImportTemplates",
-] as const;
-
-type FullBackupTableName = (typeof FULL_BACKUP_TABLE_NAMES)[number];
-type BackupRecord = Record<string, unknown>;
+import {
+  BackupRecord,
+  FULL_BACKUP_TABLE_NAMES,
+  isPlainObject,
+} from "./lib/backup.js";
+import {
+  assertFileExists,
+  assertOutsideRepoUnlessAllowed,
+  basename,
+} from "./lib/paths.js";
+import { writeJsonReport } from "./lib/reports.js";
+import { roundCurrency } from "./lib/number.js";
+import { assertRequiredTablesExist, openReadOnlyDatabase } from "./lib/sqlite.js";
 type AggregateSection = "monthly_transaction_totals" | "account_balances";
 type AggregateField = "amountTotal" | "transactionCostTotal" | "combinedTotal" | "transactionCount";
 
@@ -97,19 +94,6 @@ Options:
   --allow-repo-output-for-tests       Allow repo-local report output only for explicit tests.
   --help                             Show this help text.
 `;
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const serverRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(serverRoot, "..");
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isInsidePath = (parentPath: string, childPath: string): boolean => {
-  const relativePath = path.relative(parentPath, childPath);
-  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
-};
 
 const parseArgs = (argv: string[]): CompareArgs => {
   const args: CompareArgs = {
@@ -204,19 +188,8 @@ const parseBackupTransactions = (backupPath: string): TransactionForAggregates[]
   });
 };
 
-const tableExists = (db: Database.Database, tableName: FullBackupTableName): boolean => {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(tableName);
-  return row !== undefined;
-};
-
 const readSqliteTransactions = (db: Database.Database): TransactionForAggregates[] => {
-  for (const tableName of FULL_BACKUP_TABLE_NAMES) {
-    if (!tableExists(db, tableName)) {
-      throw new Error(`SQLite table ${tableName} is missing.`);
-    }
-  }
+  assertRequiredTablesExist(db);
 
   return db
     .prepare("SELECT accountId, date, amount, transactionCost FROM transactions")
@@ -231,8 +204,6 @@ const readSqliteTransactions = (db: Database.Database): TransactionForAggregates
       };
     });
 };
-
-const roundCurrency = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
 const emptyTotals = (): AggregateTotals => ({
   amountTotal: 0,
@@ -364,8 +335,8 @@ const buildReport = (
 
   return {
     generatedAt: new Date().toISOString(),
-    backupFile: path.basename(backupPath),
-    sqliteFile: path.basename(sqlitePath),
+    backupFile: basename(backupPath),
+    sqliteFile: basename(sqlitePath),
     overallStatus: mismatches.length === 0 ? "pass" : "fail",
     rounding: {
       scale: "cents",
@@ -392,7 +363,7 @@ const printSummary = (report: FinancialAggregateReport, outputPath?: string): vo
   console.log(`Compared accounts: ${report.comparedAccountCount}`);
   console.log(`Mismatches: ${report.mismatchCount}`);
   if (outputPath) {
-    console.log(`Report JSON: ${path.basename(outputPath)}`);
+    console.log(`Report JSON: ${basename(outputPath)}`);
   }
 };
 
@@ -413,30 +384,19 @@ const main = (): void => {
   const sqlitePath = path.resolve(args.sqlite);
   const outputPath = args.output ? path.resolve(args.output) : undefined;
 
-  if (!existsSync(backupPath)) {
-    throw new Error(`Backup file does not exist: ${path.basename(backupPath)}`);
-  }
-
-  if (!existsSync(sqlitePath)) {
-    throw new Error(`SQLite file does not exist: ${path.basename(sqlitePath)}`);
-  }
-
-  if (outputPath && isInsidePath(repoRoot, outputPath) && !args.allowRepoOutputForTests) {
-    throw new Error(
-      "Refusing to write comparison report inside the repository. Use an outside path or --allow-repo-output-for-tests.",
-    );
-  }
+  assertFileExists(backupPath, "Backup file");
+  assertFileExists(sqlitePath, "SQLite file");
+  assertOutsideRepoUnlessAllowed(outputPath, args.allowRepoOutputForTests, "comparison report");
 
   const backupTransactions = parseBackupTransactions(backupPath);
-  const db = new Database(sqlitePath, { readonly: true, fileMustExist: true });
+  const db = openReadOnlyDatabase(sqlitePath);
 
   try {
     const sqliteTransactions = readSqliteTransactions(db);
     const report = buildReport(backupTransactions, sqliteTransactions, backupPath, sqlitePath);
 
     if (outputPath) {
-      mkdirSync(path.dirname(outputPath), { recursive: true });
-      writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      writeJsonReport(outputPath, report);
     }
 
     printSummary(report, outputPath);

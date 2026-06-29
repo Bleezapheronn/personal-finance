@@ -1,19 +1,20 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const FULL_BACKUP_TABLE_NAMES = [
-  "transactions",
-  "budgets",
-  "budgetSnapshots",
-  "buckets",
-  "categories",
-  "accounts",
-  "paymentMethods",
-  "recipients",
-  "smsImportTemplates",
-] as const;
+import {
+  BackupRecord,
+  FULL_BACKUP_TABLE_NAMES,
+  isPlainObject,
+} from "./lib/backup.js";
+import {
+  assertFileExists,
+  assertOutsideRepoUnlessAllowed,
+  basename,
+} from "./lib/paths.js";
+import { localDayKey, normalizeToLocalDay, parseLocalDay } from "./lib/dates.js";
+import { roundCurrency } from "./lib/number.js";
+import { writeJsonReport } from "./lib/reports.js";
+import { assertRequiredTablesExist, openReadOnlyDatabase } from "./lib/sqlite.js";
 
 const OCCURRENCE_FIELDS = [
   "budgetId",
@@ -34,8 +35,6 @@ const OCCURRENCE_FIELDS = [
 
 const DEFAULT_SAMPLE_SIZE = 20;
 
-type FullBackupTableName = (typeof FULL_BACKUP_TABLE_NAMES)[number];
-type BackupRecord = Record<string, unknown>;
 type Frequency = "once" | "daily" | "weekly" | "monthly" | "yearly" | "custom";
 type GoalDirection = "income" | "expense" | null;
 type OccurrenceField = (typeof OCCURRENCE_FIELDS)[number];
@@ -174,19 +173,6 @@ Options:
   --allow-repo-output-for-tests       Allow repo-local report output only for explicit tests.
   --help                             Show this help text.
 `;
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const serverRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(serverRoot, "..");
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isInsidePath = (parentPath: string, childPath: string): boolean => {
-  const relativePath = path.relative(parentPath, childPath);
-  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
-};
 
 const parseSampleSize = (rawValue: string | undefined): number => {
   if (!rawValue) {
@@ -409,19 +395,8 @@ const parseBackupData = (backupPath: string): BudgetHistoryData => {
   };
 };
 
-const tableExists = (db: Database.Database, tableName: FullBackupTableName): boolean => {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(tableName);
-  return row !== undefined;
-};
-
 const readSqliteData = (db: Database.Database): BudgetHistoryData => {
-  for (const tableName of FULL_BACKUP_TABLE_NAMES) {
-    if (!tableExists(db, tableName)) {
-      throw new Error(`SQLite table ${tableName} is missing.`);
-    }
-  }
+  assertRequiredTablesExist(db);
 
   return {
     budgets: db
@@ -443,24 +418,6 @@ const readSqliteData = (db: Database.Database): BudgetHistoryData => {
       .map((row) => parseTransaction(row as BackupRecord)),
   };
 };
-
-const normalizeToLocalDay = (date: Date): Date =>
-  new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-const parseLocalDay = (dateText: string): Date => {
-  const date = new Date(dateText);
-  if (Number.isNaN(date.getTime())) {
-    throw new Error("Date must be parseable.");
-  }
-  return normalizeToLocalDay(date);
-};
-
-const localDayKey = (date: Date): string =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate(),
-  ).padStart(2, "0")}`;
-
-const roundCurrency = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
 const linkedTransactionsForSnapshot = (
   transactions: TransactionRow[],
@@ -700,8 +657,8 @@ const buildReport = (
 
   return {
     generatedAt: new Date().toISOString(),
-    backupFile: path.basename(backupPath),
-    sqliteFile: path.basename(sqlitePath),
+    backupFile: basename(backupPath),
+    sqliteFile: basename(sqlitePath),
     overallStatus: mismatches.length === 0 && occurrenceCountsMatch ? "pass" : "fail",
     occurrenceCountComparison: {
       backup: backupSummary.occurrences.length,
@@ -749,7 +706,7 @@ const printSummary = (report: BudgetHistoryComparisonReport, outputPath?: string
   console.log(`Source issues: ${report.sourceIssueCount}`);
   console.log(`SQLite issues: ${report.sqliteIssueCount}`);
   if (outputPath) {
-    console.log(`Report JSON: ${path.basename(outputPath)}`);
+    console.log(`Report JSON: ${basename(outputPath)}`);
   }
 };
 
@@ -770,22 +727,16 @@ const main = (): void => {
   const sqlitePath = path.resolve(args.sqlite);
   const outputPath = args.output ? path.resolve(args.output) : undefined;
 
-  if (!existsSync(backupPath)) {
-    throw new Error(`Backup file does not exist: ${path.basename(backupPath)}`);
-  }
-
-  if (!existsSync(sqlitePath)) {
-    throw new Error(`SQLite file does not exist: ${path.basename(sqlitePath)}`);
-  }
-
-  if (outputPath && isInsidePath(repoRoot, outputPath) && !args.allowRepoOutputForTests) {
-    throw new Error(
-      "Refusing to write comparison report inside the repository. Use an outside path or --allow-repo-output-for-tests.",
-    );
-  }
+  assertFileExists(backupPath, "Backup file");
+  assertFileExists(sqlitePath, "SQLite file");
+  assertOutsideRepoUnlessAllowed(
+    outputPath,
+    args.allowRepoOutputForTests,
+    "comparison report",
+  );
 
   const backupData = parseBackupData(backupPath);
-  const db = new Database(sqlitePath, { readonly: true, fileMustExist: true });
+  const db = openReadOnlyDatabase(sqlitePath);
 
   try {
     const sqliteData = readSqliteData(db);
@@ -798,8 +749,7 @@ const main = (): void => {
     );
 
     if (outputPath) {
-      mkdirSync(path.dirname(outputPath), { recursive: true });
-      writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      writeJsonReport(outputPath, report);
     }
 
     printSummary(report, outputPath);

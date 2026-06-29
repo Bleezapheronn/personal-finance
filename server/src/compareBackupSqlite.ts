@@ -1,23 +1,20 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const FULL_BACKUP_TABLE_NAMES = [
-  "transactions",
-  "budgets",
-  "budgetSnapshots",
-  "buckets",
-  "categories",
-  "accounts",
-  "paymentMethods",
-  "recipients",
-  "smsImportTemplates",
-] as const;
-
-type FullBackupTableName = (typeof FULL_BACKUP_TABLE_NAMES)[number];
-type BackupRecord = Record<string, unknown>;
-type BackupTables = Record<FullBackupTableName, BackupRecord[]>;
+import {
+  BackupRecord,
+  BackupTables,
+  FULL_BACKUP_TABLE_NAMES,
+  FullBackupTableName,
+  isPlainObject,
+} from "./lib/backup.js";
+import {
+  assertFileExists,
+  assertOutsideRepoUnlessAllowed,
+  basename,
+} from "./lib/paths.js";
+import { writeJsonReport } from "./lib/reports.js";
+import { openReadOnlyDatabase, tableExists } from "./lib/sqlite.js";
 
 interface CompareArgs {
   backup?: string;
@@ -70,19 +67,6 @@ Options:
   --allow-repo-output-for-tests       Allow repo-local report output only for explicit tests.
   --help                             Show this help text.
 `;
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const serverRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(serverRoot, "..");
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isInsidePath = (parentPath: string, childPath: string): boolean => {
-  const relativePath = path.relative(parentPath, childPath);
-  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
-};
 
 const parseArgs = (argv: string[]): CompareArgs => {
   const args: CompareArgs = {
@@ -173,13 +157,6 @@ const parseBackup = (backupPath: string): ParsedBackup => {
   };
 };
 
-const tableExists = (db: Database.Database, tableName: FullBackupTableName): boolean => {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(tableName);
-  return row !== undefined;
-};
-
 const getSqliteCount = (db: Database.Database, tableName: FullBackupTableName): number => {
   const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get() as
     | { count: number }
@@ -243,8 +220,8 @@ const compareCounts = (
   return {
     generatedAt: new Date().toISOString(),
     backupExportedAt: backup.exportedAt,
-    backupFile: path.basename(backupFile),
-    sqliteFile: path.basename(sqliteFile),
+    backupFile: basename(backupFile),
+    sqliteFile: basename(sqliteFile),
     overallStatus: mismatches.length === 0 ? "pass" : "fail",
     comparedTables: FULL_BACKUP_TABLE_NAMES.length,
     mismatchCount: mismatches.length,
@@ -259,7 +236,7 @@ const printSummary = (report: ComparisonReport, outputPath?: string): void => {
   console.log(`Mismatches: ${report.mismatchCount}`);
 
   if (outputPath) {
-    console.log(`Report JSON: ${path.basename(outputPath)}`);
+    console.log(`Report JSON: ${basename(outputPath)}`);
   }
 };
 
@@ -280,29 +257,18 @@ const main = (): void => {
   const sqlitePath = path.resolve(args.sqlite);
   const outputPath = args.output ? path.resolve(args.output) : undefined;
 
-  if (!existsSync(backupPath)) {
-    throw new Error(`Backup file does not exist: ${path.basename(backupPath)}`);
-  }
-
-  if (!existsSync(sqlitePath)) {
-    throw new Error(`SQLite file does not exist: ${path.basename(sqlitePath)}`);
-  }
-
-  if (outputPath && isInsidePath(repoRoot, outputPath) && !args.allowRepoOutputForTests) {
-    throw new Error(
-      "Refusing to write comparison report inside the repository. Use an outside path or --allow-repo-output-for-tests.",
-    );
-  }
+  assertFileExists(backupPath, "Backup file");
+  assertFileExists(sqlitePath, "SQLite file");
+  assertOutsideRepoUnlessAllowed(outputPath, args.allowRepoOutputForTests, "comparison report");
 
   const backup = parseBackup(backupPath);
-  const db = new Database(sqlitePath, { readonly: true, fileMustExist: true });
+  const db = openReadOnlyDatabase(sqlitePath);
 
   try {
     const report = compareCounts(backup, db, backupPath, sqlitePath);
 
     if (outputPath) {
-      mkdirSync(path.dirname(outputPath), { recursive: true });
-      writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      writeJsonReport(outputPath, report);
     }
 
     printSummary(report, outputPath);

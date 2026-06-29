@@ -2,22 +2,15 @@ import Database from "better-sqlite3";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  BackupRecord,
+  BackupTables,
+  FULL_BACKUP_TABLE_NAMES,
+  FullBackupTableName,
+  isPlainObject,
+} from "./lib/backup.js";
+import { isInsidePath } from "./lib/paths.js";
 
-const FULL_BACKUP_TABLE_NAMES = [
-  "transactions",
-  "budgets",
-  "budgetSnapshots",
-  "buckets",
-  "categories",
-  "accounts",
-  "paymentMethods",
-  "recipients",
-  "smsImportTemplates",
-] as const;
-
-type FullBackupTableName = (typeof FULL_BACKUP_TABLE_NAMES)[number];
-type BackupRecord = Record<string, unknown>;
-type BackupTables = Record<FullBackupTableName, BackupRecord[]>;
 type SqlValue = string | number | Buffer | null;
 type SqlParams = Record<string, SqlValue>;
 
@@ -120,14 +113,6 @@ const parseArgs = (argv: string[]): ImportArgs => {
   }
 
   return args;
-};
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isInsidePath = (parentPath: string, childPath: string): boolean => {
-  const relativePath = path.relative(parentPath, childPath);
-  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 };
 
 const parseBackup = (inputPath: string): FullBackup => {
