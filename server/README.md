@@ -5,8 +5,9 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /health`
 - `GET /metadata`
 - `GET /prototype/sqlite/row-counts`
+- `GET /prototype/sqlite/tables/:tableName`
 
-The backend can optionally open a configured disposable SQLite database read-only for prototype status checks. It does not expose raw finance rows and does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. No financial data endpoints exist yet.
+The backend can optionally open a configured disposable SQLite database read-only for prototype diagnostics. It does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. No write endpoints exist yet.
 
 ## Safety
 
@@ -274,6 +275,33 @@ Expected response shape:
 ```
 
 This endpoint is row-count only. It does not return raw rows, names, descriptions, amounts, transaction references, file paths, tokens, or schema SQL. If `PERSONAL_FINANCE_SQLITE_PATH` is not set, it returns `503 sqlite_not_configured`; if the configured database cannot be opened read-only, it returns `503 sqlite_unavailable`.
+
+SQLite paginated table reads, token required:
+
+```bash
+$env:PERSONAL_FINANCE_SQLITE_PATH = "C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite"
+$TOKEN = npm run token:show --silent
+curl -H "x-personal-finance-token: $TOKEN" "http://127.0.0.1:3147/prototype/sqlite/tables/transactions?limit=50&offset=0"
+```
+
+Expected response shape:
+
+```json
+{
+  "ok": true,
+  "mode": "prototype",
+  "readonly": true,
+  "table": "transactions",
+  "limit": 50,
+  "offset": 0,
+  "rowCount": 0,
+  "rows": []
+}
+```
+
+Only known prototype tables can be read. Pagination defaults to `limit=50&offset=0`, caps `limit` at 200, and orders rows by `id ASC`. Invalid tables and invalid pagination values are rejected before any rows are returned.
+
+The table-read endpoint returns sensitive personal finance rows for the requested table, including fields such as descriptions, amounts, references, names, and account details where those fields exist. Use it only for local prototype diagnostics with a disposable SQLite database. It does not expose SQLite file paths, tokens, schema SQL, or write operations.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 

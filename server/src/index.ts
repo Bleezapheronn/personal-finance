@@ -10,7 +10,12 @@ import {
   SERVICE_NAME,
   TOKEN_HEADER_NAME,
 } from "./config.js";
-import { openReadOnlyDatabase, readKnownTableRowCounts } from "./lib/sqlite.js";
+import {
+  isKnownTableName,
+  openReadOnlyDatabase,
+  readKnownTableRowCounts,
+  readPaginatedKnownTable,
+} from "./lib/sqlite.js";
 import { readOrCreateToken } from "./tokenStore.js";
 
 const server = Fastify({
@@ -21,6 +26,42 @@ const server = Fastify({
 });
 
 const publicPaths = new Set(["/health"]);
+const DEFAULT_TABLE_READ_LIMIT = 50;
+const MAX_TABLE_READ_LIMIT = 200;
+
+const parsePaginationValue = (
+  rawValue: unknown,
+  defaultValue: number,
+  fieldName: "limit" | "offset",
+): number => {
+  if (rawValue === undefined) {
+    return defaultValue;
+  }
+
+  if (Array.isArray(rawValue) || typeof rawValue !== "string" || rawValue.trim() === "") {
+    throw new Error(`${fieldName}_invalid`);
+  }
+
+  const parsedValue = Number(rawValue);
+  if (!Number.isInteger(parsedValue) || parsedValue < 0) {
+    throw new Error(`${fieldName}_invalid`);
+  }
+
+  if (fieldName === "limit") {
+    return Math.min(parsedValue, MAX_TABLE_READ_LIMIT);
+  }
+
+  return parsedValue;
+};
+
+const sqliteUnavailableStatusCode = (error: unknown): 503 | 500 => {
+  const message = error instanceof Error ? error.message : "";
+  return message.includes("Cannot open database") ||
+    message.includes("unable to open database") ||
+    message.includes("SQLite table")
+    ? 503
+    : 500;
+};
 
 server.addHook("onRequest", async (request, reply) => {
   if (publicPaths.has(request.url)) {
@@ -84,17 +125,70 @@ server.get("/prototype/sqlite/row-counts", async (_request, reply) => {
       db.close();
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    const statusCode =
-      message.includes("Cannot open database") ||
-      message.includes("unable to open database") ||
-      message.includes("SQLite table")
-        ? 503
-        : 500;
+    const statusCode = sqliteUnavailableStatusCode(error);
 
     return reply.code(statusCode).send({
       ok: false,
       code: statusCode === 503 ? "sqlite_unavailable" : "sqlite_row_counts_failed",
+    });
+  }
+});
+
+server.get<{
+  Params: { tableName: string };
+  Querystring: { limit?: string; offset?: string };
+}>("/prototype/sqlite/tables/:tableName", async (request, reply) => {
+  const { tableName } = request.params;
+  if (!isKnownTableName(tableName)) {
+    return reply.code(404).send({
+      ok: false,
+      code: "sqlite_table_not_found",
+    });
+  }
+
+  let limit: number;
+  let offset: number;
+  try {
+    limit = parsePaginationValue(request.query.limit, DEFAULT_TABLE_READ_LIMIT, "limit");
+    offset = parsePaginationValue(request.query.offset, 0, "offset");
+  } catch (error) {
+    return reply.code(400).send({
+      ok: false,
+      code: error instanceof Error ? error.message : "pagination_invalid",
+    });
+  }
+
+  const sqlitePath = getSqlitePath();
+  if (!sqlitePath) {
+    return reply.code(503).send({
+      ok: false,
+      code: "sqlite_not_configured",
+    });
+  }
+
+  try {
+    const db = openReadOnlyDatabase(sqlitePath);
+    try {
+      const result = readPaginatedKnownTable(db, tableName, limit, offset);
+      return {
+        ok: true,
+        mode: SERVICE_MODE,
+        readonly: READONLY_MODE,
+        table: result.table,
+        limit: result.limit,
+        offset: result.offset,
+        rowCount: result.rowCount,
+        rows: result.rows,
+      };
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    const statusCode = sqliteUnavailableStatusCode(error);
+
+    return reply.code(statusCode).send({
+      ok: false,
+      code: statusCode === 503 ? "sqlite_unavailable" : "sqlite_table_read_failed",
     });
   }
 });
