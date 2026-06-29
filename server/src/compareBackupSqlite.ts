@@ -8,6 +8,7 @@ import {
   FullBackupTableName,
   isPlainObject,
 } from "./lib/backup.js";
+import { isDirectRun } from "./lib/cli.js";
 import {
   assertFileExists,
   assertOutsideRepoUnlessAllowed,
@@ -45,7 +46,7 @@ interface CountMismatch {
   sqliteCount: number;
 }
 
-interface ComparisonReport {
+export interface ComparisonReport {
   generatedAt: string;
   backupExportedAt?: string;
   backupFile: string;
@@ -240,6 +241,27 @@ const printSummary = (report: ComparisonReport, outputPath?: string): void => {
   }
 };
 
+export const runRowCountComparison = (options: {
+  backupPath: string;
+  sqlitePath: string;
+  outputPath?: string;
+}): ComparisonReport => {
+  const backup = parseBackup(options.backupPath);
+  const db = openReadOnlyDatabase(options.sqlitePath);
+
+  try {
+    const report = compareCounts(backup, db, options.backupPath, options.sqlitePath);
+
+    if (options.outputPath) {
+      writeJsonReport(options.outputPath, report);
+    }
+
+    return report;
+  } finally {
+    db.close();
+  }
+};
+
 const main = (): void => {
   const args = parseArgs(process.argv.slice(2));
 
@@ -261,28 +283,19 @@ const main = (): void => {
   assertFileExists(sqlitePath, "SQLite file");
   assertOutsideRepoUnlessAllowed(outputPath, args.allowRepoOutputForTests, "comparison report");
 
-  const backup = parseBackup(backupPath);
-  const db = openReadOnlyDatabase(sqlitePath);
+  const report = runRowCountComparison({ backupPath, sqlitePath, outputPath });
 
-  try {
-    const report = compareCounts(backup, db, backupPath, sqlitePath);
-
-    if (outputPath) {
-      writeJsonReport(outputPath, report);
-    }
-
-    printSummary(report, outputPath);
-    if (report.overallStatus === "fail") {
-      process.exitCode = 1;
-    }
-  } finally {
-    db.close();
+  printSummary(report, outputPath);
+  if (report.overallStatus === "fail") {
+    process.exitCode = 1;
   }
 };
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+if (isDirectRun(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

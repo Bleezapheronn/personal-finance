@@ -6,6 +6,7 @@ import {
   FULL_BACKUP_TABLE_NAMES,
   isPlainObject,
 } from "./lib/backup.js";
+import { isDirectRun } from "./lib/cli.js";
 import {
   assertFileExists,
   assertOutsideRepoUnlessAllowed,
@@ -88,7 +89,7 @@ interface TransactionComparison {
   mismatchCount: number;
 }
 
-interface TransactionSampleReport {
+export interface TransactionSampleReport {
   generatedAt: string;
   backupFile: string;
   sqliteFile: string;
@@ -542,6 +543,43 @@ const printSummary = (report: TransactionSampleReport, outputPath?: string): voi
   }
 };
 
+export const runTransactionSampleComparison = (options: {
+  backupPath: string;
+  sqlitePath: string;
+  outputPath?: string;
+  sampleSize?: number;
+  ids?: number[];
+}): TransactionSampleReport => {
+  const sampleSize = options.sampleSize ?? DEFAULT_SAMPLE_SIZE;
+  const backupTransactions = parseBackupTransactions(options.backupPath);
+  const backupById = new Map(backupTransactions.map((transaction) => [transaction.id as number, transaction]));
+  const samples = options.ids
+    ? buildExplicitSamples(backupById, options.ids)
+    : buildDeterministicSamples(backupTransactions, sampleSize);
+  const db = openReadOnlyDatabase(options.sqlitePath);
+
+  try {
+    const sqliteTransactionsById = readSqliteTransactions(db);
+    const report = buildReport(
+      backupTransactions,
+      sqliteTransactionsById,
+      samples,
+      options.backupPath,
+      options.sqlitePath,
+      options.ids ? "explicit_ids" : "deterministic",
+      options.ids ? options.ids.length : sampleSize,
+    );
+
+    if (options.outputPath) {
+      writeJsonReport(options.outputPath, report);
+    }
+
+    return report;
+  } finally {
+    db.close();
+  }
+};
+
 const main = (): void => {
   const args = parseArgs(process.argv.slice(2));
 
@@ -563,41 +601,25 @@ const main = (): void => {
   assertFileExists(sqlitePath, "SQLite file");
   assertOutsideRepoUnlessAllowed(outputPath, args.allowRepoOutputForTests, "comparison report");
 
-  const backupTransactions = parseBackupTransactions(backupPath);
-  const backupById = new Map(backupTransactions.map((transaction) => [transaction.id as number, transaction]));
-  const samples = args.ids
-    ? buildExplicitSamples(backupById, args.ids)
-    : buildDeterministicSamples(backupTransactions, args.sampleSize);
-  const db = openReadOnlyDatabase(sqlitePath);
+  const report = runTransactionSampleComparison({
+    backupPath,
+    sqlitePath,
+    outputPath,
+    sampleSize: args.sampleSize,
+    ids: args.ids,
+  });
 
-  try {
-    const sqliteTransactionsById = readSqliteTransactions(db);
-    const report = buildReport(
-      backupTransactions,
-      sqliteTransactionsById,
-      samples,
-      backupPath,
-      sqlitePath,
-      args.ids ? "explicit_ids" : "deterministic",
-      args.ids ? args.ids.length : args.sampleSize,
-    );
-
-    if (outputPath) {
-      writeJsonReport(outputPath, report);
-    }
-
-    printSummary(report, outputPath);
-    if (report.overallStatus === "fail") {
-      process.exitCode = 1;
-    }
-  } finally {
-    db.close();
+  printSummary(report, outputPath);
+  if (report.overallStatus === "fail") {
+    process.exitCode = 1;
   }
 };
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+if (isDirectRun(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

@@ -6,6 +6,7 @@ import {
   FULL_BACKUP_TABLE_NAMES,
   isPlainObject,
 } from "./lib/backup.js";
+import { isDirectRun } from "./lib/cli.js";
 import {
   assertFileExists,
   assertOutsideRepoUnlessAllowed,
@@ -61,7 +62,7 @@ interface AggregateMismatch {
   sqliteValue: number;
 }
 
-interface FinancialAggregateReport {
+export interface FinancialAggregateReport {
   generatedAt: string;
   backupFile: string;
   sqliteFile: string;
@@ -367,6 +368,33 @@ const printSummary = (report: FinancialAggregateReport, outputPath?: string): vo
   }
 };
 
+export const runFinancialAggregateComparison = (options: {
+  backupPath: string;
+  sqlitePath: string;
+  outputPath?: string;
+}): FinancialAggregateReport => {
+  const backupTransactions = parseBackupTransactions(options.backupPath);
+  const db = openReadOnlyDatabase(options.sqlitePath);
+
+  try {
+    const sqliteTransactions = readSqliteTransactions(db);
+    const report = buildReport(
+      backupTransactions,
+      sqliteTransactions,
+      options.backupPath,
+      options.sqlitePath,
+    );
+
+    if (options.outputPath) {
+      writeJsonReport(options.outputPath, report);
+    }
+
+    return report;
+  } finally {
+    db.close();
+  }
+};
+
 const main = (): void => {
   const args = parseArgs(process.argv.slice(2));
 
@@ -388,29 +416,19 @@ const main = (): void => {
   assertFileExists(sqlitePath, "SQLite file");
   assertOutsideRepoUnlessAllowed(outputPath, args.allowRepoOutputForTests, "comparison report");
 
-  const backupTransactions = parseBackupTransactions(backupPath);
-  const db = openReadOnlyDatabase(sqlitePath);
+  const report = runFinancialAggregateComparison({ backupPath, sqlitePath, outputPath });
 
-  try {
-    const sqliteTransactions = readSqliteTransactions(db);
-    const report = buildReport(backupTransactions, sqliteTransactions, backupPath, sqlitePath);
-
-    if (outputPath) {
-      writeJsonReport(outputPath, report);
-    }
-
-    printSummary(report, outputPath);
-    if (report.overallStatus === "fail") {
-      process.exitCode = 1;
-    }
-  } finally {
-    db.close();
+  printSummary(report, outputPath);
+  if (report.overallStatus === "fail") {
+    process.exitCode = 1;
   }
 };
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+if (isDirectRun(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

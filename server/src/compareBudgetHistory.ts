@@ -6,6 +6,7 @@ import {
   FULL_BACKUP_TABLE_NAMES,
   isPlainObject,
 } from "./lib/backup.js";
+import { isDirectRun } from "./lib/cli.js";
 import {
   assertFileExists,
   assertOutsideRepoUnlessAllowed,
@@ -121,7 +122,7 @@ interface BudgetHistoryMismatch {
   sqliteValue: ComparableValue | "missing";
 }
 
-interface BudgetHistoryComparisonReport {
+export interface BudgetHistoryComparisonReport {
   generatedAt: string;
   backupFile: string;
   sqliteFile: string;
@@ -710,6 +711,36 @@ const printSummary = (report: BudgetHistoryComparisonReport, outputPath?: string
   }
 };
 
+export const runBudgetHistoryComparison = (options: {
+  backupPath: string;
+  sqlitePath: string;
+  outputPath?: string;
+  sampleSize?: number;
+}): BudgetHistoryComparisonReport => {
+  const sampleSize = options.sampleSize ?? DEFAULT_SAMPLE_SIZE;
+  const backupData = parseBackupData(options.backupPath);
+  const db = openReadOnlyDatabase(options.sqlitePath);
+
+  try {
+    const sqliteData = readSqliteData(db);
+    const report = buildReport(
+      summarizeBudgetHistory(backupData),
+      summarizeBudgetHistory(sqliteData),
+      options.backupPath,
+      options.sqlitePath,
+      sampleSize,
+    );
+
+    if (options.outputPath) {
+      writeJsonReport(options.outputPath, report);
+    }
+
+    return report;
+  } finally {
+    db.close();
+  }
+};
+
 const main = (): void => {
   const args = parseArgs(process.argv.slice(2));
 
@@ -735,35 +766,24 @@ const main = (): void => {
     "comparison report",
   );
 
-  const backupData = parseBackupData(backupPath);
-  const db = openReadOnlyDatabase(sqlitePath);
+  const report = runBudgetHistoryComparison({
+    backupPath,
+    sqlitePath,
+    outputPath,
+    sampleSize: args.sampleSize,
+  });
 
-  try {
-    const sqliteData = readSqliteData(db);
-    const report = buildReport(
-      summarizeBudgetHistory(backupData),
-      summarizeBudgetHistory(sqliteData),
-      backupPath,
-      sqlitePath,
-      args.sampleSize,
-    );
-
-    if (outputPath) {
-      writeJsonReport(outputPath, report);
-    }
-
-    printSummary(report, outputPath);
-    if (report.overallStatus === "fail") {
-      process.exitCode = 1;
-    }
-  } finally {
-    db.close();
+  printSummary(report, outputPath);
+  if (report.overallStatus === "fail") {
+    process.exitCode = 1;
   }
 };
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+if (isDirectRun(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

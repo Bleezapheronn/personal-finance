@@ -161,6 +161,28 @@ Budget History reports contain financial aggregates and IDs. Keep reports outsid
 npm run compare:budget-history -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\temp\budget-history-comparison.json
 ```
 
+## Full SQLite Prototype Verification
+
+The run-all verification CLI executes the existing comparison checks in order: row counts, structural integrity, financial aggregates, report totals, transaction samples, and Budget History parity. It is verification tooling only, not migration approval. Dexie / IndexedDB remains authoritative, and the SQLite database remains disposable.
+
+Generated reports may contain aggregate financial data, transaction IDs, and other local verification details. Keep the output directory outside Git. A recommended location is:
+
+```text
+C:\dev\personal-finance-data\temp\verification
+```
+
+Example:
+
+```bash
+npm run verify:sqlite -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output-dir C:\dev\personal-finance-data\temp\verification
+```
+
+The `--sample-size` option applies to transaction sample and Budget History comparison output:
+
+```bash
+npm run verify:sqlite -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --sample-size 20 --output-dir C:\dev\personal-finance-data\temp\verification
+```
+
 ## Token Commands
 
 Show the local development token:
