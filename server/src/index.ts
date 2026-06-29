@@ -3,12 +3,14 @@ import {
   ALLOWED_ORIGINS,
   API_VERSION,
   getServerPort,
+  getSqlitePath,
   READONLY_MODE,
   SERVER_HOST,
   SERVICE_MODE,
   SERVICE_NAME,
   TOKEN_HEADER_NAME,
 } from "./config.js";
+import { openReadOnlyDatabase, readKnownTableRowCounts } from "./lib/sqlite.js";
 import { readOrCreateToken } from "./tokenStore.js";
 
 const server = Fastify({
@@ -58,6 +60,43 @@ server.get("/metadata", async () => {
     apiVersion: API_VERSION,
     readonly: READONLY_MODE,
   };
+});
+
+server.get("/prototype/sqlite/row-counts", async (_request, reply) => {
+  const sqlitePath = getSqlitePath();
+  if (!sqlitePath) {
+    return reply.code(503).send({
+      ok: false,
+      code: "sqlite_not_configured",
+    });
+  }
+
+  try {
+    const db = openReadOnlyDatabase(sqlitePath);
+    try {
+      return {
+        ok: true,
+        mode: SERVICE_MODE,
+        readonly: READONLY_MODE,
+        tables: readKnownTableRowCounts(db),
+      };
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const statusCode =
+      message.includes("Cannot open database") ||
+      message.includes("unable to open database") ||
+      message.includes("SQLite table")
+        ? 503
+        : 500;
+
+    return reply.code(statusCode).send({
+      ok: false,
+      code: statusCode === 503 ? "sqlite_unavailable" : "sqlite_row_counts_failed",
+    });
+  }
 });
 
 const start = async (): Promise<void> => {

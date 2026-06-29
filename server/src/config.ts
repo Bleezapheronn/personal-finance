@@ -7,6 +7,7 @@ export const API_VERSION = "0.1.0" as const;
 export const READONLY_MODE = true as const;
 export const TOKEN_HEADER_NAME = "x-personal-finance-token" as const;
 export const TOKEN_FILE_NAME = ".server-token" as const;
+export const SQLITE_PATH_ENV_VAR = "PERSONAL_FINANCE_SQLITE_PATH" as const;
 
 export const ALLOWED_ORIGINS = new Set([
   "http://localhost:8100",
@@ -31,4 +32,9 @@ export const getServerPort = (): number => {
 
 export const getDataDir = (): string => {
   return process.env.PERSONAL_FINANCE_DATA_DIR || "C:\\dev\\personal-finance-data";
+};
+
+export const getSqlitePath = (): string | undefined => {
+  const sqlitePath = process.env[SQLITE_PATH_ENV_VAR];
+  return sqlitePath && sqlitePath.trim().length > 0 ? sqlitePath : undefined;
 };

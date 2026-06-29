@@ -18,3 +18,23 @@ export const assertRequiredTablesExist = (db: Database.Database): void => {
     }
   }
 };
+
+export const readKnownTableRowCounts = (
+  db: Database.Database,
+): Record<FullBackupTableName, number> => {
+  assertRequiredTablesExist(db);
+
+  return Object.fromEntries(
+    FULL_BACKUP_TABLE_NAMES.map((tableName) => {
+      const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get() as
+        | { count: number }
+        | undefined;
+
+      if (!row || typeof row.count !== "number") {
+        throw new Error(`Could not read SQLite count for ${tableName}.`);
+      }
+
+      return [tableName, row.count];
+    }),
+  ) as Record<FullBackupTableName, number>;
+};

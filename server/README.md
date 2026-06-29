@@ -4,8 +4,9 @@ This is a prototype-only local API skeleton. It currently exposes only:
 
 - `GET /health`
 - `GET /metadata`
+- `GET /prototype/sqlite/row-counts`
 
-The backend does not connect to SQLite yet, does not read real finance data, and does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. No financial data endpoints exist yet.
+The backend can optionally open a configured disposable SQLite database read-only for prototype status checks. It does not expose raw finance rows and does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. No financial data endpoints exist yet.
 
 ## Safety
 
@@ -20,6 +21,14 @@ The local API token is stored outside the repository at:
 ```
 
 By default, `<dataDir>` is `C:\dev\personal-finance-data`. You can override it with `PERSONAL_FINANCE_DATA_DIR`.
+
+The optional disposable SQLite database path is configured with:
+
+```text
+PERSONAL_FINANCE_SQLITE_PATH
+```
+
+Point this only at a verified disposable SQLite database outside the repository.
 
 ## Commands
 
@@ -234,6 +243,39 @@ Expected response:
   "readonly": true
 }
 ```
+
+SQLite row counts, token required:
+
+```bash
+$env:PERSONAL_FINANCE_SQLITE_PATH = "C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite"
+$TOKEN = npm run token:show --silent
+curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/sqlite/row-counts
+```
+
+Expected response shape:
+
+```json
+{
+  "ok": true,
+  "mode": "prototype",
+  "readonly": true,
+  "tables": {
+    "transactions": 0,
+    "budgets": 0,
+    "budgetSnapshots": 0,
+    "buckets": 0,
+    "categories": 0,
+    "accounts": 0,
+    "paymentMethods": 0,
+    "recipients": 0,
+    "smsImportTemplates": 0
+  }
+}
+```
+
+This endpoint is row-count only. It does not return raw rows, names, descriptions, amounts, transaction references, file paths, tokens, or schema SQL. If `PERSONAL_FINANCE_SQLITE_PATH` is not set, it returns `503 sqlite_not_configured`; if the configured database cannot be opened read-only, it returns `503 sqlite_unavailable`.
+
+SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 
 Requests with no `Origin` header are allowed for local CLI use when the token is valid. Browser-style requests with an unexpected `Origin` are rejected. Allowed local development origins are:
 
