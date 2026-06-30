@@ -9,6 +9,11 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /prototype/repositories/transactions`
 - `GET /prototype/repositories/transactions/:id`
 - `GET /prototype/repositories/transactions/count`
+- `GET /prototype/repositories/budgets`
+- `GET /prototype/repositories/budgets/:id`
+- `GET /prototype/repositories/budgets/:id/snapshots`
+- `GET /prototype/repositories/budget-snapshots`
+- `GET /prototype/repositories/budget-snapshots/:id`
 - `GET /prototype/repositories/accounts`
 - `GET /prototype/repositories/accounts/:id`
 - `GET /prototype/repositories/buckets`
@@ -364,6 +369,42 @@ curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/repos
 The transaction repository endpoints are prototype-only and read-only. They are shaped for a future repository adapter but are not connected to the frontend. List reads use stable `date DESC, id DESC` ordering and enforce pagination with `limit` capped at 200. Supported filters are `accountId`, `categoryId`, `recipientId`, `budgetSnapshotId`, `isTransfer`, `dateFrom`, and `dateTo`; arbitrary SQL, order strings, and unknown filters are not supported.
 
 These endpoints return sensitive personal finance transaction rows, including amounts, descriptions, and transaction references. Use them only for local diagnostics against disposable SQLite.
+
+Budget repository prototype reads, token required:
+
+```bash
+$env:PERSONAL_FINANCE_SQLITE_PATH = "C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite"
+$TOKEN = Get-Content C:\dev\personal-finance-data\.server-token
+curl -H "x-personal-finance-token: $TOKEN" "http://127.0.0.1:3147/prototype/repositories/budgets?limit=100&offset=0&activeOnly=true"
+curl -H "x-personal-finance-token: $TOKEN" "http://127.0.0.1:3147/prototype/repositories/budget-snapshots?limit=100&offset=0&isHistorical=true"
+```
+
+Expected list response shape:
+
+```json
+{
+  "ok": true,
+  "mode": "prototype",
+  "readonly": true,
+  "resource": "budgets",
+  "limit": 100,
+  "offset": 0,
+  "count": 0,
+  "rows": []
+}
+```
+
+Detail examples:
+
+```bash
+curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/repositories/budgets/1
+curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/repositories/budgets/1/snapshots
+curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/repositories/budget-snapshots/1
+```
+
+Budget endpoints are prototype-only and read-only. They are shaped for future repository adapters but are not connected to the frontend. Pagination defaults to `limit=100&offset=0`, caps `limit` at 500, and uses stable ordering: budgets by `dueDate ASC, id ASC`, budget snapshots by `dueDate DESC, id DESC`. Supported budget filters are `activeOnly`, `categoryId`, `accountId`, `recipientId`, `frequency`, and `isGoal`. Supported budget snapshot filters are `budgetId`, `categoryId`, `accountId`, `recipientId`, `isHistorical`, `dateFrom`, and `dateTo`. Arbitrary SQL, order strings, and unsupported lifecycle operations are not accepted.
+
+Budget and budget snapshot endpoints return sensitive personal finance rows, including descriptions, amounts, dates, category/account/recipient references, and occurrence metadata. Use them only for local diagnostics against disposable SQLite. These endpoints do not generate, prune, repair, dedupe, relink, or mutate budget snapshots.
 
 Lookup repository prototype reads, token required:
 

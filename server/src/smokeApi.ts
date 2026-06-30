@@ -44,6 +44,8 @@ interface ResponseJson {
   bucket?: unknown;
   category?: unknown;
   recipient?: unknown;
+  budget?: unknown;
+  budgetSnapshot?: unknown;
 }
 
 const usage = `Usage:
@@ -190,6 +192,8 @@ const transactionIdFromListResponse = (json: ResponseJson): number => {
 const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeCheck[] => {
   const authedOptions = { token, origin };
   let sampledTransactionId: number | undefined;
+  let sampledBudgetId: number | undefined;
+  let sampledBudgetSnapshotId: number | undefined;
   const sampledLookupIds = new Map<string, number>();
   const lookupResources = ["accounts", "buckets", "categories", "recipients"] as const;
   const lookupDetailKeys = {
@@ -370,6 +374,177 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
         );
         expectStatus(status, 400);
         expect(json.code === "accountId_invalid", "unexpected_invalid_transaction_filter_response");
+      },
+    },
+    {
+      name: "budget repository list fails without token",
+      run: async () => {
+        const { status, json } = await requestJson(baseUrl, "/prototype/repositories/budgets?limit=1");
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_budget_repository_unauthorized_response");
+      },
+    },
+    {
+      name: "budget repository list succeeds with token",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets?limit=1",
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(
+          json.ok === true &&
+            json.resource === "budgets" &&
+            json.limit === 1 &&
+            json.offset === 0 &&
+            typeof json.count === "number" &&
+            Array.isArray(json.rows) &&
+            json.rows.length <= 1,
+          "unexpected_budget_repository_list_response",
+        );
+        sampledBudgetId = transactionIdFromListResponse(json);
+      },
+    },
+    {
+      name: "budget repository detail succeeds with token",
+      run: async () => {
+        expect(sampledBudgetId !== undefined, "sample_budget_id_missing");
+        const { status, json } = await requestJson(
+          baseUrl,
+          `/prototype/repositories/budgets/${sampledBudgetId}`,
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(
+          json.ok === true &&
+            typeof json.budget === "object" &&
+            json.budget !== null &&
+            (json.budget as Record<string, unknown>).id === sampledBudgetId,
+          "unexpected_budget_repository_detail_response",
+        );
+      },
+    },
+    {
+      name: "budget snapshots for budget succeeds with token",
+      run: async () => {
+        expect(sampledBudgetId !== undefined, "sample_budget_id_missing");
+        const { status, json } = await requestJson(
+          baseUrl,
+          `/prototype/repositories/budgets/${sampledBudgetId}/snapshots?limit=1`,
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(
+          json.ok === true &&
+            json.resource === "budgetSnapshots" &&
+            json.limit === 1 &&
+            json.offset === 0 &&
+            typeof json.count === "number" &&
+            Array.isArray(json.rows) &&
+            json.rows.length <= 1,
+          "unexpected_budget_snapshot_for_budget_response",
+        );
+      },
+    },
+    {
+      name: "budget snapshot repository list succeeds with token",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budget-snapshots?limit=1",
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(
+          json.ok === true &&
+            json.resource === "budgetSnapshots" &&
+            json.limit === 1 &&
+            json.offset === 0 &&
+            typeof json.count === "number" &&
+            Array.isArray(json.rows) &&
+            json.rows.length <= 1,
+          "unexpected_budget_snapshot_repository_list_response",
+        );
+        sampledBudgetSnapshotId = transactionIdFromListResponse(json);
+      },
+    },
+    {
+      name: "budget snapshot repository detail succeeds with token",
+      run: async () => {
+        expect(sampledBudgetSnapshotId !== undefined, "sample_budget_snapshot_id_missing");
+        const { status, json } = await requestJson(
+          baseUrl,
+          `/prototype/repositories/budget-snapshots/${sampledBudgetSnapshotId}`,
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(
+          json.ok === true &&
+            typeof json.budgetSnapshot === "object" &&
+            json.budgetSnapshot !== null &&
+            (json.budgetSnapshot as Record<string, unknown>).id === sampledBudgetSnapshotId,
+          "unexpected_budget_snapshot_repository_detail_response",
+        );
+      },
+    },
+    {
+      name: "budget snapshot repository list fails without token",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budget-snapshots?limit=1",
+        );
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_budget_snapshot_repository_unauthorized_response");
+      },
+    },
+    {
+      name: "invalid budget id is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/not-a-number",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(json.code === "budget_id_invalid", "unexpected_invalid_budget_id_response");
+      },
+    },
+    {
+      name: "invalid budget query is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets?frequency=fortnightly",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(json.code === "frequency_invalid", "unexpected_invalid_budget_query_response");
+      },
+    },
+    {
+      name: "invalid budget snapshot id is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budget-snapshots/not-a-number",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(json.code === "budget_snapshot_id_invalid", "unexpected_invalid_budget_snapshot_id_response");
+      },
+    },
+    {
+      name: "invalid budget snapshot query is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budget-snapshots?budgetId=-1",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(json.code === "budgetId_invalid", "unexpected_invalid_budget_snapshot_query_response");
       },
     },
     {

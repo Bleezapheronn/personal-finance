@@ -25,6 +25,15 @@ import {
   type LookupResource,
 } from "./lib/lookups.js";
 import {
+  getBudgetById,
+  getBudgetSnapshotById,
+  isBudgetFrequency,
+  listBudgets,
+  listBudgetSnapshots,
+  type BudgetFilters,
+  type BudgetSnapshotFilters,
+} from "./lib/budgets.js";
+import {
   countTransactions,
   getTransactionById,
   listTransactions,
@@ -44,6 +53,8 @@ const DEFAULT_TABLE_READ_LIMIT = 50;
 const MAX_TABLE_READ_LIMIT = 200;
 const DEFAULT_LOOKUP_READ_LIMIT = 100;
 const MAX_LOOKUP_READ_LIMIT = 500;
+const DEFAULT_BUDGET_READ_LIMIT = 100;
+const MAX_BUDGET_READ_LIMIT = 500;
 
 const parsePaginationValue = (
   rawValue: unknown,
@@ -91,6 +102,7 @@ const parseOptionalNonNegativeInteger = (
         TransactionFilters,
         "accountId" | "categoryId" | "recipientId" | "budgetSnapshotId"
       >
+    | keyof Pick<BudgetSnapshotFilters, "budgetId">
     | "bucketId",
 ): number | undefined => {
   if (rawValue === undefined) {
@@ -111,7 +123,7 @@ const parseOptionalNonNegativeInteger = (
 
 const parseOptionalBoolean = (
   rawValue: unknown,
-  fieldName: "isTransfer" | "activeOnly",
+  fieldName: "isTransfer" | "activeOnly" | "isGoal" | "isHistorical",
 ): boolean | undefined => {
   if (rawValue === undefined) {
     return undefined;
@@ -188,6 +200,55 @@ const parseLookupFilters = (
     bucketId,
   };
 };
+
+const parseBudgetFilters = (query: {
+  activeOnly?: string;
+  categoryId?: string;
+  accountId?: string;
+  recipientId?: string;
+  frequency?: string;
+  isGoal?: string;
+}): BudgetFilters => {
+  let frequency: BudgetFilters["frequency"];
+  if (query.frequency !== undefined) {
+    if (Array.isArray(query.frequency) || typeof query.frequency !== "string") {
+      throw new Error("frequency_invalid");
+    }
+
+    const normalizedFrequency = query.frequency.trim();
+    if (!isBudgetFrequency(normalizedFrequency)) {
+      throw new Error("frequency_invalid");
+    }
+    frequency = normalizedFrequency;
+  }
+
+  return {
+    activeOnly: parseOptionalBoolean(query.activeOnly, "activeOnly"),
+    categoryId: parseOptionalNonNegativeInteger(query.categoryId, "categoryId"),
+    accountId: parseOptionalNonNegativeInteger(query.accountId, "accountId"),
+    recipientId: parseOptionalNonNegativeInteger(query.recipientId, "recipientId"),
+    frequency,
+    isGoal: parseOptionalBoolean(query.isGoal, "isGoal"),
+  };
+};
+
+const parseBudgetSnapshotFilters = (query: {
+  budgetId?: string;
+  categoryId?: string;
+  accountId?: string;
+  recipientId?: string;
+  isHistorical?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}): BudgetSnapshotFilters => ({
+  budgetId: parseOptionalNonNegativeInteger(query.budgetId, "budgetId"),
+  categoryId: parseOptionalNonNegativeInteger(query.categoryId, "categoryId"),
+  accountId: parseOptionalNonNegativeInteger(query.accountId, "accountId"),
+  recipientId: parseOptionalNonNegativeInteger(query.recipientId, "recipientId"),
+  isHistorical: parseOptionalBoolean(query.isHistorical, "isHistorical"),
+  dateFrom: parseOptionalDateText(query.dateFrom, "dateFrom"),
+  dateTo: parseOptionalDateText(query.dateTo, "dateTo"),
+});
 
 const sqliteUnavailableStatusCode = (error: unknown): 503 | 500 => {
   const message = error instanceof Error ? error.message : "";
@@ -530,6 +591,330 @@ server.get<{ Params: { id: string } }>(
       opened.db.close();
     }
   }
+);
+
+server.get<{
+  Querystring: {
+    limit?: string;
+    offset?: string;
+    activeOnly?: string;
+    categoryId?: string;
+    accountId?: string;
+    recipientId?: string;
+    frequency?: string;
+    isGoal?: string;
+  };
+}>("/prototype/repositories/budgets", async (request, reply) => {
+  let limit: number;
+  let offset: number;
+  let filters: BudgetFilters;
+  try {
+    limit = parsePaginationValue(
+      request.query.limit,
+      DEFAULT_BUDGET_READ_LIMIT,
+      "limit",
+      MAX_BUDGET_READ_LIMIT,
+    );
+    offset = parsePaginationValue(request.query.offset, 0, "offset");
+    filters = parseBudgetFilters(request.query);
+  } catch (error) {
+    return reply.code(400).send({
+      ok: false,
+      code: error instanceof Error ? error.message : "budget_query_invalid",
+    });
+  }
+
+  let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+  try {
+    opened = openConfiguredReadOnlyDatabase();
+  } catch (error) {
+    const statusCode = sqliteUnavailableStatusCode(error);
+    return reply.code(statusCode).send({
+      ok: false,
+      code: statusCode === 503 ? "sqlite_unavailable" : "budget_list_failed",
+    });
+  }
+
+  if (!opened.ok) {
+    return reply.code(503).send({
+      ok: false,
+      code: opened.code,
+    });
+  }
+
+  try {
+    const result = listBudgets(opened.db, { limit, offset, filters });
+    return {
+      ok: true,
+      mode: SERVICE_MODE,
+      readonly: READONLY_MODE,
+      resource: result.resource,
+      limit: result.limit,
+      offset: result.offset,
+      count: result.count,
+      rows: result.rows,
+    };
+  } catch {
+    return reply.code(500).send({
+      ok: false,
+      code: "budget_list_failed",
+    });
+  } finally {
+    opened.db.close();
+  }
+});
+
+server.get<{
+  Querystring: {
+    limit?: string;
+    offset?: string;
+    categoryId?: string;
+    accountId?: string;
+    recipientId?: string;
+    isHistorical?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  };
+}>("/prototype/repositories/budget-snapshots", async (request, reply) => {
+  let limit: number;
+  let offset: number;
+  let filters: BudgetSnapshotFilters;
+  try {
+    limit = parsePaginationValue(
+      request.query.limit,
+      DEFAULT_BUDGET_READ_LIMIT,
+      "limit",
+      MAX_BUDGET_READ_LIMIT,
+    );
+    offset = parsePaginationValue(request.query.offset, 0, "offset");
+    filters = parseBudgetSnapshotFilters(request.query);
+  } catch (error) {
+    return reply.code(400).send({
+      ok: false,
+      code: error instanceof Error ? error.message : "budget_snapshot_query_invalid",
+    });
+  }
+
+  let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+  try {
+    opened = openConfiguredReadOnlyDatabase();
+  } catch (error) {
+    const statusCode = sqliteUnavailableStatusCode(error);
+    return reply.code(statusCode).send({
+      ok: false,
+      code: statusCode === 503 ? "sqlite_unavailable" : "budget_snapshot_list_failed",
+    });
+  }
+
+  if (!opened.ok) {
+    return reply.code(503).send({
+      ok: false,
+      code: opened.code,
+    });
+  }
+
+  try {
+    const result = listBudgetSnapshots(opened.db, { limit, offset, filters });
+    return {
+      ok: true,
+      mode: SERVICE_MODE,
+      readonly: READONLY_MODE,
+      resource: result.resource,
+      limit: result.limit,
+      offset: result.offset,
+      count: result.count,
+      rows: result.rows,
+    };
+  } catch {
+    return reply.code(500).send({
+      ok: false,
+      code: "budget_snapshot_list_failed",
+    });
+  } finally {
+    opened.db.close();
+  }
+});
+
+server.get<{ Params: { id: string }; Querystring: { limit?: string; offset?: string } }>(
+  "/prototype/repositories/budgets/:id/snapshots",
+  async (request, reply) => {
+    let id: number;
+    let limit: number;
+    let offset: number;
+    try {
+      id = parsePositiveInteger(request.params.id, "budget_id");
+      limit = parsePaginationValue(
+        request.query.limit,
+        DEFAULT_BUDGET_READ_LIMIT,
+        "limit",
+        MAX_BUDGET_READ_LIMIT,
+      );
+      offset = parsePaginationValue(request.query.offset, 0, "offset");
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        code: error instanceof Error ? error.message : "budget_snapshot_query_invalid",
+      });
+    }
+
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "budget_snapshot_list_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      const result = listBudgetSnapshots(opened.db, {
+        limit,
+        offset,
+        filters: { budgetId: id },
+      });
+      return {
+        ok: true,
+        mode: SERVICE_MODE,
+        readonly: READONLY_MODE,
+        resource: result.resource,
+        budgetId: id,
+        limit: result.limit,
+        offset: result.offset,
+        count: result.count,
+        rows: result.rows,
+      };
+    } catch {
+      return reply.code(500).send({
+        ok: false,
+        code: "budget_snapshot_list_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.get<{ Params: { id: string } }>(
+  "/prototype/repositories/budgets/:id",
+  async (request, reply) => {
+    let id: number;
+    try {
+      id = parsePositiveInteger(request.params.id, "budget_id");
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        code: error instanceof Error ? error.message : "budget_id_invalid",
+      });
+    }
+
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "budget_read_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      const budget = getBudgetById(opened.db, id);
+      if (!budget) {
+        return reply.code(404).send({
+          ok: false,
+          code: "budget_not_found",
+        });
+      }
+
+      return {
+        ok: true,
+        mode: SERVICE_MODE,
+        readonly: READONLY_MODE,
+        budget,
+      };
+    } catch {
+      return reply.code(500).send({
+        ok: false,
+        code: "budget_read_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.get<{ Params: { id: string } }>(
+  "/prototype/repositories/budget-snapshots/:id",
+  async (request, reply) => {
+    let id: number;
+    try {
+      id = parsePositiveInteger(request.params.id, "budget_snapshot_id");
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        code: error instanceof Error ? error.message : "budget_snapshot_id_invalid",
+      });
+    }
+
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "budget_snapshot_read_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      const budgetSnapshot = getBudgetSnapshotById(opened.db, id);
+      if (!budgetSnapshot) {
+        return reply.code(404).send({
+          ok: false,
+          code: "budget_snapshot_not_found",
+        });
+      }
+
+      return {
+        ok: true,
+        mode: SERVICE_MODE,
+        readonly: READONLY_MODE,
+        budgetSnapshot,
+      };
+    } catch {
+      return reply.code(500).send({
+        ok: false,
+        code: "budget_snapshot_read_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
 );
 
 for (const resource of lookupResources) {
