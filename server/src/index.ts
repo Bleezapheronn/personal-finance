@@ -17,6 +17,14 @@ import {
   readPaginatedKnownTable,
 } from "./lib/sqlite.js";
 import {
+  getLookupConfig,
+  getLookupRowById,
+  listLookupRows,
+  lookupResources,
+  type LookupFilters,
+  type LookupResource,
+} from "./lib/lookups.js";
+import {
   countTransactions,
   getTransactionById,
   listTransactions,
@@ -34,11 +42,14 @@ const server = Fastify({
 const publicPaths = new Set(["/health"]);
 const DEFAULT_TABLE_READ_LIMIT = 50;
 const MAX_TABLE_READ_LIMIT = 200;
+const DEFAULT_LOOKUP_READ_LIMIT = 100;
+const MAX_LOOKUP_READ_LIMIT = 500;
 
 const parsePaginationValue = (
   rawValue: unknown,
   defaultValue: number,
   fieldName: "limit" | "offset",
+  maxLimit = MAX_TABLE_READ_LIMIT,
 ): number => {
   if (rawValue === undefined) {
     return defaultValue;
@@ -54,7 +65,7 @@ const parsePaginationValue = (
   }
 
   if (fieldName === "limit") {
-    return Math.min(parsedValue, MAX_TABLE_READ_LIMIT);
+    return Math.min(parsedValue, maxLimit);
   }
 
   return parsedValue;
@@ -75,10 +86,12 @@ const parsePositiveInteger = (rawValue: unknown, fieldName: string): number => {
 
 const parseOptionalNonNegativeInteger = (
   rawValue: unknown,
-  fieldName: keyof Pick<
-    TransactionFilters,
-    "accountId" | "categoryId" | "recipientId" | "budgetSnapshotId"
-  >,
+  fieldName:
+    | keyof Pick<
+        TransactionFilters,
+        "accountId" | "categoryId" | "recipientId" | "budgetSnapshotId"
+      >
+    | "bucketId",
 ): number | undefined => {
   if (rawValue === undefined) {
     return undefined;
@@ -96,7 +109,10 @@ const parseOptionalNonNegativeInteger = (
   return parsedValue;
 };
 
-const parseOptionalBoolean = (rawValue: unknown, fieldName: "isTransfer"): boolean | undefined => {
+const parseOptionalBoolean = (
+  rawValue: unknown,
+  fieldName: "isTransfer" | "activeOnly",
+): boolean | undefined => {
   if (rawValue === undefined) {
     return undefined;
   }
@@ -152,6 +168,26 @@ const parseTransactionFilters = (query: {
   dateFrom: parseOptionalDateText(query.dateFrom, "dateFrom"),
   dateTo: parseOptionalDateText(query.dateTo, "dateTo"),
 });
+
+const parseLookupFilters = (
+  resource: LookupResource,
+  query: {
+    activeOnly?: string;
+    bucketId?: string;
+  },
+): LookupFilters => {
+  const activeOnly = parseOptionalBoolean(query.activeOnly, "activeOnly");
+  const bucketId = parseOptionalNonNegativeInteger(query.bucketId, "bucketId");
+
+  if (bucketId !== undefined && resource !== "categories") {
+    throw new Error("bucketId_unsupported");
+  }
+
+  return {
+    activeOnly,
+    bucketId,
+  };
+};
 
 const sqliteUnavailableStatusCode = (error: unknown): 503 | 500 => {
   const message = error instanceof Error ? error.message : "";
@@ -495,6 +531,132 @@ server.get<{ Params: { id: string } }>(
     }
   }
 );
+
+for (const resource of lookupResources) {
+  server.get<{
+    Querystring: {
+      limit?: string;
+      offset?: string;
+      activeOnly?: string;
+      bucketId?: string;
+    };
+  }>(`/prototype/repositories/${resource}`, async (request, reply) => {
+    let limit: number;
+    let offset: number;
+    let filters: LookupFilters;
+    try {
+      limit = parsePaginationValue(
+        request.query.limit,
+        DEFAULT_LOOKUP_READ_LIMIT,
+        "limit",
+        MAX_LOOKUP_READ_LIMIT,
+      );
+      offset = parsePaginationValue(request.query.offset, 0, "offset");
+      filters = parseLookupFilters(resource, request.query);
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        code: error instanceof Error ? error.message : "lookup_query_invalid",
+      });
+    }
+
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "lookup_list_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      const result = listLookupRows(opened.db, { resource, limit, offset, filters });
+      return {
+        ok: true,
+        mode: SERVICE_MODE,
+        readonly: READONLY_MODE,
+        resource: result.resource,
+        limit: result.limit,
+        offset: result.offset,
+        count: result.count,
+        rows: result.rows,
+      };
+    } catch {
+      return reply.code(500).send({
+        ok: false,
+        code: "lookup_list_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  });
+
+  server.get<{ Params: { id: string } }>(
+    `/prototype/repositories/${resource}/:id`,
+    async (request, reply) => {
+      let id: number;
+      try {
+        id = parsePositiveInteger(request.params.id, `${resource}_id`);
+      } catch (error) {
+        return reply.code(400).send({
+          ok: false,
+          code: error instanceof Error ? error.message : "lookup_id_invalid",
+        });
+      }
+
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code: statusCode === 503 ? "sqlite_unavailable" : "lookup_read_failed",
+        });
+      }
+
+      if (!opened.ok) {
+        return reply.code(503).send({
+          ok: false,
+          code: opened.code,
+        });
+      }
+
+      try {
+        const row = getLookupRowById(opened.db, resource, id);
+        if (!row) {
+          return reply.code(404).send({
+            ok: false,
+            code: "lookup_not_found",
+          });
+        }
+
+        return {
+          ok: true,
+          mode: SERVICE_MODE,
+          readonly: READONLY_MODE,
+          [getLookupConfig(resource).detailKey]: row,
+        };
+      } catch {
+        return reply.code(500).send({
+          ok: false,
+          code: "lookup_read_failed",
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+}
 
 const start = async (): Promise<void> => {
   const port = getServerPort();

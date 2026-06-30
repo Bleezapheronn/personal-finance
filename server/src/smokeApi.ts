@@ -24,6 +24,7 @@ interface SmokeResult {
 }
 
 interface ResponseJson {
+  [key: string]: unknown;
   ok?: unknown;
   code?: unknown;
   error?: unknown;
@@ -32,12 +33,17 @@ interface ResponseJson {
   readonly?: unknown;
   tables?: unknown;
   table?: unknown;
+  resource?: unknown;
   limit?: unknown;
   offset?: unknown;
   count?: unknown;
   rowCount?: unknown;
   rows?: unknown;
   transaction?: unknown;
+  account?: unknown;
+  bucket?: unknown;
+  category?: unknown;
+  recipient?: unknown;
 }
 
 const usage = `Usage:
@@ -173,17 +179,25 @@ const expectStatus = (actual: number, expected: number): void => {
 const transactionIdFromListResponse = (json: ResponseJson): number => {
   const rows = json.rows;
   if (!Array.isArray(rows) || rows.length === 0) {
-    throw new Error("transaction_list_empty");
+    throw new Error("list_empty");
   }
   const firstRow = rows[0] as Record<string, unknown>;
   const id = firstRow.id;
-  expect(typeof id === "number", "transaction_list_missing_id");
+  expect(typeof id === "number", "list_missing_id");
   return id as number;
 };
 
 const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeCheck[] => {
   const authedOptions = { token, origin };
   let sampledTransactionId: number | undefined;
+  const sampledLookupIds = new Map<string, number>();
+  const lookupResources = ["accounts", "buckets", "categories", "recipients"] as const;
+  const lookupDetailKeys = {
+    accounts: "account",
+    buckets: "bucket",
+    categories: "category",
+    recipients: "recipient",
+  } as const;
 
   return [
     {
@@ -356,6 +370,83 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
         );
         expectStatus(status, 400);
         expect(json.code === "accountId_invalid", "unexpected_invalid_transaction_filter_response");
+      },
+    },
+    {
+      name: "lookup list fails without token",
+      run: async () => {
+        const { status, json } = await requestJson(baseUrl, "/prototype/repositories/accounts?limit=1");
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_lookup_unauthorized_response");
+      },
+    },
+    ...lookupResources.flatMap((resource): SmokeCheck[] => [
+      {
+        name: `${resource} lookup list succeeds with token`,
+        run: async () => {
+          const { status, json } = await requestJson(
+            baseUrl,
+            `/prototype/repositories/${resource}?limit=1`,
+            authedOptions,
+          );
+          expectStatus(status, 200);
+          expect(
+            json.ok === true &&
+              json.resource === resource &&
+              json.limit === 1 &&
+              json.offset === 0 &&
+              typeof json.count === "number" &&
+              Array.isArray(json.rows) &&
+              json.rows.length <= 1,
+            "unexpected_lookup_list_response",
+          );
+          sampledLookupIds.set(resource, transactionIdFromListResponse(json));
+        },
+      },
+      {
+        name: `${resource} lookup detail succeeds with token`,
+        run: async () => {
+          const sampledId = sampledLookupIds.get(resource);
+          expect(sampledId !== undefined, "sample_lookup_id_missing");
+          const { status, json } = await requestJson(
+            baseUrl,
+            `/prototype/repositories/${resource}/${sampledId}`,
+            authedOptions,
+          );
+          const detail = json[lookupDetailKeys[resource]];
+          expectStatus(status, 200);
+          expect(
+            json.ok === true &&
+              typeof detail === "object" &&
+              detail !== null &&
+              (detail as Record<string, unknown>).id === sampledId,
+            "unexpected_lookup_detail_response",
+          );
+        },
+      },
+    ]),
+    {
+      name: "invalid lookup id is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/not-a-number",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(json.code === "accounts_id_invalid", "unexpected_invalid_lookup_id_response");
+      },
+    },
+    {
+      name: "invalid lookup query is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/categories?bucketId=-1",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(json.code === "bucketId_invalid", "unexpected_invalid_lookup_query_response");
       },
     },
     {

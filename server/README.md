@@ -9,6 +9,14 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /prototype/repositories/transactions`
 - `GET /prototype/repositories/transactions/:id`
 - `GET /prototype/repositories/transactions/count`
+- `GET /prototype/repositories/accounts`
+- `GET /prototype/repositories/accounts/:id`
+- `GET /prototype/repositories/buckets`
+- `GET /prototype/repositories/buckets/:id`
+- `GET /prototype/repositories/categories`
+- `GET /prototype/repositories/categories/:id`
+- `GET /prototype/repositories/recipients`
+- `GET /prototype/repositories/recipients/:id`
 
 The backend can optionally open a configured disposable SQLite database read-only for prototype diagnostics. It does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. No write endpoints exist yet.
 
@@ -356,6 +364,41 @@ curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/repos
 The transaction repository endpoints are prototype-only and read-only. They are shaped for a future repository adapter but are not connected to the frontend. List reads use stable `date DESC, id DESC` ordering and enforce pagination with `limit` capped at 200. Supported filters are `accountId`, `categoryId`, `recipientId`, `budgetSnapshotId`, `isTransfer`, `dateFrom`, and `dateTo`; arbitrary SQL, order strings, and unknown filters are not supported.
 
 These endpoints return sensitive personal finance transaction rows, including amounts, descriptions, and transaction references. Use them only for local diagnostics against disposable SQLite.
+
+Lookup repository prototype reads, token required:
+
+```bash
+$env:PERSONAL_FINANCE_SQLITE_PATH = "C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite"
+$TOKEN = Get-Content C:\dev\personal-finance-data\.server-token
+curl -H "x-personal-finance-token: $TOKEN" "http://127.0.0.1:3147/prototype/repositories/accounts?limit=100&offset=0&activeOnly=true"
+curl -H "x-personal-finance-token: $TOKEN" "http://127.0.0.1:3147/prototype/repositories/categories?bucketId=1&activeOnly=true"
+```
+
+Expected list response shape:
+
+```json
+{
+  "ok": true,
+  "mode": "prototype",
+  "readonly": true,
+  "resource": "accounts",
+  "limit": 100,
+  "offset": 0,
+  "count": 0,
+  "rows": []
+}
+```
+
+Detail examples:
+
+```bash
+curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/repositories/accounts/1
+curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/repositories/recipients/1
+```
+
+Lookup endpoints are prototype-only and read-only. They are shaped for future repository adapters but are not connected to the frontend. Pagination defaults to `limit=100&offset=0`, caps `limit` at 500, and uses stable ordering: accounts/categories/recipients by `name ASC, id ASC`, buckets by `displayOrder ASC, id ASC`. Supported filters are `activeOnly=true|false` for lookup tables and `bucketId` for categories. Arbitrary SQL, order strings, and unsupported filters are not accepted.
+
+Lookup endpoints return sensitive personal finance metadata, especially account and recipient names, descriptions, contact details, and account identifiers. Use them only for local diagnostics against disposable SQLite.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 
