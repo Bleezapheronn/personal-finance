@@ -6,6 +6,9 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /metadata`
 - `GET /prototype/sqlite/row-counts`
 - `GET /prototype/sqlite/tables/:tableName`
+- `GET /prototype/repositories/transactions`
+- `GET /prototype/repositories/transactions/:id`
+- `GET /prototype/repositories/transactions/count`
 
 The backend can optionally open a configured disposable SQLite database read-only for prototype diagnostics. It does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. No write endpoints exist yet.
 
@@ -320,6 +323,39 @@ Expected response shape:
 Only known prototype tables can be read. Pagination defaults to `limit=50&offset=0`, caps `limit` at 200, and orders rows by `id ASC`. Invalid tables and invalid pagination values are rejected before any rows are returned.
 
 The table-read endpoint returns sensitive personal finance rows for the requested table, including fields such as descriptions, amounts, references, names, and account details where those fields exist. Use it only for local prototype diagnostics with a disposable SQLite database. It does not expose SQLite file paths, tokens, schema SQL, or write operations.
+
+Transaction repository prototype reads, token required:
+
+```bash
+$env:PERSONAL_FINANCE_SQLITE_PATH = "C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite"
+$TOKEN = Get-Content C:\dev\personal-finance-data\.server-token
+curl -H "x-personal-finance-token: $TOKEN" "http://127.0.0.1:3147/prototype/repositories/transactions?limit=50&offset=0"
+```
+
+Expected list response shape:
+
+```json
+{
+  "ok": true,
+  "mode": "prototype",
+  "readonly": true,
+  "limit": 50,
+  "offset": 0,
+  "count": 0,
+  "rows": []
+}
+```
+
+Detail and count examples:
+
+```bash
+curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/repositories/transactions/1
+curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/repositories/transactions/count
+```
+
+The transaction repository endpoints are prototype-only and read-only. They are shaped for a future repository adapter but are not connected to the frontend. List reads use stable `date DESC, id DESC` ordering and enforce pagination with `limit` capped at 200. Supported filters are `accountId`, `categoryId`, `recipientId`, `budgetSnapshotId`, `isTransfer`, `dateFrom`, and `dateTo`; arbitrary SQL, order strings, and unknown filters are not supported.
+
+These endpoints return sensitive personal finance transaction rows, including amounts, descriptions, and transaction references. Use them only for local diagnostics against disposable SQLite.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 

@@ -16,6 +16,12 @@ import {
   readKnownTableRowCounts,
   readPaginatedKnownTable,
 } from "./lib/sqlite.js";
+import {
+  countTransactions,
+  getTransactionById,
+  listTransactions,
+  type TransactionFilters,
+} from "./lib/transactions.js";
 import { readOrCreateToken } from "./tokenStore.js";
 
 const server = Fastify({
@@ -54,6 +60,99 @@ const parsePaginationValue = (
   return parsedValue;
 };
 
+const parsePositiveInteger = (rawValue: unknown, fieldName: string): number => {
+  if (Array.isArray(rawValue) || typeof rawValue !== "string" || rawValue.trim() === "") {
+    throw new Error(`${fieldName}_invalid`);
+  }
+
+  const parsedValue = Number(rawValue);
+  if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+    throw new Error(`${fieldName}_invalid`);
+  }
+
+  return parsedValue;
+};
+
+const parseOptionalNonNegativeInteger = (
+  rawValue: unknown,
+  fieldName: keyof Pick<
+    TransactionFilters,
+    "accountId" | "categoryId" | "recipientId" | "budgetSnapshotId"
+  >,
+): number | undefined => {
+  if (rawValue === undefined) {
+    return undefined;
+  }
+
+  if (Array.isArray(rawValue) || typeof rawValue !== "string" || rawValue.trim() === "") {
+    throw new Error(`${fieldName}_invalid`);
+  }
+
+  const parsedValue = Number(rawValue);
+  if (!Number.isInteger(parsedValue) || parsedValue < 0) {
+    throw new Error(`${fieldName}_invalid`);
+  }
+
+  return parsedValue;
+};
+
+const parseOptionalBoolean = (rawValue: unknown, fieldName: "isTransfer"): boolean | undefined => {
+  if (rawValue === undefined) {
+    return undefined;
+  }
+
+  if (Array.isArray(rawValue) || typeof rawValue !== "string") {
+    throw new Error(`${fieldName}_invalid`);
+  }
+
+  const normalizedValue = rawValue.trim().toLowerCase();
+  if (normalizedValue === "true" || normalizedValue === "1") {
+    return true;
+  }
+  if (normalizedValue === "false" || normalizedValue === "0") {
+    return false;
+  }
+
+  throw new Error(`${fieldName}_invalid`);
+};
+
+const parseOptionalDateText = (
+  rawValue: unknown,
+  fieldName: "dateFrom" | "dateTo",
+): string | undefined => {
+  if (rawValue === undefined) {
+    return undefined;
+  }
+
+  if (Array.isArray(rawValue) || typeof rawValue !== "string" || rawValue.trim() === "") {
+    throw new Error(`${fieldName}_invalid`);
+  }
+
+  if (Number.isNaN(Date.parse(rawValue))) {
+    throw new Error(`${fieldName}_invalid`);
+  }
+
+  return rawValue;
+};
+
+const parseTransactionFilters = (query: {
+  accountId?: string;
+  categoryId?: string;
+  recipientId?: string;
+  budgetSnapshotId?: string;
+  isTransfer?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}): TransactionFilters => ({
+  accountId: parseOptionalNonNegativeInteger(query.accountId, "accountId"),
+  categoryId: parseOptionalNonNegativeInteger(query.categoryId, "categoryId"),
+  recipientId: parseOptionalNonNegativeInteger(query.recipientId, "recipientId"),
+  budgetSnapshotId: parseOptionalNonNegativeInteger(query.budgetSnapshotId, "budgetSnapshotId"),
+  isTransfer: parseOptionalBoolean(query.isTransfer, "isTransfer"),
+  dateFrom: parseOptionalDateText(query.dateFrom, "dateFrom"),
+  dateTo: parseOptionalDateText(query.dateTo, "dateTo"),
+});
+
 const sqliteUnavailableStatusCode = (error: unknown): 503 | 500 => {
   const message = error instanceof Error ? error.message : "";
   return message.includes("Cannot open database") ||
@@ -61,6 +160,17 @@ const sqliteUnavailableStatusCode = (error: unknown): 503 | 500 => {
     message.includes("SQLite table")
     ? 503
     : 500;
+};
+
+const openConfiguredReadOnlyDatabase = ():
+  | { ok: true; db: ReturnType<typeof openReadOnlyDatabase> }
+  | { ok: false; code: "sqlite_not_configured" } => {
+  const sqlitePath = getSqlitePath();
+  if (!sqlitePath) {
+    return { ok: false, code: "sqlite_not_configured" };
+  }
+
+  return { ok: true, db: openReadOnlyDatabase(sqlitePath) };
 };
 
 server.addHook("onRequest", async (request, reply) => {
@@ -104,26 +214,31 @@ server.get("/metadata", async () => {
 });
 
 server.get("/prototype/sqlite/row-counts", async (_request, reply) => {
-  const sqlitePath = getSqlitePath();
-  if (!sqlitePath) {
+  let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+  try {
+    opened = openConfiguredReadOnlyDatabase();
+  } catch (error) {
+    const statusCode = sqliteUnavailableStatusCode(error);
+    return reply.code(statusCode).send({
+      ok: false,
+      code: statusCode === 503 ? "sqlite_unavailable" : "sqlite_row_counts_failed",
+    });
+  }
+
+  if (!opened.ok) {
     return reply.code(503).send({
       ok: false,
-      code: "sqlite_not_configured",
+      code: opened.code,
     });
   }
 
   try {
-    const db = openReadOnlyDatabase(sqlitePath);
-    try {
-      return {
-        ok: true,
-        mode: SERVICE_MODE,
-        readonly: READONLY_MODE,
-        tables: readKnownTableRowCounts(db),
-      };
-    } finally {
-      db.close();
-    }
+    return {
+      ok: true,
+      mode: SERVICE_MODE,
+      readonly: READONLY_MODE,
+      tables: readKnownTableRowCounts(opened.db),
+    };
   } catch (error) {
     const statusCode = sqliteUnavailableStatusCode(error);
 
@@ -131,6 +246,8 @@ server.get("/prototype/sqlite/row-counts", async (_request, reply) => {
       ok: false,
       code: statusCode === 503 ? "sqlite_unavailable" : "sqlite_row_counts_failed",
     });
+  } finally {
+    opened.db.close();
   }
 });
 
@@ -158,31 +275,36 @@ server.get<{
     });
   }
 
-  const sqlitePath = getSqlitePath();
-  if (!sqlitePath) {
+  let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+  try {
+    opened = openConfiguredReadOnlyDatabase();
+  } catch (error) {
+    const statusCode = sqliteUnavailableStatusCode(error);
+    return reply.code(statusCode).send({
+      ok: false,
+      code: statusCode === 503 ? "sqlite_unavailable" : "sqlite_table_read_failed",
+    });
+  }
+
+  if (!opened.ok) {
     return reply.code(503).send({
       ok: false,
-      code: "sqlite_not_configured",
+      code: opened.code,
     });
   }
 
   try {
-    const db = openReadOnlyDatabase(sqlitePath);
-    try {
-      const result = readPaginatedKnownTable(db, tableName, limit, offset);
-      return {
-        ok: true,
-        mode: SERVICE_MODE,
-        readonly: READONLY_MODE,
-        table: result.table,
-        limit: result.limit,
-        offset: result.offset,
-        rowCount: result.rowCount,
-        rows: result.rows,
-      };
-    } finally {
-      db.close();
-    }
+    const result = readPaginatedKnownTable(opened.db, tableName, limit, offset);
+    return {
+      ok: true,
+      mode: SERVICE_MODE,
+      readonly: READONLY_MODE,
+      table: result.table,
+      limit: result.limit,
+      offset: result.offset,
+      rowCount: result.rowCount,
+      rows: result.rows,
+    };
   } catch (error) {
     const statusCode = sqliteUnavailableStatusCode(error);
 
@@ -190,8 +312,189 @@ server.get<{
       ok: false,
       code: statusCode === 503 ? "sqlite_unavailable" : "sqlite_table_read_failed",
     });
+  } finally {
+    opened.db.close();
   }
 });
+
+server.get<{
+  Querystring: {
+    accountId?: string;
+    categoryId?: string;
+    recipientId?: string;
+    budgetSnapshotId?: string;
+    isTransfer?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  };
+}>("/prototype/repositories/transactions/count", async (request, reply) => {
+  let filters: TransactionFilters;
+  try {
+    filters = parseTransactionFilters(request.query);
+  } catch (error) {
+    return reply.code(400).send({
+      ok: false,
+      code: error instanceof Error ? error.message : "transaction_filter_invalid",
+    });
+  }
+
+  let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+  try {
+    opened = openConfiguredReadOnlyDatabase();
+  } catch (error) {
+    const statusCode = sqliteUnavailableStatusCode(error);
+    return reply.code(statusCode).send({
+      ok: false,
+      code: statusCode === 503 ? "sqlite_unavailable" : "transaction_count_failed",
+    });
+  }
+
+  if (!opened.ok) {
+    return reply.code(503).send({
+      ok: false,
+      code: opened.code,
+    });
+  }
+
+  try {
+    return {
+      ok: true,
+      mode: SERVICE_MODE,
+      readonly: READONLY_MODE,
+      count: countTransactions(opened.db, filters),
+    };
+  } catch {
+    return reply.code(500).send({
+      ok: false,
+      code: "transaction_count_failed",
+    });
+  } finally {
+    opened.db.close();
+  }
+});
+
+server.get<{
+  Querystring: {
+    limit?: string;
+    offset?: string;
+    accountId?: string;
+    categoryId?: string;
+    recipientId?: string;
+    budgetSnapshotId?: string;
+    isTransfer?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  };
+}>("/prototype/repositories/transactions", async (request, reply) => {
+  let limit: number;
+  let offset: number;
+  let filters: TransactionFilters;
+  try {
+    limit = parsePaginationValue(request.query.limit, DEFAULT_TABLE_READ_LIMIT, "limit");
+    offset = parsePaginationValue(request.query.offset, 0, "offset");
+    filters = parseTransactionFilters(request.query);
+  } catch (error) {
+    return reply.code(400).send({
+      ok: false,
+      code: error instanceof Error ? error.message : "transaction_query_invalid",
+    });
+  }
+
+  let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+  try {
+    opened = openConfiguredReadOnlyDatabase();
+  } catch (error) {
+    const statusCode = sqliteUnavailableStatusCode(error);
+    return reply.code(statusCode).send({
+      ok: false,
+      code: statusCode === 503 ? "sqlite_unavailable" : "transaction_list_failed",
+    });
+  }
+
+  if (!opened.ok) {
+    return reply.code(503).send({
+      ok: false,
+      code: opened.code,
+    });
+  }
+
+  try {
+    const result = listTransactions(opened.db, { limit, offset, filters });
+    return {
+      ok: true,
+      mode: SERVICE_MODE,
+      readonly: READONLY_MODE,
+      limit: result.limit,
+      offset: result.offset,
+      count: result.count,
+      rows: result.rows,
+    };
+  } catch {
+    return reply.code(500).send({
+      ok: false,
+      code: "transaction_list_failed",
+    });
+  } finally {
+    opened.db.close();
+  }
+});
+
+server.get<{ Params: { id: string } }>(
+  "/prototype/repositories/transactions/:id",
+  async (request, reply) => {
+    let id: number;
+    try {
+      id = parsePositiveInteger(request.params.id, "transaction_id");
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        code: error instanceof Error ? error.message : "transaction_id_invalid",
+      });
+    }
+
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "transaction_read_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      const transaction = getTransactionById(opened.db, id);
+      if (!transaction) {
+        return reply.code(404).send({
+          ok: false,
+          code: "transaction_not_found",
+        });
+      }
+
+      return {
+        ok: true,
+        mode: SERVICE_MODE,
+        readonly: READONLY_MODE,
+        transaction,
+      };
+    } catch {
+      return reply.code(500).send({
+        ok: false,
+        code: "transaction_read_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  }
+);
 
 const start = async (): Promise<void> => {
   const port = getServerPort();

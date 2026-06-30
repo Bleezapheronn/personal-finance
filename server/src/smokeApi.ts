@@ -33,8 +33,11 @@ interface ResponseJson {
   tables?: unknown;
   table?: unknown;
   limit?: unknown;
+  offset?: unknown;
+  count?: unknown;
   rowCount?: unknown;
   rows?: unknown;
+  transaction?: unknown;
 }
 
 const usage = `Usage:
@@ -167,8 +170,20 @@ const expectStatus = (actual: number, expected: number): void => {
   expect(actual === expected, `expected_status_${expected}_got_${actual}`);
 };
 
+const transactionIdFromListResponse = (json: ResponseJson): number => {
+  const rows = json.rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("transaction_list_empty");
+  }
+  const firstRow = rows[0] as Record<string, unknown>;
+  const id = firstRow.id;
+  expect(typeof id === "number", "transaction_list_missing_id");
+  return id as number;
+};
+
 const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeCheck[] => {
   const authedOptions = { token, origin };
+  let sampledTransactionId: number | undefined;
 
   return [
     {
@@ -269,6 +284,78 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
         );
         expectStatus(status, 400);
         expect(json.code === "offset_invalid", "unexpected_invalid_offset_response");
+      },
+    },
+    {
+      name: "transaction repository list fails without token",
+      run: async () => {
+        const { status, json } = await requestJson(baseUrl, "/prototype/repositories/transactions?limit=1");
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_transaction_repository_unauthorized_response");
+      },
+    },
+    {
+      name: "transaction repository list succeeds with token",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions?limit=1",
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(
+          json.ok === true &&
+            json.limit === 1 &&
+            json.offset === 0 &&
+            typeof json.count === "number" &&
+            Array.isArray(json.rows) &&
+            json.rows.length <= 1,
+          "unexpected_transaction_repository_list_response",
+        );
+        sampledTransactionId = transactionIdFromListResponse(json);
+      },
+    },
+    {
+      name: "transaction repository detail succeeds with token",
+      run: async () => {
+        expect(sampledTransactionId !== undefined, "sample_transaction_id_missing");
+        const { status, json } = await requestJson(
+          baseUrl,
+          `/prototype/repositories/transactions/${sampledTransactionId}`,
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(
+          json.ok === true &&
+            typeof json.transaction === "object" &&
+            json.transaction !== null &&
+            (json.transaction as Record<string, unknown>).id === sampledTransactionId,
+          "unexpected_transaction_repository_detail_response",
+        );
+      },
+    },
+    {
+      name: "invalid transaction id is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions/not-a-number",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(json.code === "transaction_id_invalid", "unexpected_invalid_transaction_id_response");
+      },
+    },
+    {
+      name: "invalid transaction filter is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions?accountId=-1",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(json.code === "accountId_invalid", "unexpected_invalid_transaction_filter_response");
       },
     },
     {
