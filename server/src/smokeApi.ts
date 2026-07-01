@@ -3,6 +3,7 @@ import { isDirectRun } from "./lib/cli.js";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3147";
 const TOKEN_HEADER_NAME = "x-personal-finance-token";
+const DEFAULT_ALLOWED_ORIGIN = "http://localhost:5173";
 
 interface SmokeArgs {
   baseUrl: string;
@@ -168,6 +169,44 @@ const requestJson = async (
   return { status: response.status, json };
 };
 
+const requestRaw = async (
+  baseUrl: string,
+  pathname: string,
+  options: {
+    method?: string;
+    token?: string;
+    origin?: string;
+    accessControlRequestMethod?: string;
+    accessControlRequestHeaders?: string;
+  } = {},
+): Promise<{ status: number; headers: Headers }> => {
+  const headers: Record<string, string> = {};
+  if (options.token) {
+    headers[TOKEN_HEADER_NAME] = options.token;
+  }
+  if (options.origin) {
+    headers.Origin = options.origin;
+  }
+  if (options.accessControlRequestMethod) {
+    headers["Access-Control-Request-Method"] = options.accessControlRequestMethod;
+  }
+  if (options.accessControlRequestHeaders) {
+    headers["Access-Control-Request-Headers"] = options.accessControlRequestHeaders;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(baseUrl, pathname), {
+      method: options.method ?? "GET",
+      headers,
+    });
+  } catch {
+    throw new Error("server_unavailable");
+  }
+
+  return { status: response.status, headers: response.headers };
+};
+
 const expect = (condition: boolean, message: string): void => {
   if (!condition) {
     throw new Error(message);
@@ -191,6 +230,7 @@ const transactionIdFromListResponse = (json: ResponseJson): number => {
 
 const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeCheck[] => {
   const authedOptions = { token, origin };
+  const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
   let sampledTransactionId: number | undefined;
   let sampledBudgetId: number | undefined;
   let sampledBudgetSnapshotId: number | undefined;
@@ -226,6 +266,55 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
         const { status, json } = await requestJson(baseUrl, "/metadata", authedOptions);
         expectStatus(status, 200);
         expect(json.mode === "prototype" && json.readonly === true, "unexpected_metadata_response");
+      },
+    },
+    {
+      name: "approved browser preflight succeeds without token",
+      run: async () => {
+        const { status, headers } = await requestRaw(
+          baseUrl,
+          "/prototype/repositories/transactions/count",
+          {
+            method: "OPTIONS",
+            origin: allowedPreflightOrigin,
+            accessControlRequestMethod: "GET",
+            accessControlRequestHeaders: TOKEN_HEADER_NAME,
+          },
+        );
+        expectStatus(status, 204);
+        expect(
+          headers.get("access-control-allow-origin") === allowedPreflightOrigin,
+          "unexpected_preflight_allow_origin",
+        );
+        expect(headers.get("vary")?.includes("Origin") === true, "unexpected_preflight_vary");
+        expect(
+          headers.get("access-control-allow-methods")?.includes("GET") === true &&
+            headers.get("access-control-allow-methods")?.includes("OPTIONS") === true,
+          "unexpected_preflight_allow_methods",
+        );
+        expect(
+          headers
+            .get("access-control-allow-headers")
+            ?.toLowerCase()
+            .includes(TOKEN_HEADER_NAME) === true,
+          "unexpected_preflight_allow_headers",
+        );
+      },
+    },
+    {
+      name: "unexpected origin preflight is rejected",
+      run: async () => {
+        const { status } = await requestRaw(
+          baseUrl,
+          "/prototype/repositories/transactions/count",
+          {
+            method: "OPTIONS",
+            origin: "http://unexpected-origin.invalid",
+            accessControlRequestMethod: "GET",
+            accessControlRequestHeaders: TOKEN_HEADER_NAME,
+          },
+        );
+        expectStatus(status, 403);
       },
     },
     {

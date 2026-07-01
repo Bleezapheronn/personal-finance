@@ -449,3 +449,16 @@ Requests with no `Origin` header are allowed for local CLI use when the token is
 - `http://127.0.0.1:8100`
 - `http://localhost:5173`
 - `http://127.0.0.1:5173`
+
+Browser diagnostics from Vite use the custom `x-personal-finance-token` header,
+so the browser sends an unauthenticated `OPTIONS` preflight before the protected
+`GET`. Approved local origins receive narrow CORS headers for preflight and
+actual responses:
+
+- `Access-Control-Allow-Origin` is echoed only for the approved origin.
+- `Access-Control-Allow-Methods` includes `GET, OPTIONS`.
+- `Access-Control-Allow-Headers` includes `x-personal-finance-token` and
+  `content-type`.
+
+Preflight does not require the token, but protected `GET` requests still do.
+The API does not use wildcard CORS origins or cookies.

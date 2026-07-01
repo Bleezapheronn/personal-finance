@@ -20,6 +20,17 @@ VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN=<local prototype token>
 Do not commit `.env` files or token values. The client fails closed when either
 value is missing, and it does not include token values in thrown errors.
 
+Browser calls use the custom `x-personal-finance-token` header, which triggers a
+CORS preflight request. The local API server must be running with the Vite dev
+origin allowed. The prototype server allows these common Vite origins by
+default:
+
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+
+Unexpected browser origins are rejected. The token is exposed to the browser in
+this prototype, so keep it local/dev-only.
+
 ## Read-Only Scope
 
 The scaffold uses `fetch` and sends the token with the server's existing

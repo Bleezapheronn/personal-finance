@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyReply } from "fastify";
 import {
   ALLOWED_ORIGINS,
   API_VERSION,
@@ -55,6 +55,8 @@ const DEFAULT_LOOKUP_READ_LIMIT = 100;
 const MAX_LOOKUP_READ_LIMIT = 500;
 const DEFAULT_BUDGET_READ_LIMIT = 100;
 const MAX_BUDGET_READ_LIMIT = 500;
+const CORS_ALLOW_METHODS = "GET, OPTIONS";
+const CORS_ALLOW_HEADERS = `${TOKEN_HEADER_NAME}, content-type`;
 
 const parsePaginationValue = (
   rawValue: unknown,
@@ -270,16 +272,32 @@ const openConfiguredReadOnlyDatabase = ():
   return { ok: true, db: openReadOnlyDatabase(sqlitePath) };
 };
 
-server.addHook("onRequest", async (request, reply) => {
-  if (publicPaths.has(request.url)) {
-    return;
-  }
+const applyCorsHeaders = (reply: FastifyReply, origin: string): void => {
+  reply.header("Access-Control-Allow-Origin", origin);
+  reply.header("Vary", "Origin");
+  reply.header("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
+  reply.header("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
+};
 
+server.addHook("onRequest", async (request, reply) => {
   const origin = request.headers.origin;
   if (origin && !ALLOWED_ORIGINS.has(origin)) {
     await reply.code(403).send({
       error: "forbidden_origin",
     });
+    return;
+  }
+
+  if (origin) {
+    applyCorsHeaders(reply, origin);
+  }
+
+  if (request.method === "OPTIONS") {
+    await reply.code(204).send();
+    return;
+  }
+
+  if (publicPaths.has(request.url)) {
     return;
   }
 
