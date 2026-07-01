@@ -88,6 +88,9 @@ const normalizeBoolean = (value: unknown): ComparableValue => {
   return String(value).toLowerCase() === "true";
 };
 
+const normalizeLegacyDefaultFalseBoolean = (value: unknown): ComparableValue =>
+  value === undefined || value === null ? false : normalizeBoolean(value);
+
 const normalizeDate = (value: unknown): ComparableValue => {
   if (value === undefined || value === null) {
     return null;
@@ -186,7 +189,7 @@ const accountComparable = (account: Account | AccountDto): ComparableRecord => (
   id: normalizeNullable(account.id),
   currency: normalizeNullable(account.currency),
   isActive: normalizeBoolean(account.isActive),
-  isCredit: normalizeBoolean(account.isCredit),
+  isCredit: normalizeLegacyDefaultFalseBoolean(account.isCredit),
   creditLimit: normalizeNullable(account.creditLimit),
   createdAt: normalizeDate(account.createdAt),
   updatedAt: normalizeDate(account.updatedAt),
@@ -234,7 +237,7 @@ const budgetComparable = (budget: Budget | BudgetDto): ComparableRecord => ({
   frequency: normalizeNullable(budget.frequency),
   frequencyDetails: normalizeJsonText(budget.frequencyDetails),
   isGoal: normalizeBoolean(budget.isGoal),
-  isFlexible: normalizeBoolean(budget.isFlexible),
+  isFlexible: normalizeLegacyDefaultFalseBoolean(budget.isFlexible),
   goalPercentage: normalizeNullable(budget.goalPercentage),
   goalDirection: normalizeNullable(budget.goalDirection),
   isActive: normalizeBoolean(budget.isActive),
@@ -260,7 +263,7 @@ const budgetSnapshotComparable = (
   frequency: normalizeNullable(snapshot.frequency),
   frequencyDetails: normalizeJsonText(snapshot.frequencyDetails),
   isGoal: normalizeBoolean(snapshot.isGoal),
-  isFlexible: normalizeBoolean(snapshot.isFlexible),
+  isFlexible: normalizeLegacyDefaultFalseBoolean(snapshot.isFlexible),
   goalPercentage: normalizeNullable(snapshot.goalPercentage),
   goalDirection: normalizeNullable(snapshot.goalDirection),
   remainingCyclesTotal: normalizeNullable(snapshot.remainingCyclesTotal),

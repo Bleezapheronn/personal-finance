@@ -76,6 +76,12 @@ mismatch counts, and sampled IDs. Console output is summary-only. It does not
 print raw rows, transaction descriptions, account names, recipient names,
 transaction references, or token values.
 
+For parity only, the diagnostic treats the same documented legacy booleans as
+the disposable SQLite importer does: missing `accounts.isCredit`,
+`budgets.isFlexible`, and `budgetSnapshots.isFlexible` compare as `false`. This
+normalization is not applied to other booleans, does not mutate Dexie, and does
+not change live app behavior.
+
 The browser token environment variable is exposed to the Vite client bundle in
 this prototype. Use it only for local development against the local prototype
 server. Do not use a durable or shared token, and do not commit `.env` files.
