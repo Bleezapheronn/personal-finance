@@ -33,6 +33,42 @@ The scaffold uses `fetch` and sends the token with the server's existing
 No write calls are implemented, and no frontend route, page, or live repository
 is connected to the local API.
 
+## Manual Parity Diagnostic
+
+`src/repositories/http/localApiParityDiagnostics.ts` contains a manual
+diagnostic for comparing selected Dexie reads with local API HTTP adapter reads.
+It is not imported by the app, is not auto-run, and does not switch any page or
+repository to HTTP.
+
+To run it manually, start the local API server with a disposable SQLite database,
+start Vite with the prototype environment variables configured, then use the
+browser dev console:
+
+```ts
+const diagnostics = await import(
+  "/src/repositories/http/localApiParityDiagnostics.ts"
+);
+await diagnostics.runLocalApiReadParityDiagnostics({ logSummary: true });
+```
+
+You can reduce or increase sampled detail checks:
+
+```ts
+await diagnostics.runLocalApiReadParityDiagnostics({
+  sampleSize: 3,
+  logSummary: true,
+});
+```
+
+The diagnostic returns a structured summary with check names, pass/fail status,
+mismatch counts, and sampled IDs. Console output is summary-only. It does not
+print raw rows, transaction descriptions, account names, recipient names,
+transaction references, or token values.
+
+The browser token environment variable is exposed to the Vite client bundle in
+this prototype. Use it only for local development against the local prototype
+server. Do not use a durable or shared token, and do not commit `.env` files.
+
 ## Date Handling
 
 The local API returns serialized SQLite values. The HTTP DTOs keep date fields
@@ -42,6 +78,9 @@ many fields are live `Date` objects.
 
 Any future adapter that is wired into the app should make date conversion an
 explicit, reviewed step.
+
+The manual parity diagnostic normalizes date values only inside the diagnostic
+comparison. It does not alter HTTP DTO behavior or Dexie repository behavior.
 
 ## Safety
 
