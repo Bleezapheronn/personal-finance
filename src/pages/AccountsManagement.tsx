@@ -30,6 +30,7 @@ import {
   IonMenuButton,
   IonCard,
   IonCardContent,
+  IonCardHeader,
   IonAlert,
   IonSpinner,
   IonGrid,
@@ -40,7 +41,10 @@ import {
   IonFabButton,
   IonToast,
   IonItem,
+  IonLabel,
   IonList,
+  IonText,
+  IonBadge,
 } from "@ionic/react";
 import {
   add,
@@ -52,6 +56,11 @@ import {
 import { db } from "../db";
 import { AddAccountModal } from "../components/AddAccountModal";
 import { accountRepository, transactionRepository } from "../repositories";
+import {
+  getRepositoryBackend,
+  type RepositoryBackend,
+} from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 
 import type { Account } from "../db";
 
@@ -62,6 +71,120 @@ type DeleteState =
   | { type: "used"; accountId: number; accountName: string }
   | { type: "used_deactivated"; accountId: number; accountName: string }
   | { type: "empty"; accountId: number; accountName: string };
+
+interface SelectedReadAccountPreviewRow {
+  id?: number;
+  isActive?: boolean | null;
+  isCredit?: boolean | null;
+  currency?: string;
+  hasImage: boolean;
+  hasCreditLimit: boolean;
+}
+
+interface SelectedReadAccountsPreview {
+  status: "pass" | "fail";
+  backend: RepositoryBackend;
+  source: string;
+  count?: number;
+  loadedRowCount?: number;
+  sampledIds?: number[];
+  rows: SelectedReadAccountPreviewRow[];
+  errorCode?: string;
+}
+
+type SelectedReadListResult =
+  | Array<{ id?: unknown }>
+  | {
+      count?: unknown;
+      rows?: unknown;
+    };
+
+const SELECTED_READ_PREVIEWS_FLAG =
+  "VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS";
+const SELECTED_READ_PREVIEW_LIMIT = 20;
+
+const envFlagEnabled = (key: string): boolean => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  return env[key]?.trim() === "true";
+};
+
+const selectedReadRows = (
+  result: SelectedReadListResult
+): Array<{ id?: unknown }> | undefined => {
+  if (Array.isArray(result)) {
+    return result;
+  }
+
+  return Array.isArray(result.rows)
+    ? (result.rows as Array<{ id?: unknown }>)
+    : undefined;
+};
+
+const selectedReadCount = (result: SelectedReadListResult): number | undefined =>
+  Array.isArray(result) || typeof result.count !== "number"
+    ? undefined
+    : result.count;
+
+const numberValue = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const booleanValue = (value: unknown): boolean | null | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  return undefined;
+};
+
+const stringValue = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+
+const hasValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  return true;
+};
+
+const sampledIds = (rows: Array<{ id?: unknown }>): number[] =>
+  rows
+    .map((row) => row.id)
+    .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+    .slice(0, SELECTED_READ_PREVIEW_LIMIT);
+
+const safeErrorCode = (error: unknown): string => {
+  if (error instanceof Error && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") {
+      return code;
+    }
+  }
+
+  if (error instanceof TypeError) {
+    return "local_api_unavailable";
+  }
+
+  return "selected_read_accounts_preview_failed";
+};
 
 const AccountsManagement: React.FC = () => {
   // Account state
@@ -76,6 +199,11 @@ const AccountsManagement: React.FC = () => {
   // Toast state
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
+  const showSelectedReadPreview = envFlagEnabled(SELECTED_READ_PREVIEWS_FLAG);
+  const [selectedReadPreview, setSelectedReadPreview] =
+    useState<SelectedReadAccountsPreview | null>(null);
+  const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
+    useState(false);
 
   // Track blob URLs for cleanup
   const blobUrlsRef = useRef<Set<string>>(new Set());
@@ -253,6 +381,67 @@ const AccountsManagement: React.FC = () => {
     }
   };
 
+  const loadSelectedReadPreview = async () => {
+    setSelectedReadPreviewLoading(true);
+    setSelectedReadPreview(null);
+
+    const backend = getRepositoryBackend();
+    const repositories = getSelectedReadRepositories(backend);
+    const source = repositories.source;
+
+    try {
+      const result = await repositories.accounts.list({
+        limit: SELECTED_READ_PREVIEW_LIMIT,
+        offset: 0,
+      });
+      const rows = selectedReadRows(result as SelectedReadListResult);
+
+      if (!rows) {
+        setSelectedReadPreview({
+          status: "fail",
+          backend,
+          source,
+          rows: [],
+          errorCode: "invalid_selected_read_accounts_preview_response",
+        });
+        return;
+      }
+
+      const previewRows = rows.slice(0, SELECTED_READ_PREVIEW_LIMIT);
+
+      setSelectedReadPreview({
+        status: "pass",
+        backend,
+        source,
+        count: selectedReadCount(result as SelectedReadListResult),
+        loadedRowCount: previewRows.length,
+        sampledIds: sampledIds(previewRows),
+        rows: previewRows.map((row) => ({
+          id: numberValue(row.id),
+          isActive: booleanValue((row as { isActive?: unknown }).isActive),
+          isCredit: booleanValue((row as { isCredit?: unknown }).isCredit),
+          currency: stringValue((row as { currency?: unknown }).currency),
+          hasImage:
+            hasValue((row as { imageBlob?: unknown }).imageBlob) ||
+            hasValue((row as { imageMimeType?: unknown }).imageMimeType),
+          hasCreditLimit: hasValue(
+            (row as { creditLimit?: unknown }).creditLimit
+          ),
+        })),
+      });
+    } catch (error) {
+      setSelectedReadPreview({
+        status: "fail",
+        backend,
+        source,
+        rows: [],
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setSelectedReadPreviewLoading(false);
+    }
+  };
+
   return (
     <IonPage>
       <IonHeader>
@@ -265,6 +454,113 @@ const AccountsManagement: React.FC = () => {
       </IonHeader>
 
       <IonContent className="ion-padding">
+        {showSelectedReadPreview && (
+          <IonCard>
+            <IonCardHeader>
+              <IonText>
+                <h3>Experimental selected-read preview</h3>
+              </IonText>
+              <IonBadge color="warning">Read-only</IonBadge>
+            </IonCardHeader>
+            <IonCardContent>
+              <IonList>
+                <IonItem>
+                  <IonLabel>
+                    <h3>Dexie remains authoritative</h3>
+                    <p>
+                      This preview uses the selected read facade only when
+                      manually loaded. It does not replace this management
+                      screen or change create, edit, delete, or activation
+                      actions.
+                    </p>
+                  </IonLabel>
+                </IonItem>
+                <IonItem>
+                  <IonLabel>Selected-read accounts</IonLabel>
+                  <IonButton
+                    slot="end"
+                    size="small"
+                    onClick={() => void loadSelectedReadPreview()}
+                    disabled={selectedReadPreviewLoading}
+                  >
+                    Load preview
+                  </IonButton>
+                  {selectedReadPreviewLoading && (
+                    <IonSpinner name="crescent" slot="end" />
+                  )}
+                </IonItem>
+              </IonList>
+
+              {selectedReadPreview && (
+                <IonList>
+                  <IonItem>
+                    <IonLabel>Backend / source</IonLabel>
+                    <IonText slot="end">
+                      {selectedReadPreview.backend} /{" "}
+                      {selectedReadPreview.source}
+                    </IonText>
+                  </IonItem>
+                  <IonItem>
+                    <IonLabel>Status</IonLabel>
+                    <IonBadge
+                      color={
+                        selectedReadPreview.status === "pass"
+                          ? "success"
+                          : "danger"
+                      }
+                      slot="end"
+                    >
+                      {selectedReadPreview.status === "pass" ? "Pass" : "Fail"}
+                    </IonBadge>
+                  </IonItem>
+                  {selectedReadPreview.errorCode && (
+                    <IonItem>
+                      <IonLabel>Safe error code</IonLabel>
+                      <IonText slot="end">
+                        {selectedReadPreview.errorCode}
+                      </IonText>
+                    </IonItem>
+                  )}
+                  <IonItem>
+                    <IonLabel>
+                      <h3>Accounts</h3>
+                      <p>
+                        count={selectedReadPreview.count ?? "-"} loaded=
+                        {selectedReadPreview.loadedRowCount ?? "-"} sampledIds=
+                        {selectedReadPreview.sampledIds?.length
+                          ? selectedReadPreview.sampledIds.join(", ")
+                          : "-"}
+                      </p>
+                    </IonLabel>
+                  </IonItem>
+                  {selectedReadPreview.rows.map((account) => (
+                    <IonItem key={`selected-account-${account.id ?? "none"}`}>
+                      <IonLabel>
+                        <h3>account id={account.id ?? "-"}</h3>
+                        <p>
+                          isActive=
+                          {account.isActive === undefined
+                            ? "-"
+                            : String(account.isActive)}{" "}
+                          isCredit=
+                          {account.isCredit === undefined
+                            ? "-"
+                            : String(account.isCredit)}{" "}
+                          currency={account.currency ?? "-"}
+                        </p>
+                        <p>
+                          hasImage={String(account.hasImage)} hasCreditLimit=
+                          {String(account.hasCreditLimit)}
+                        </p>
+                      </IonLabel>
+                    </IonItem>
+                  ))}
+                </IonList>
+              )}
+            </IonCardContent>
+          </IonCard>
+        )}
+
         {loading && <IonSpinner />}
 
         {/* ACCOUNTS LIST */}

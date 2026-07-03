@@ -185,19 +185,23 @@ disposable.
 The Categories/Buckets management page can show an experimental selected-read
 preview when `VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS=true` is set.
 The Recipients management page can also show an experimental selected-read
-recipients preview with the same flag. These sections are hidden by default.
-They use `selectedReadRepositories` to manually load small read-only previews
-through the currently selected backend, but the real management lists, search,
-create/edit/delete actions, merge actions, and reorder behavior continue to use
-the existing Dexie paths.
+recipients preview with the same flag. The Accounts management page can show an
+experimental selected-read accounts preview with the same flag. These sections
+are hidden by default. Restart Vite after changing this flag. They use
+`selectedReadRepositories` to manually load small read-only previews through the
+currently selected backend, but the real management lists, search,
+create/edit/delete actions, merge actions, activation actions, and reorder
+behavior continue to use the existing Dexie paths.
 
 The previews are structural-summary-only: backend/source, counts when available,
 loaded counts, sampled IDs, category id, category bucketId, category active
 state, bucket id, bucket display order, bucket active state, recipient id,
-recipient active state, and contact-field presence booleans. They do not render
-category names, bucket names, recipient names, contact values, aliases,
-descriptions, raw rows, token values, or SQLite paths. `http-readonly` remains
-experimental and Dexie remains authoritative.
+recipient active state, contact-field presence booleans, account id, account
+active state, account credit flag, account currency, image presence boolean, and
+credit-limit presence boolean. They do not render category names, bucket names,
+recipient names, contact values, aliases, account names, account descriptions,
+credit-limit values, image data, descriptions, raw rows, token values, or SQLite
+paths. `http-readonly` remains experimental and Dexie remains authoritative.
 
 ## Manual Parity Diagnostic
 
