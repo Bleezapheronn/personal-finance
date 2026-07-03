@@ -49,6 +49,7 @@ const LOCAL_API_DIAGNOSTICS_FLAG =
   "VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS";
 const PREVIEW_LIMIT = 5;
 const CATEGORIES_PREVIEW_LIMIT = 20;
+const REPORTS_PREVIEW_LIMIT = 50;
 
 type DiagnosticStatus = "idle" | "running" | "pass" | "fail";
 
@@ -104,6 +105,24 @@ interface CategoriesPreviewSummary {
     sampledIds?: number[];
     rows: BucketPreviewRow[];
   };
+  errorCode?: string;
+}
+
+interface ReportsPreviewSummary {
+  status: "idle" | "pass" | "fail";
+  backend: RepositoryBackend;
+  source: string;
+  window: string;
+  count?: number;
+  loadedRowCount?: number;
+  sampledIds?: number[];
+  incomeCount?: number;
+  expenseCount?: number;
+  transferCount?: number;
+  incomeTotal?: number;
+  expenseTotal?: number;
+  netTotal?: number;
+  limitation: string;
   errorCode?: string;
 }
 
@@ -188,6 +207,15 @@ const statusText = (summary: DiagnosticSummary): string => {
 
 const previewStatusColor = (summary: PreviewSummary): string =>
   summary.status === "pass" ? "success" : "danger";
+
+const roundCurrencyTotal = (value: number): number =>
+  Math.round((value + Number.EPSILON) * 100) / 100;
+
+const reportAmount = (row: { amount?: unknown; transactionCost?: unknown }) => {
+  const amount = numberValue(row.amount) ?? 0;
+  const transactionCost = numberValue(row.transactionCost) ?? 0;
+  return amount + transactionCost;
+};
 
 const ResultCard: React.FC<{
   summary: DiagnosticSummary;
@@ -358,6 +386,78 @@ const CategoriesPreviewCard: React.FC<{
   </IonCard>
 );
 
+const ReportsPreviewCard: React.FC<{
+  summary: ReportsPreviewSummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>Reports Diagnostic Results</h3>
+      </IonText>
+      <IonBadge color={summary.status === "pass" ? "success" : "danger"}>
+        {summary.status === "pass" ? "Pass" : "Fail"}
+      </IonBadge>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Backend / source</IonLabel>
+          <IonText slot="end">
+            {summary.backend} / {summary.source}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Window</IonLabel>
+          <IonText slot="end">{summary.window}</IonText>
+        </IonItem>
+        {summary.errorCode && (
+          <IonItem>
+            <IonLabel>Safe error code</IonLabel>
+            <IonText slot="end">{summary.errorCode}</IonText>
+          </IonItem>
+        )}
+        <IonItem>
+          <IonLabel>
+            <h3>Sample</h3>
+            <p>
+              count={summary.count ?? "-"} loaded=
+              {summary.loadedRowCount ?? "-"} sampledIds=
+              {summary.sampledIds?.length
+                ? summary.sampledIds.join(", ")
+                : "-"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Report-style counts</h3>
+            <p>
+              income={summary.incomeCount ?? "-"} expense=
+              {summary.expenseCount ?? "-"} transfer=
+              {summary.transferCount ?? "-"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Rounded sample totals</h3>
+            <p>
+              income={summary.incomeTotal ?? "-"} expense=
+              {summary.expenseTotal ?? "-"} net={summary.netTotal ?? "-"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Limitation</h3>
+            <p>{summary.limitation}</p>
+          </IonLabel>
+        </IonItem>
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
 const LocalApiDiagnostics: React.FC = () => {
   const enabled = isLocalApiDiagnosticsEnabled();
   const currentBackend = getRepositoryBackend();
@@ -369,6 +469,8 @@ const LocalApiDiagnostics: React.FC = () => {
   const [previewSummaries, setPreviewSummaries] = useState<PreviewSummary[]>([]);
   const [categoriesPreview, setCategoriesPreview] =
     useState<CategoriesPreviewSummary | null>(null);
+  const [reportsPreview, setReportsPreview] =
+    useState<ReportsPreviewSummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -568,6 +670,98 @@ const LocalApiDiagnostics: React.FC = () => {
         source,
         categories: { rows: [] },
         buckets: { rows: [] },
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setRunningKey(null);
+    }
+  };
+
+  const loadReportsPreview = async (): Promise<void> => {
+    const key = "reportsPreview";
+    setRunningKey(key);
+    setReportsPreview(null);
+
+    const backend = getRepositoryBackend();
+    const repositories = getSelectedReadRepositories(backend);
+    const source = repositories.source;
+    const window = `repository default order, first ${REPORTS_PREVIEW_LIMIT} transactions`;
+    const limitation =
+      "Limited structural preview only; it does not apply full report period, bucket exclusion, or chart semantics.";
+
+    try {
+      const [count, result] = await Promise.all([
+        repositories.transactions.count(),
+        repositories.transactions.list({
+          limit: REPORTS_PREVIEW_LIMIT,
+          offset: 0,
+        }),
+      ]);
+      const rows = previewRows(result as DevPreviewListResult);
+
+      if (!rows) {
+        setReportsPreview({
+          status: "fail",
+          backend,
+          source,
+          window,
+          limitation,
+          errorCode: "invalid_reports_preview_response",
+        });
+        return;
+      }
+
+      const visibleRows = rows.slice(0, REPORTS_PREVIEW_LIMIT);
+      let incomeCount = 0;
+      let expenseCount = 0;
+      let transferCount = 0;
+      let incomeTotal = 0;
+      let expenseTotal = 0;
+
+      for (const row of visibleRows) {
+        const netAmount = reportAmount(
+          row as { amount?: unknown; transactionCost?: unknown },
+        );
+        const isTransfer = booleanValue(
+          (row as { isTransfer?: unknown }).isTransfer,
+        );
+
+        if (isTransfer) {
+          transferCount += 1;
+        }
+
+        if (netAmount >= 0) {
+          incomeCount += 1;
+          incomeTotal += netAmount;
+        } else {
+          expenseCount += 1;
+          expenseTotal += netAmount;
+        }
+      }
+
+      setReportsPreview({
+        status: "pass",
+        backend,
+        source,
+        window,
+        count,
+        loadedRowCount: visibleRows.length,
+        sampledIds: previewSampledIds(visibleRows, PREVIEW_LIMIT),
+        incomeCount,
+        expenseCount,
+        transferCount,
+        incomeTotal: roundCurrencyTotal(incomeTotal),
+        expenseTotal: roundCurrencyTotal(expenseTotal),
+        netTotal: roundCurrencyTotal(incomeTotal + expenseTotal),
+        limitation,
+      });
+    } catch (error) {
+      setReportsPreview({
+        status: "fail",
+        backend,
+        source,
+        window,
+        limitation,
         errorCode: safeErrorCode(error),
       });
     } finally {
@@ -893,6 +1087,61 @@ const LocalApiDiagnostics: React.FC = () => {
 
             {categoriesPreview && (
               <CategoriesPreviewCard summary={categoriesPreview} />
+            )}
+
+            <IonCard>
+              <IonCardHeader>
+                <IonText>
+                  <h3>Experimental Reports Diagnostic</h3>
+                </IonText>
+                <IonBadge color="warning">Read-only</IonBadge>
+                {runningKey === "reportsPreview" && (
+                  <IonSpinner name="crescent" />
+                )}
+              </IonCardHeader>
+              <IonCardContent>
+                <IonList>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>
+                      Load a limited report-style transaction sample
+                    </IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() => void loadReportsPreview()}
+                      disabled={isRunning}
+                    >
+                      Load
+                    </IonButton>
+                  </IonItem>
+                  <IonItem>
+                    <IonLabel>
+                      <h3>Dexie remains authoritative</h3>
+                      <p>
+                        This diagnostic stays inside Local API Diagnostics and
+                        does not replace the real Reports page or its report
+                        calculations.
+                      </p>
+                    </IonLabel>
+                  </IonItem>
+                </IonList>
+                <IonText color="medium">
+                  <p style={{ fontSize: "0.85rem" }}>
+                    Loads a capped selected-read transaction sample and shows
+                    only summary counts and rounded sample totals. It is a
+                    structural preview, not full report parity.
+                  </p>
+                </IonText>
+              </IonCardContent>
+            </IonCard>
+
+            {reportsPreview && (
+              <ReportsPreviewCard summary={reportsPreview} />
             )}
 
             {Object.values(summaries).some(

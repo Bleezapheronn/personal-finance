@@ -157,6 +157,7 @@ lets you manually run:
 - Dexie-vs-HTTP parity diagnostics
 - selected read preview
 - Categories preview
+- Reports diagnostic preview
 
 Diagnostics do not run on page load. Results are summary-only: pass/fail,
 compared checks, failed checks, mismatch totals where available, safe error
@@ -189,6 +190,16 @@ the currently selected backend, then renders only structural fields such as IDs,
 bucket linkage, active state, and bucket display order. It is not the real
 Categories/Buckets management screen, has no edit/delete/reorder actions, and
 does not switch any normal workflow page to HTTP.
+
+The Reports diagnostic preview also lives only in Local API Diagnostics. It uses
+`selectedReadRepositories.transactions` to load a capped transaction sample and
+shows backend/source, the limited sample window, loaded/count values,
+income/expense/transfer counts, and rounded sample totals derived from
+`amount + transactionCost`. It is a structural report-style preview, not full
+Reports parity: it does not apply the real Reports page period selection,
+bucket exclusion, chart, or bucket/category breakdown semantics. The real
+Reports page remains unchanged and does not import selected-read or HTTP
+repositories.
 
 Do not commit `.env.local`. Dexie remains authoritative and SQLite remains
 disposable.
