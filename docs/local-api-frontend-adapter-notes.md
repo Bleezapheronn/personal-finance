@@ -148,6 +148,7 @@ lets you manually run:
 - selected read repository diagnostics
 - Dexie-vs-HTTP parity diagnostics
 - selected read preview
+- Categories preview
 
 Diagnostics do not run on page load. Results are summary-only: pass/fail,
 compared checks, failed checks, mismatch totals where available, safe error
@@ -155,11 +156,20 @@ codes, and sampled IDs. The screen must not render raw finance rows, account
 names, recipient names, budget descriptions, transaction descriptions,
 transaction references, token values, or SQLite paths.
 
-The selected read preview is also manual and dev-only. It loads a tiny page from
-each representative selected-read resource through `selectedReadRepositories`
-and displays only resource name, backend/source, count when available, loaded row
-count, sampled IDs, pass/fail status, and safe error code. It does not switch any
-real workflow page to HTTP and does not render raw rows.
+The selected read preview is also manual and dev-only. It intentionally caps
+loaded preview rows to a tiny sample and does not load or display full tables.
+It requests a small page from each representative selected-read resource through
+`selectedReadRepositories` and displays only resource name, backend/source, total
+count when available, preview loaded row count, sampled IDs, pass/fail status,
+and safe error code. It does not switch any real workflow page to HTTP and does
+not render raw rows.
+
+The Categories preview is a separate dev-only read experiment on the same
+screen. It uses `selectedReadRepositories` to load categories and buckets through
+the currently selected backend, then renders only structural fields such as IDs,
+bucket linkage, active state, and bucket display order. It is not the real
+Categories/Buckets management screen, has no edit/delete/reorder actions, and
+does not switch any normal workflow page to HTTP.
 
 Do not commit `.env.local`. Dexie remains authoritative and SQLite remains
 disposable.

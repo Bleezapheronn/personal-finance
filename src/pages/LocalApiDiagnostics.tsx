@@ -38,6 +38,8 @@ import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiP
 
 const LOCAL_API_DIAGNOSTICS_FLAG =
   "VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS";
+const PREVIEW_LIMIT = 5;
+const CATEGORIES_PREVIEW_LIMIT = 20;
 
 type DiagnosticStatus = "idle" | "running" | "pass" | "fail";
 
@@ -62,6 +64,37 @@ interface PreviewSummary {
   count?: number;
   loadedRowCount?: number;
   sampledIds?: number[];
+  errorCode?: string;
+}
+
+interface CategoryPreviewRow {
+  id?: number;
+  bucketId?: number;
+  isActive?: boolean | null;
+}
+
+interface BucketPreviewRow {
+  id?: number;
+  displayOrder?: number;
+  isActive?: boolean | null;
+}
+
+interface CategoriesPreviewSummary {
+  status: "idle" | "pass" | "fail";
+  backend: RepositoryBackend;
+  source: string;
+  categories: {
+    count?: number;
+    loadedRowCount?: number;
+    sampledIds?: number[];
+    rows: CategoryPreviewRow[];
+  };
+  buckets: {
+    count?: number;
+    loadedRowCount?: number;
+    sampledIds?: number[];
+    rows: BucketPreviewRow[];
+  };
   errorCode?: string;
 }
 
@@ -143,10 +176,10 @@ const previewRows = (
 
 const previewCount = (
   result: PreviewListResult,
-  rows: Array<{ id?: unknown }>,
+  _rows: Array<{ id?: unknown }>,
 ): number | undefined => {
   if (Array.isArray(result)) {
-    return rows.length;
+    return undefined;
   }
 
   return typeof result.count === "number" ? result.count : undefined;
@@ -156,7 +189,30 @@ const previewSampledIds = (rows: Array<{ id?: unknown }>): number[] =>
   rows
     .map((row) => row.id)
     .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
-    .slice(0, 5);
+    .slice(0, PREVIEW_LIMIT);
+
+const numberValue = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const booleanValue = (value: unknown): boolean | null | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  return undefined;
+};
 
 const statusColor = (summary: DiagnosticSummary): string => {
   if (summary.status === "pass") {
@@ -283,6 +339,85 @@ const PreviewResultCard: React.FC<{
   </IonCard>
 );
 
+const CategoriesPreviewCard: React.FC<{
+  summary: CategoriesPreviewSummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>Categories Preview Results</h3>
+      </IonText>
+      <IonBadge color={summary.status === "pass" ? "success" : "danger"}>
+        {summary.status === "pass" ? "Pass" : "Fail"}
+      </IonBadge>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Backend / source</IonLabel>
+          <IonText slot="end">
+            {summary.backend} / {summary.source}
+          </IonText>
+        </IonItem>
+        {summary.errorCode && (
+          <IonItem>
+            <IonLabel>Safe error code</IonLabel>
+            <IonText slot="end">{summary.errorCode}</IonText>
+          </IonItem>
+        )}
+        <IonItem>
+          <IonLabel>
+            <h3>Categories</h3>
+            <p>
+              count={summary.categories.count ?? "-"} loaded=
+              {summary.categories.loadedRowCount ?? "-"} sampledIds=
+              {summary.categories.sampledIds?.length
+                ? summary.categories.sampledIds.join(", ")
+                : "-"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        {summary.categories.rows.map((category) => (
+          <IonItem key={`category-${category.id ?? "unknown"}`}>
+            <IonLabel>
+              <h3>category id={category.id ?? "-"}</h3>
+              <p>
+                bucketId={category.bucketId ?? "-"} isActive=
+                {category.isActive === undefined
+                  ? "-"
+                  : String(category.isActive)}
+              </p>
+            </IonLabel>
+          </IonItem>
+        ))}
+        <IonItem>
+          <IonLabel>
+            <h3>Buckets</h3>
+            <p>
+              count={summary.buckets.count ?? "-"} loaded=
+              {summary.buckets.loadedRowCount ?? "-"} sampledIds=
+              {summary.buckets.sampledIds?.length
+                ? summary.buckets.sampledIds.join(", ")
+                : "-"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        {summary.buckets.rows.map((bucket) => (
+          <IonItem key={`bucket-${bucket.id ?? "unknown"}`}>
+            <IonLabel>
+              <h3>bucket id={bucket.id ?? "-"}</h3>
+              <p>
+                displayOrder={bucket.displayOrder ?? "-"} isActive=
+                {bucket.isActive === undefined ? "-" : String(bucket.isActive)}
+              </p>
+            </IonLabel>
+          </IonItem>
+        ))}
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
 const LocalApiDiagnostics: React.FC = () => {
   const enabled = isLocalApiDiagnosticsEnabled();
   const currentBackend = getRepositoryBackend();
@@ -292,6 +427,8 @@ const LocalApiDiagnostics: React.FC = () => {
   );
   const [runningKey, setRunningKey] = useState<string | null>(null);
   const [previewSummaries, setPreviewSummaries] = useState<PreviewSummary[]>([]);
+  const [categoriesPreview, setCategoriesPreview] =
+    useState<CategoriesPreviewSummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -343,8 +480,8 @@ const LocalApiDiagnostics: React.FC = () => {
         backend,
         source,
         count: previewCount(result as PreviewListResult, rows),
-        loadedRowCount: rows.length,
-        sampledIds: previewSampledIds(rows),
+        loadedRowCount: Math.min(rows.length, PREVIEW_LIMIT),
+        sampledIds: previewSampledIds(rows.slice(0, PREVIEW_LIMIT)),
       };
     } catch (error) {
       return {
@@ -366,7 +503,7 @@ const LocalApiDiagnostics: React.FC = () => {
       const backend = getRepositoryBackend();
       const repositories = getSelectedReadRepositories(backend);
       const source = repositories.source;
-      const listOptions = { limit: 5, offset: 0 };
+      const listOptions = { limit: PREVIEW_LIMIT, offset: 0 };
       const results = await Promise.all([
         loadPreviewResource(
           "transactions",
@@ -413,6 +550,80 @@ const LocalApiDiagnostics: React.FC = () => {
       ]);
 
       setPreviewSummaries(results);
+    } finally {
+      setRunningKey(null);
+    }
+  };
+
+  const loadCategoriesPreview = async (): Promise<void> => {
+    const key = "categoriesPreview";
+    setRunningKey(key);
+    setCategoriesPreview(null);
+
+    const backend = getRepositoryBackend();
+    const repositories = getSelectedReadRepositories(backend);
+    const source = repositories.source;
+
+    try {
+      const listOptions = { limit: CATEGORIES_PREVIEW_LIMIT, offset: 0 };
+      const [categoryResult, bucketResult] = await Promise.all([
+        repositories.categories.list(listOptions),
+        repositories.buckets.list(listOptions),
+      ]);
+      const categoryRows = previewRows(categoryResult as PreviewListResult);
+      const bucketRows = previewRows(bucketResult as PreviewListResult);
+
+      if (!categoryRows || !bucketRows) {
+        setCategoriesPreview({
+          status: "fail",
+          backend,
+          source,
+          categories: { rows: [] },
+          buckets: { rows: [] },
+          errorCode: "invalid_categories_preview_response",
+        });
+        return;
+      }
+
+      const visibleCategoryRows = categoryRows.slice(0, CATEGORIES_PREVIEW_LIMIT);
+      const visibleBucketRows = bucketRows.slice(0, CATEGORIES_PREVIEW_LIMIT);
+
+      setCategoriesPreview({
+        status: "pass",
+        backend,
+        source,
+        categories: {
+          count: previewCount(categoryResult as PreviewListResult, categoryRows),
+          loadedRowCount: visibleCategoryRows.length,
+          sampledIds: previewSampledIds(visibleCategoryRows),
+          rows: visibleCategoryRows.map((row) => ({
+            id: numberValue(row.id),
+            bucketId: numberValue((row as { bucketId?: unknown }).bucketId),
+            isActive: booleanValue((row as { isActive?: unknown }).isActive),
+          })),
+        },
+        buckets: {
+          count: previewCount(bucketResult as PreviewListResult, bucketRows),
+          loadedRowCount: visibleBucketRows.length,
+          sampledIds: previewSampledIds(visibleBucketRows),
+          rows: visibleBucketRows.map((row) => ({
+            id: numberValue(row.id),
+            displayOrder: numberValue(
+              (row as { displayOrder?: unknown }).displayOrder,
+            ),
+            isActive: booleanValue((row as { isActive?: unknown }).isActive),
+          })),
+        },
+      });
+    } catch (error) {
+      setCategoriesPreview({
+        status: "fail",
+        backend,
+        source,
+        categories: { rows: [] },
+        buckets: { rows: [] },
+        errorCode: safeErrorCode(error),
+      });
     } finally {
       setRunningKey(null);
     }
@@ -692,6 +903,50 @@ const LocalApiDiagnostics: React.FC = () => {
 
             {previewSummaries.length > 0 && (
               <PreviewResultCard summaries={previewSummaries} />
+            )}
+
+            <IonCard>
+              <IonCardHeader>
+                <IonText>
+                  <h3>Categories Preview</h3>
+                </IonText>
+                {runningKey === "categoriesPreview" && (
+                  <IonSpinner name="crescent" />
+                )}
+              </IonCardHeader>
+              <IonCardContent>
+                <IonList>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>
+                      Load selected-read categories and buckets structure
+                    </IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() => void loadCategoriesPreview()}
+                      disabled={isRunning}
+                    >
+                      Load
+                    </IonButton>
+                  </IonItem>
+                </IonList>
+                <IonText color="medium">
+                  <p style={{ fontSize: "0.85rem" }}>
+                    Loads a small read-only preview of categories and buckets
+                    through the selected read facade. Names, descriptions, and
+                    raw rows are not shown.
+                  </p>
+                </IonText>
+              </IonCardContent>
+            </IonCard>
+
+            {categoriesPreview && (
+              <CategoriesPreviewCard summary={categoriesPreview} />
             )}
 
             {Object.values(summaries).some(
