@@ -55,8 +55,25 @@ import { CompleteBudgetModal } from "../components/CompleteBudgetModal";
 import { EditSnapshotModal } from "../components/EditSnapshotModal";
 import { LinkPastTransactionsModal } from "../components/LinkPastTransactionsModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
+import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
 import { budgetRepository } from "../repositories";
+import {
+  getRepositoryBackend,
+  type RepositoryBackend,
+} from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { findMatchingTransactions } from "../utils/transactionMatching";
+import {
+  booleanValue,
+  type DevPreviewListResult,
+  isSelectedReadPreviewsEnabled,
+  numberValue,
+  previewCount,
+  previewRows,
+  safePreviewErrorCode,
+  sampledIds,
+  stringValue,
+} from "../utils/devPreview";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -77,6 +94,31 @@ interface SnapshotCandidate {
   linkedTransactions: Transaction[];
 }
 
+interface SelectedReadBudgetSnapshotPreviewRow {
+  id?: number;
+  budgetId?: number;
+  categoryId?: number;
+  accountId?: number;
+  recipientId?: number;
+  dueDateDayKey?: string;
+  isHistorical?: boolean | null;
+  isGoal?: boolean | null;
+  isFlexible?: boolean | null;
+  frequency?: string;
+  amountSign?: "negative" | "zero" | "positive";
+}
+
+interface SelectedReadBudgetHistoryPreview {
+  status: "pass" | "fail";
+  backend: RepositoryBackend;
+  source: string;
+  count?: number;
+  loadedRowCount?: number;
+  sampledIds?: number[];
+  rows: SelectedReadBudgetSnapshotPreviewRow[];
+  errorCode?: string;
+}
+
 const frequencyOptions: Array<{
   value: Budget["frequency"];
   label: string;
@@ -92,6 +134,38 @@ const frequencyOptions: Array<{
 const parseDateInputToLocalDay = (value: string): Date => {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day);
+};
+
+const SELECTED_READ_PREVIEW_LIMIT = 20;
+
+const dayKey = (value: unknown): string | undefined => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "string" && value.trim().length >= 10) {
+    return value.trim().slice(0, 10);
+  }
+
+  return undefined;
+};
+
+const amountSign = (
+  value: unknown,
+): SelectedReadBudgetSnapshotPreviewRow["amountSign"] => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  if (value < 0) {
+    return "negative";
+  }
+
+  if (value > 0) {
+    return "positive";
+  }
+
+  return "zero";
 };
 
 const BudgetHistory: React.FC = () => {
@@ -166,6 +240,11 @@ const BudgetHistory: React.FC = () => {
 
   const [successMsg, setSuccessMsg] = useState("");
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
+  const [selectedReadPreview, setSelectedReadPreview] =
+    useState<SelectedReadBudgetHistoryPreview | null>(null);
+  const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
+    useState(false);
 
   const snapshotBudgetIdBySnapshotId = useMemo(() => {
     const bySnapshotId = new Map<number, number>();
@@ -303,6 +382,77 @@ const BudgetHistory: React.FC = () => {
 
     // Some older/restored records may contain null for optional fields.
     return budget.amount < 0;
+  };
+
+  const loadSelectedReadPreview = async () => {
+    setSelectedReadPreviewLoading(true);
+    setSelectedReadPreview(null);
+
+    const backend = getRepositoryBackend();
+    const repositories = getSelectedReadRepositories(backend);
+    const source = repositories.source;
+
+    try {
+      const result = await repositories.budgetSnapshots.list({
+        limit: SELECTED_READ_PREVIEW_LIMIT,
+        offset: 0,
+      });
+      const rows = previewRows(result as DevPreviewListResult);
+
+      if (!rows) {
+        setSelectedReadPreview({
+          status: "fail",
+          backend,
+          source,
+          rows: [],
+          errorCode: "invalid_selected_read_budget_history_preview_response",
+        });
+        return;
+      }
+
+      const visibleRows = rows.slice(0, SELECTED_READ_PREVIEW_LIMIT);
+
+      setSelectedReadPreview({
+        status: "pass",
+        backend,
+        source,
+        count: previewCount(result as DevPreviewListResult),
+        loadedRowCount: visibleRows.length,
+        sampledIds: sampledIds(visibleRows, SELECTED_READ_PREVIEW_LIMIT),
+        rows: visibleRows.map((row) => ({
+          id: numberValue(row.id),
+          budgetId: numberValue((row as { budgetId?: unknown }).budgetId),
+          categoryId: numberValue((row as { categoryId?: unknown }).categoryId),
+          accountId: numberValue((row as { accountId?: unknown }).accountId),
+          recipientId: numberValue(
+            (row as { recipientId?: unknown }).recipientId,
+          ),
+          dueDateDayKey: dayKey((row as { dueDate?: unknown }).dueDate),
+          isHistorical: booleanValue(
+            (row as { isHistorical?: unknown }).isHistorical,
+          ),
+          isGoal: booleanValue((row as { isGoal?: unknown }).isGoal),
+          isFlexible: booleanValue(
+            (row as { isFlexible?: unknown }).isFlexible,
+          ),
+          frequency: stringValue((row as { frequency?: unknown }).frequency),
+          amountSign: amountSign((row as { amount?: unknown }).amount),
+        })),
+      });
+    } catch (error) {
+      setSelectedReadPreview({
+        status: "fail",
+        backend,
+        source,
+        rows: [],
+        errorCode: safePreviewErrorCode(
+          error,
+          "selected_read_budget_history_preview_failed",
+        ),
+      });
+    } finally {
+      setSelectedReadPreviewLoading(false);
+    }
   };
 
   const getEffectiveBudgetTarget = (budget: Budget): number => {
@@ -1042,6 +1192,94 @@ const BudgetHistory: React.FC = () => {
 
         {loading && <IonSpinner name="crescent" />}
         {error && <IonText color="danger">{error}</IonText>}
+
+        {showSelectedReadPreview && (
+          <SelectedReadPreviewCard
+            resourceLabel="Selected-read budget snapshots"
+            loading={selectedReadPreviewLoading}
+            onLoad={() => void loadSelectedReadPreview()}
+            description="This preview uses the selected read facade only when manually loaded. It does not replace Budget History data, grouping, filters, completion, linking, editing, or delete behavior, and it does not run snapshot lifecycle helpers."
+          >
+            {selectedReadPreview && (
+              <IonList>
+                <IonItem>
+                  <IonLabel>Backend / source</IonLabel>
+                  <IonText slot="end">
+                    {selectedReadPreview.backend} /{" "}
+                    {selectedReadPreview.source}
+                  </IonText>
+                </IonItem>
+                <IonItem>
+                  <IonLabel>Status</IonLabel>
+                  <IonChip
+                    color={
+                      selectedReadPreview.status === "pass"
+                        ? "success"
+                        : "danger"
+                    }
+                    slot="end"
+                  >
+                    {selectedReadPreview.status === "pass" ? "Pass" : "Fail"}
+                  </IonChip>
+                </IonItem>
+                {selectedReadPreview.errorCode && (
+                  <IonItem>
+                    <IonLabel>Safe error code</IonLabel>
+                    <IonText slot="end">
+                      {selectedReadPreview.errorCode}
+                    </IonText>
+                  </IonItem>
+                )}
+                <IonItem>
+                  <IonLabel>
+                    <h3>Budget snapshots</h3>
+                    <p>
+                      count={selectedReadPreview.count ?? "-"} loaded=
+                      {selectedReadPreview.loadedRowCount ?? "-"} sampledIds=
+                      {selectedReadPreview.sampledIds?.length
+                        ? selectedReadPreview.sampledIds.join(", ")
+                        : "-"}
+                    </p>
+                  </IonLabel>
+                </IonItem>
+                {selectedReadPreview.rows.map((snapshot) => (
+                  <IonItem
+                    key={`selected-budget-snapshot-${snapshot.id ?? "none"}`}
+                  >
+                    <IonLabel>
+                      <h3>snapshot id={snapshot.id ?? "-"}</h3>
+                      <p>
+                        budgetId={snapshot.budgetId ?? "-"} categoryId=
+                        {snapshot.categoryId ?? "-"} accountId=
+                        {snapshot.accountId ?? "-"} recipientId=
+                        {snapshot.recipientId ?? "-"}
+                      </p>
+                      <p>
+                        dueDate={snapshot.dueDateDayKey ?? "-"} frequency=
+                        {snapshot.frequency ?? "-"} amountSign=
+                        {snapshot.amountSign ?? "-"}
+                      </p>
+                      <p>
+                        isHistorical=
+                        {snapshot.isHistorical === undefined
+                          ? "-"
+                          : String(snapshot.isHistorical)}{" "}
+                        isGoal=
+                        {snapshot.isGoal === undefined
+                          ? "-"
+                          : String(snapshot.isGoal)}{" "}
+                        isFlexible=
+                        {snapshot.isFlexible === undefined
+                          ? "-"
+                          : String(snapshot.isFlexible)}
+                      </p>
+                    </IonLabel>
+                  </IonItem>
+                ))}
+              </IonList>
+            )}
+          </SelectedReadPreviewCard>
+        )}
 
         {!loading && !error && pastOccurrences.length > 0 && (
           <IonAccordionGroup style={{ marginBottom: "16px" }}>

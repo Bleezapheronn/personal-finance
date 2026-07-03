@@ -196,12 +196,14 @@ The Recipients management page can also show an experimental selected-read
 recipients preview with the same flag. The Accounts management page can show an
 experimental selected-read accounts preview with the same flag. The SMS Import
 Templates management page can show an experimental selected-read SMS templates
-preview with the same flag. These sections are hidden by default. Restart Vite
-after changing this flag. They use `selectedReadRepositories` to manually load
-small read-only previews through the currently selected backend, but the real
-management lists, search, create/edit/delete actions, merge actions, activation
-actions, import/test-parse behavior, and reorder behavior continue to use the
-existing Dexie paths.
+preview with the same flag. The Budget History page can show an experimental
+selected-read budget snapshot preview with the same flag. These sections are
+hidden by default. Restart Vite after changing this flag. They use
+`selectedReadRepositories` to manually load small read-only previews through the
+currently selected backend, but the real management lists, search,
+create/edit/delete actions, merge actions, activation actions, import/test-parse
+behavior, Budget History grouping/filtering/completion/linking behavior, and
+reorder behavior continue to use the existing Dexie paths.
 
 The previews are structural-summary-only: backend/source, counts when available,
 loaded counts, sampled IDs, category id, category bucketId, category active
@@ -210,11 +212,16 @@ recipient active state, contact-field presence booleans, account id, account
 active state, account credit flag, account currency, image presence boolean, and
 credit-limit presence boolean. The SMS template preview adds template id,
 template active state, account/payment-method ids, and regex/pattern presence
-booleans only. They do not render category names, bucket names, recipient names,
-contact values, aliases, account names, account descriptions, credit-limit
-values, image data, SMS template names, SMS template descriptions, regex/pattern
-strings, raw SMS examples, raw rows, token values, or SQLite paths.
-`http-readonly` remains experimental and Dexie remains authoritative.
+booleans only. The Budget History preview adds budget snapshot id, budget id,
+category/account/recipient ids, due-date day key, frequency, boolean flags, and
+amount sign only. It does not call budget snapshot migration, generation,
+pruning, dedupe, repair, or lifecycle helpers. The previews do not render
+category names, bucket names, recipient names, contact values, aliases, account
+names, account descriptions, credit-limit values, image data, SMS template
+names, SMS template descriptions, regex/pattern strings, budget descriptions,
+amount values, transaction descriptions, transaction references, raw SMS
+examples, raw rows, token values, or SQLite paths. `http-readonly` remains
+experimental and Dexie remains authoritative.
 
 ## Manual Parity Diagnostic
 
