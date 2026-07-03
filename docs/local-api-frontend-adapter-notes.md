@@ -172,6 +172,12 @@ count when available, preview loaded row count, sampled IDs, pass/fail status,
 and safe error code. It does not switch any real workflow page to HTTP and does
 not render raw rows.
 
+Shared dev-only preview helpers live in `src/utils/devPreview.ts`, and the
+common read-only preview card shell lives in
+`src/components/dev/SelectedReadPreviewCard.tsx`. Page-specific preview mapping
+should stay close to each page so sensitive-field redaction remains easy to
+review.
+
 The Categories preview is a separate dev-only read experiment on the same
 screen. It uses `selectedReadRepositories` to load categories and buckets through
 the currently selected backend, then renders only structural fields such as IDs,

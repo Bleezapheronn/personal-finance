@@ -29,7 +29,6 @@ import {
   IonReorderGroup,
   IonCard,
   IonCardContent,
-  IonCardHeader,
   IonText,
   IonBadge,
   IonSpinner,
@@ -49,6 +48,17 @@ import { AddCategoryModal } from "../components/AddCategoryModal";
 import { getRepositoryBackend, type RepositoryBackend } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { categoryRepository, transactionRepository } from "../repositories";
+import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
+import {
+  booleanValue,
+  type DevPreviewListResult,
+  isSelectedReadPreviewsEnabled,
+  numberValue,
+  previewCount,
+  previewRows,
+  safePreviewErrorCode,
+  sampledIds,
+} from "../utils/devPreview";
 
 /**
  * BucketsManagement
@@ -105,80 +115,7 @@ interface SelectedReadCategoriesPreview {
   errorCode?: string;
 }
 
-type SelectedReadListResult = Array<{ id?: unknown }> | {
-  count?: unknown;
-  rows?: unknown;
-};
-
-const SELECTED_READ_PREVIEWS_FLAG =
-  "VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS";
 const SELECTED_READ_PREVIEW_LIMIT = 20;
-
-const envFlagEnabled = (key: string): boolean => {
-  const env = import.meta.env as Record<string, string | undefined>;
-  return env[key]?.trim() === "true";
-};
-
-const selectedReadRows = (
-  result: SelectedReadListResult,
-): Array<{ id?: unknown }> | undefined => {
-  if (Array.isArray(result)) {
-    return result;
-  }
-
-  return Array.isArray(result.rows)
-    ? (result.rows as Array<{ id?: unknown }>)
-    : undefined;
-};
-
-const selectedReadCount = (result: SelectedReadListResult): number | undefined =>
-  Array.isArray(result) || typeof result.count !== "number"
-    ? undefined
-    : result.count;
-
-const numberValue = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) ? value : undefined;
-
-const booleanValue = (value: unknown): boolean | null | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (value === null) {
-    return null;
-  }
-
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (typeof value === "number") {
-    return value !== 0;
-  }
-
-  return undefined;
-};
-
-const sampledIds = (rows: Array<{ id?: unknown }>): number[] =>
-  rows
-    .map((row) => row.id)
-    .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
-    .slice(0, SELECTED_READ_PREVIEW_LIMIT);
-
-const safeErrorCode = (error: unknown): string => {
-  if (error instanceof Error && "code" in error) {
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === "string") {
-      return code;
-    }
-  }
-
-  if (error instanceof TypeError) {
-    return "local_api_unavailable";
-  }
-
-  return "selected_read_preview_failed";
-};
 
 const BucketsManagement: React.FC = () => {
   // buckets state
@@ -212,7 +149,7 @@ const BucketsManagement: React.FC = () => {
   const [showToast, setShowToast] = useState(false);
   const [alertMessage] = useState("");
   const [showAlert, setShowAlert] = useState(false);
-  const showSelectedReadPreview = envFlagEnabled(SELECTED_READ_PREVIEWS_FLAG);
+  const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
   const [selectedReadPreview, setSelectedReadPreview] =
     useState<SelectedReadCategoriesPreview | null>(null);
   const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
@@ -473,11 +410,11 @@ const BucketsManagement: React.FC = () => {
         repositories.categories.list(listOptions),
         repositories.buckets.list(listOptions),
       ]);
-      const categoryRows = selectedReadRows(
-        categoryResult as SelectedReadListResult,
+      const categoryRows = previewRows(
+        categoryResult as DevPreviewListResult,
       );
-      const bucketRows = selectedReadRows(
-        bucketResult as SelectedReadListResult,
+      const bucketRows = previewRows(
+        bucketResult as DevPreviewListResult,
       );
 
       if (!categoryRows || !bucketRows) {
@@ -506,9 +443,9 @@ const BucketsManagement: React.FC = () => {
         backend,
         source,
         categories: {
-          count: selectedReadCount(categoryResult as SelectedReadListResult),
+          count: previewCount(categoryResult as DevPreviewListResult),
           loadedRowCount: categoryPreviewRows.length,
-          sampledIds: sampledIds(categoryPreviewRows),
+          sampledIds: sampledIds(categoryPreviewRows, SELECTED_READ_PREVIEW_LIMIT),
           rows: categoryPreviewRows.map((row) => ({
             id: numberValue(row.id),
             bucketId: numberValue((row as { bucketId?: unknown }).bucketId),
@@ -516,9 +453,9 @@ const BucketsManagement: React.FC = () => {
           })),
         },
         buckets: {
-          count: selectedReadCount(bucketResult as SelectedReadListResult),
+          count: previewCount(bucketResult as DevPreviewListResult),
           loadedRowCount: bucketPreviewRows.length,
-          sampledIds: sampledIds(bucketPreviewRows),
+          sampledIds: sampledIds(bucketPreviewRows, SELECTED_READ_PREVIEW_LIMIT),
           rows: bucketPreviewRows.map((row) => ({
             id: numberValue(row.id),
             displayOrder: numberValue(
@@ -535,7 +472,7 @@ const BucketsManagement: React.FC = () => {
         source,
         categories: { rows: [] },
         buckets: { rows: [] },
-        errorCode: safeErrorCode(error),
+        errorCode: safePreviewErrorCode(error),
       });
     } finally {
       setSelectedReadPreviewLoading(false);
@@ -753,41 +690,12 @@ const BucketsManagement: React.FC = () => {
         </IonFab>
 
         {showSelectedReadPreview && (
-          <IonCard>
-            <IonCardHeader>
-              <IonText>
-                <h3>Experimental selected-read preview</h3>
-              </IonText>
-              <IonBadge color="warning">Read-only</IonBadge>
-            </IonCardHeader>
-            <IonCardContent>
-              <IonList>
-                <IonItem>
-                  <IonLabel>
-                    <h3>Dexie remains authoritative</h3>
-                    <p>
-                      This preview uses the selected read facade only when
-                      manually loaded. It does not replace this management
-                      screen or change create, edit, delete, or reorder actions.
-                    </p>
-                  </IonLabel>
-                </IonItem>
-                <IonItem>
-                  <IonLabel>Selected-read categories and buckets</IonLabel>
-                  <IonButton
-                    slot="end"
-                    size="small"
-                    onClick={() => void loadSelectedReadPreview()}
-                    disabled={selectedReadPreviewLoading}
-                  >
-                    Load preview
-                  </IonButton>
-                  {selectedReadPreviewLoading && (
-                    <IonSpinner name="crescent" slot="end" />
-                  )}
-                </IonItem>
-              </IonList>
-
+          <SelectedReadPreviewCard
+            resourceLabel="Selected-read categories and buckets"
+            loading={selectedReadPreviewLoading}
+            onLoad={() => void loadSelectedReadPreview()}
+            description="This preview uses the selected read facade only when manually loaded. It does not replace this management screen or change create, edit, delete, or reorder actions."
+          >
               {selectedReadPreview && (
                 <IonList>
                   <IonItem>
@@ -873,8 +781,7 @@ const BucketsManagement: React.FC = () => {
                   ))}
                 </IonList>
               )}
-            </IonCardContent>
-          </IonCard>
+          </SelectedReadPreviewCard>
         )}
 
         {/* Buckets list with categories nested as accordions */}

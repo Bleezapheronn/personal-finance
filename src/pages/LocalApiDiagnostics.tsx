@@ -35,6 +35,15 @@ import { runRepositoryBackendSelectionDiagnostics } from "../repositories/backen
 import { runSelectedReadRepositoryDiagnostics } from "../repositories/selectedReadRepositoryDiagnostics";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiParityDiagnostics";
+import {
+  booleanValue,
+  type DevPreviewListResult,
+  numberValue,
+  previewCount,
+  previewRows,
+  safePreviewErrorCode,
+  sampledIds as previewSampledIds,
+} from "../utils/devPreview";
 
 const LOCAL_API_DIAGNOSTICS_FLAG =
   "VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS";
@@ -98,11 +107,6 @@ interface CategoriesPreviewSummary {
   errorCode?: string;
 }
 
-type PreviewListResult = Array<{ id?: unknown }> | {
-  count?: unknown;
-  rows?: unknown;
-};
-
 const getEnvValue = (key: string): string | undefined => {
   const env = import.meta.env as Record<string, string | undefined>;
   const value = env[key]?.trim();
@@ -112,20 +116,8 @@ const getEnvValue = (key: string): string | undefined => {
 export const isLocalApiDiagnosticsEnabled = (): boolean =>
   getEnvValue(LOCAL_API_DIAGNOSTICS_FLAG) === "true";
 
-const safeErrorCode = (error: unknown): string => {
-  if (error instanceof Error && "code" in error) {
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === "string") {
-      return code;
-    }
-  }
-
-  if (error instanceof TypeError) {
-    return "local_api_unavailable";
-  }
-
-  return "diagnostic_failed";
-};
+const safeErrorCode = (error: unknown): string =>
+  safePreviewErrorCode(error, "diagnostic_failed");
 
 const uniqueCodes = (
   checks: Array<{
@@ -160,58 +152,6 @@ const sampledIds = (checks: Array<{ sampledIds?: number[] }>): number[] => {
   }
 
   return Array.from(ids).sort((left, right) => left - right).slice(0, 12);
-};
-
-const previewRows = (
-  result: PreviewListResult,
-): Array<{ id?: unknown }> | undefined => {
-  if (Array.isArray(result)) {
-    return result;
-  }
-
-  return Array.isArray(result.rows)
-    ? (result.rows as Array<{ id?: unknown }>)
-    : undefined;
-};
-
-const previewCount = (
-  result: PreviewListResult,
-  _rows: Array<{ id?: unknown }>,
-): number | undefined => {
-  if (Array.isArray(result)) {
-    return undefined;
-  }
-
-  return typeof result.count === "number" ? result.count : undefined;
-};
-
-const previewSampledIds = (rows: Array<{ id?: unknown }>): number[] =>
-  rows
-    .map((row) => row.id)
-    .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
-    .slice(0, PREVIEW_LIMIT);
-
-const numberValue = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) ? value : undefined;
-
-const booleanValue = (value: unknown): boolean | null | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (value === null) {
-    return null;
-  }
-
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (typeof value === "number") {
-    return value !== 0;
-  }
-
-  return undefined;
 };
 
 const statusColor = (summary: DiagnosticSummary): string => {
@@ -462,7 +402,7 @@ const LocalApiDiagnostics: React.FC = () => {
   ): Promise<PreviewSummary> => {
     try {
       const result = await load();
-      const rows = previewRows(result as PreviewListResult);
+      const rows = previewRows(result as DevPreviewListResult);
 
       if (!rows) {
         return {
@@ -479,9 +419,9 @@ const LocalApiDiagnostics: React.FC = () => {
         status: "pass",
         backend,
         source,
-        count: previewCount(result as PreviewListResult, rows),
+        count: previewCount(result as DevPreviewListResult),
         loadedRowCount: Math.min(rows.length, PREVIEW_LIMIT),
-        sampledIds: previewSampledIds(rows.slice(0, PREVIEW_LIMIT)),
+        sampledIds: previewSampledIds(rows.slice(0, PREVIEW_LIMIT), PREVIEW_LIMIT),
       };
     } catch (error) {
       return {
@@ -576,8 +516,8 @@ const LocalApiDiagnostics: React.FC = () => {
         repositories.categories.list(listOptions),
         repositories.buckets.list(listOptions),
       ]);
-      const categoryRows = previewRows(categoryResult as PreviewListResult);
-      const bucketRows = previewRows(bucketResult as PreviewListResult);
+      const categoryRows = previewRows(categoryResult as DevPreviewListResult);
+      const bucketRows = previewRows(bucketResult as DevPreviewListResult);
 
       if (!categoryRows || !bucketRows) {
         setCategoriesPreview({
@@ -599,9 +539,9 @@ const LocalApiDiagnostics: React.FC = () => {
         backend,
         source,
         categories: {
-          count: previewCount(categoryResult as PreviewListResult, categoryRows),
+          count: previewCount(categoryResult as DevPreviewListResult),
           loadedRowCount: visibleCategoryRows.length,
-          sampledIds: previewSampledIds(visibleCategoryRows),
+          sampledIds: previewSampledIds(visibleCategoryRows, PREVIEW_LIMIT),
           rows: visibleCategoryRows.map((row) => ({
             id: numberValue(row.id),
             bucketId: numberValue((row as { bucketId?: unknown }).bucketId),
@@ -609,9 +549,9 @@ const LocalApiDiagnostics: React.FC = () => {
           })),
         },
         buckets: {
-          count: previewCount(bucketResult as PreviewListResult, bucketRows),
+          count: previewCount(bucketResult as DevPreviewListResult),
           loadedRowCount: visibleBucketRows.length,
-          sampledIds: previewSampledIds(visibleBucketRows),
+          sampledIds: previewSampledIds(visibleBucketRows, PREVIEW_LIMIT),
           rows: visibleBucketRows.map((row) => ({
             id: numberValue(row.id),
             displayOrder: numberValue(
