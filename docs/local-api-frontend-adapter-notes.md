@@ -13,12 +13,24 @@ explicit imports so they cannot change app behavior by accident.
 Manual prototype calls require Vite environment variables:
 
 ```text
+VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie
 VITE_PERSONAL_FINANCE_LOCAL_API_URL=http://127.0.0.1:3147
 VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN=<local prototype token>
 ```
 
-Do not commit `.env` files or token values. The client fails closed when either
-value is missing, and it does not include token values in thrown errors.
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND` supports:
+
+- `dexie` - default, authoritative, normal app behavior
+- `http-readonly` - experimental local API read-only mode for future manual
+  adapter experiments
+
+Missing or unknown backend values fall back to `dexie`. Existing pages still use
+the Dexie repository exports by default; the adapter selection scaffold does not
+switch any live page or route to HTTP.
+
+Do not commit `.env` files or token values. The local API client fails closed
+when its URL or token is missing, and it does not include token values in thrown
+errors.
 
 Browser calls use the custom `x-personal-finance-token` header, which triggers a
 CORS preflight request. The local API server must be running with the Vite dev
@@ -43,6 +55,10 @@ The scaffold uses `fetch` and sends the token with the server's existing
 
 No write calls are implemented, and no frontend route, page, or live repository
 is connected to the local API.
+
+The `http-readonly` backend has no write support. Future consumers must not
+silently no-op writes; write attempts in HTTP-readonly mode should fail loudly.
+Dexie remains authoritative.
 
 ## Manual Parity Diagnostic
 
