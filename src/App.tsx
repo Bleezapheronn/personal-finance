@@ -20,7 +20,13 @@ import {
   IonListHeader,
 } from "@ionic/react";
 import { IonReactRouter } from "@ionic/react-router";
-import { list, barChart, calendar, settingsOutline } from "ionicons/icons";
+import {
+  list,
+  barChart,
+  calendar,
+  settingsOutline,
+  flaskOutline,
+} from "ionicons/icons";
 
 import Transactions from "./pages/Transactions";
 import AddTransaction from "./pages/AddTransaction";
@@ -34,6 +40,9 @@ import RecipientsManagement from "./pages/RecipientsManagement";
 import SmsImportTemplatesManagement from "./pages/SmsImportTemplatesManagement";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings"; // NEW
+import LocalApiDiagnostics, {
+  isLocalApiDiagnosticsEnabled,
+} from "./pages/LocalApiDiagnostics";
 
 import {
   migrateBudgetSnapshots,
@@ -69,6 +78,7 @@ setupIonicReact();
 
 const InnerApp: React.FC = () => {
   const location = useLocation();
+  const showLocalApiDiagnostics = isLocalApiDiagnosticsEnabled();
 
   return (
     <IonApp>
@@ -110,6 +120,16 @@ const InnerApp: React.FC = () => {
                   />
                   <IonLabel>Settings & Debug</IonLabel>
                 </IonItem>
+                {showLocalApiDiagnostics && (
+                  <IonItem button routerLink="/local-api-diagnostics">
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={flaskOutline}
+                      slot="start"
+                    />
+                    <IonLabel>Local API Diagnostics</IonLabel>
+                  </IonItem>
+                )}
               </IonMenuToggle>
             </IonList>
           </IonContent>
@@ -166,6 +186,9 @@ const InnerApp: React.FC = () => {
             {/* NEW: Settings route */}
             <Route path="/settings">
               <Settings />
+            </Route>
+            <Route path="/local-api-diagnostics">
+              <LocalApiDiagnostics />
             </Route>
             <Route exact path="/">
               <Redirect to="/transactions" />

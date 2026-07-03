@@ -16,6 +16,7 @@ Manual prototype calls require Vite environment variables:
 VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie
 VITE_PERSONAL_FINANCE_LOCAL_API_URL=http://127.0.0.1:3147
 VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN=<local prototype token>
+VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS=true
 ```
 
 `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND` supports:
@@ -27,6 +28,11 @@ VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN=<local prototype token>
 Missing or unknown backend values fall back to `dexie`. Existing pages still use
 the Dexie repository exports by default; the adapter selection scaffold does not
 switch any live page or route to HTTP.
+
+`VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS=true` enables the dev-only
+Local API Diagnostics screen. The screen is hidden by default and should remain
+off for normal app use. Restart Vite after changing any `VITE_` environment
+value.
 
 Do not commit `.env` files or token values. The local API client fails closed
 when its URL or token is missing, and it does not include token values in thrown
@@ -127,6 +133,29 @@ does not print finance rows, account names, recipient names, budget
 descriptions, transaction descriptions, transaction references, or token values.
 It does not mutate data and does not switch the app backend. Dexie remains
 authoritative.
+
+## Dev-Only Diagnostics Screen
+
+When `VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS=true` is set before Vite
+starts, the side menu shows a Local API Diagnostics entry. The route is
+diagnostic-only, read-only, and default hidden. If the flag is not enabled,
+direct navigation to the route shows a safe disabled message.
+
+The screen displays the current repository backend and selected source, then
+lets you manually run:
+
+- backend selection diagnostics
+- selected read repository diagnostics
+- Dexie-vs-HTTP parity diagnostics
+
+Diagnostics do not run on page load. Results are summary-only: pass/fail,
+compared checks, failed checks, mismatch totals where available, safe error
+codes, and sampled IDs. The screen must not render raw finance rows, account
+names, recipient names, budget descriptions, transaction descriptions,
+transaction references, token values, or SQLite paths.
+
+Do not commit `.env.local`. Dexie remains authoritative and SQLite remains
+disposable.
 
 ## Manual Parity Diagnostic
 
