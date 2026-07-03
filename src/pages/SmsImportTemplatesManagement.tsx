@@ -21,6 +21,9 @@ import {
   IonAlert,
   IonCard,
   IonCardContent,
+  IonCardHeader,
+  IonLabel,
+  IonBadge,
   IonFab,
   IonFabButton,
   IonToast,
@@ -38,8 +41,128 @@ import {
   accountRepository,
   smsImportTemplateRepository,
 } from "../repositories";
+import {
+  getRepositoryBackend,
+  type RepositoryBackend,
+} from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 
 type LocalAccount = Account & { previewUrl?: string };
+
+interface SelectedReadSmsTemplatePreviewRow {
+  id?: number;
+  isActive?: boolean | null;
+  accountId?: number;
+  paymentMethodId?: number;
+  hasReferencePattern: boolean;
+  hasAmountPattern: boolean;
+  hasRecipientNamePattern: boolean;
+  hasRecipientPhonePattern: boolean;
+  hasDateTimePattern: boolean;
+  hasCostPattern: boolean;
+  hasIncomePattern: boolean;
+  hasExpensePattern: boolean;
+}
+
+interface SelectedReadSmsTemplatePreview {
+  status: "pass" | "fail";
+  backend: RepositoryBackend;
+  source: string;
+  count?: number;
+  loadedRowCount?: number;
+  sampledIds?: number[];
+  rows: SelectedReadSmsTemplatePreviewRow[];
+  errorCode?: string;
+}
+
+type SelectedReadListResult =
+  | Array<{ id?: unknown }>
+  | {
+      count?: unknown;
+      rows?: unknown;
+    };
+
+const SELECTED_READ_PREVIEWS_FLAG =
+  "VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS";
+const SELECTED_READ_PREVIEW_LIMIT = 20;
+
+const envFlagEnabled = (key: string): boolean => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  return env[key]?.trim() === "true";
+};
+
+const selectedReadRows = (
+  result: SelectedReadListResult,
+): Array<{ id?: unknown }> | undefined => {
+  if (Array.isArray(result)) {
+    return result;
+  }
+
+  return Array.isArray(result.rows)
+    ? (result.rows as Array<{ id?: unknown }>)
+    : undefined;
+};
+
+const selectedReadCount = (result: SelectedReadListResult): number | undefined =>
+  Array.isArray(result) || typeof result.count !== "number"
+    ? undefined
+    : result.count;
+
+const numberValue = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const booleanValue = (value: unknown): boolean | null | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  return undefined;
+};
+
+const hasValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  return true;
+};
+
+const sampledIds = (rows: Array<{ id?: unknown }>): number[] =>
+  rows
+    .map((row) => row.id)
+    .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+    .slice(0, SELECTED_READ_PREVIEW_LIMIT);
+
+const safeErrorCode = (error: unknown): string => {
+  if (error instanceof Error && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") {
+      return code;
+    }
+  }
+
+  if (error instanceof TypeError) {
+    return "local_api_unavailable";
+  }
+
+  return "selected_read_sms_templates_preview_failed";
+};
 
 const SmsImportTemplatesManagement: React.FC = () => {
   const [templates, setTemplates] = useState<SmsImportTemplate[]>([]);
@@ -77,6 +200,11 @@ const SmsImportTemplatesManagement: React.FC = () => {
   // Toast
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
+  const showSelectedReadPreview = envFlagEnabled(SELECTED_READ_PREVIEWS_FLAG);
+  const [selectedReadPreview, setSelectedReadPreview] =
+    useState<SelectedReadSmsTemplatePreview | null>(null);
+  const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
+    useState(false);
 
   useEffect(() => {
     // Capture current blob URLs for cleanup
@@ -282,6 +410,87 @@ const SmsImportTemplatesManagement: React.FC = () => {
     setShowAddTemplateModal(false);
   };
 
+  const loadSelectedReadPreview = async () => {
+    setSelectedReadPreviewLoading(true);
+    setSelectedReadPreview(null);
+
+    const backend = getRepositoryBackend();
+    const repositories = getSelectedReadRepositories(backend);
+    const source = repositories.source;
+
+    try {
+      const result = await repositories.smsImportTemplates.list({
+        limit: SELECTED_READ_PREVIEW_LIMIT,
+        offset: 0,
+      });
+      const rows = selectedReadRows(result as SelectedReadListResult);
+
+      if (!rows) {
+        setSelectedReadPreview({
+          status: "fail",
+          backend,
+          source,
+          rows: [],
+          errorCode: "invalid_selected_read_sms_templates_preview_response",
+        });
+        return;
+      }
+
+      const previewRows = rows.slice(0, SELECTED_READ_PREVIEW_LIMIT);
+
+      setSelectedReadPreview({
+        status: "pass",
+        backend,
+        source,
+        count: selectedReadCount(result as SelectedReadListResult),
+        loadedRowCount: previewRows.length,
+        sampledIds: sampledIds(previewRows),
+        rows: previewRows.map((row) => ({
+          id: numberValue(row.id),
+          isActive: booleanValue((row as { isActive?: unknown }).isActive),
+          accountId: numberValue((row as { accountId?: unknown }).accountId),
+          paymentMethodId: numberValue(
+            (row as { paymentMethodId?: unknown }).paymentMethodId,
+          ),
+          hasReferencePattern: hasValue(
+            (row as { referencePattern?: unknown }).referencePattern,
+          ),
+          hasAmountPattern: hasValue(
+            (row as { amountPattern?: unknown }).amountPattern,
+          ),
+          hasRecipientNamePattern: hasValue(
+            (row as { recipientNamePattern?: unknown }).recipientNamePattern,
+          ),
+          hasRecipientPhonePattern: hasValue(
+            (row as { recipientPhonePattern?: unknown }).recipientPhonePattern,
+          ),
+          hasDateTimePattern: hasValue(
+            (row as { dateTimePattern?: unknown }).dateTimePattern,
+          ),
+          hasCostPattern: hasValue(
+            (row as { costPattern?: unknown }).costPattern,
+          ),
+          hasIncomePattern: hasValue(
+            (row as { incomePattern?: unknown }).incomePattern,
+          ),
+          hasExpensePattern: hasValue(
+            (row as { expensePattern?: unknown }).expensePattern,
+          ),
+        })),
+      });
+    } catch (error) {
+      setSelectedReadPreview({
+        status: "fail",
+        backend,
+        source,
+        rows: [],
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setSelectedReadPreviewLoading(false);
+    }
+  };
+
   return (
     <IonPage>
       <IonHeader>
@@ -294,6 +503,126 @@ const SmsImportTemplatesManagement: React.FC = () => {
       </IonHeader>
 
       <IonContent className="ion-padding">
+        {showSelectedReadPreview && (
+          <IonCard>
+            <IonCardHeader>
+              <IonText>
+                <h3>Experimental selected-read preview</h3>
+              </IonText>
+              <IonBadge color="warning">Read-only</IonBadge>
+            </IonCardHeader>
+            <IonCardContent>
+              <IonList>
+                <IonItem>
+                  <IonLabel>
+                    <h3>Dexie remains authoritative</h3>
+                    <p>
+                      This preview uses the selected read facade only when
+                      manually loaded. It does not replace this management
+                      screen or change create, edit, delete, or import behavior.
+                    </p>
+                  </IonLabel>
+                </IonItem>
+                <IonItem>
+                  <IonLabel>Selected-read SMS import templates</IonLabel>
+                  <IonButton
+                    slot="end"
+                    size="small"
+                    onClick={() => void loadSelectedReadPreview()}
+                    disabled={selectedReadPreviewLoading}
+                  >
+                    Load preview
+                  </IonButton>
+                  {selectedReadPreviewLoading && (
+                    <IonSpinner name="crescent" slot="end" />
+                  )}
+                </IonItem>
+              </IonList>
+
+              {selectedReadPreview && (
+                <IonList>
+                  <IonItem>
+                    <IonLabel>Backend / source</IonLabel>
+                    <IonText slot="end">
+                      {selectedReadPreview.backend} /{" "}
+                      {selectedReadPreview.source}
+                    </IonText>
+                  </IonItem>
+                  <IonItem>
+                    <IonLabel>Status</IonLabel>
+                    <IonBadge
+                      color={
+                        selectedReadPreview.status === "pass"
+                          ? "success"
+                          : "danger"
+                      }
+                      slot="end"
+                    >
+                      {selectedReadPreview.status === "pass" ? "Pass" : "Fail"}
+                    </IonBadge>
+                  </IonItem>
+                  {selectedReadPreview.errorCode && (
+                    <IonItem>
+                      <IonLabel>Safe error code</IonLabel>
+                      <IonText slot="end">
+                        {selectedReadPreview.errorCode}
+                      </IonText>
+                    </IonItem>
+                  )}
+                  <IonItem>
+                    <IonLabel>
+                      <h3>SMS import templates</h3>
+                      <p>
+                        count={selectedReadPreview.count ?? "-"} loaded=
+                        {selectedReadPreview.loadedRowCount ?? "-"} sampledIds=
+                        {selectedReadPreview.sampledIds?.length
+                          ? selectedReadPreview.sampledIds.join(", ")
+                          : "-"}
+                      </p>
+                    </IonLabel>
+                  </IonItem>
+                  {selectedReadPreview.rows.map((template) => (
+                    <IonItem
+                      key={`selected-sms-template-${template.id ?? "none"}`}
+                    >
+                      <IonLabel>
+                        <h3>template id={template.id ?? "-"}</h3>
+                        <p>
+                          isActive=
+                          {template.isActive === undefined
+                            ? "-"
+                            : String(template.isActive)}{" "}
+                          accountId={template.accountId ?? "-"}{" "}
+                          paymentMethodId={template.paymentMethodId ?? "-"}
+                        </p>
+                        <p>
+                          hasReferencePattern=
+                          {String(template.hasReferencePattern)}{" "}
+                          hasAmountPattern={String(template.hasAmountPattern)}{" "}
+                          hasDateTimePattern=
+                          {String(template.hasDateTimePattern)}
+                        </p>
+                        <p>
+                          hasRecipientNamePattern=
+                          {String(template.hasRecipientNamePattern)}{" "}
+                          hasRecipientPhonePattern=
+                          {String(template.hasRecipientPhonePattern)}
+                        </p>
+                        <p>
+                          hasCostPattern={String(template.hasCostPattern)}{" "}
+                          hasIncomePattern={String(template.hasIncomePattern)}{" "}
+                          hasExpensePattern=
+                          {String(template.hasExpensePattern)}
+                        </p>
+                      </IonLabel>
+                    </IonItem>
+                  ))}
+                </IonList>
+              )}
+            </IonCardContent>
+          </IonCard>
+        )}
+
         {loading && <IonSpinner />}
 
         {/* TEMPLATES LIST */}

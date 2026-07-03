@@ -61,7 +61,8 @@ The scaffold uses `fetch` and sends the token with the server's existing
 `x-personal-finance-token` header. Only read methods are present:
 
 - transactions: list, detail, count
-- lookups: accounts, buckets, categories, recipients list/detail reads
+- lookups: accounts, buckets, categories, recipients, SMS import templates
+  list/detail reads
 - budgets: budget and budget snapshot list/detail reads
 - budget snapshots for a budget
 
@@ -82,8 +83,8 @@ an unknown value, it selects Dexie readers. With
 HTTP read-only adapters for manual experiments.
 
 The facade exposes read groups for transactions, accounts, buckets, categories,
-recipients, budgets, and budget snapshots. It does not expose create, update, or
-delete methods.
+recipients, SMS import templates, budgets, and budget snapshots. It does not
+expose create, update, or delete methods.
 
 Dexie reads return existing app models, including `Date` objects. HTTP reads
 return explicit DTOs with serialized date strings and paginated list response
@@ -134,8 +135,9 @@ await diagnostics.runSelectedReadRepositoryDiagnostics({ logSummary: true });
 
 The diagnostic checks transaction count/list/detail reads plus representative
 list/detail reads for accounts, buckets, categories, recipients, budgets, and
-budget snapshots. Console output is summary-only and uses sampled IDs only. It
-does not print finance rows, account names, recipient names, budget
+budget snapshots, plus SMS import template list/detail reads. Console output is
+summary-only and uses sampled IDs only. It does not print finance rows, account
+names, recipient names, SMS template names, regex/pattern values, budget
 descriptions, transaction descriptions, transaction references, or token values.
 It does not mutate data and does not switch the app backend. Dexie remains
 authoritative.
@@ -186,22 +188,27 @@ The Categories/Buckets management page can show an experimental selected-read
 preview when `VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS=true` is set.
 The Recipients management page can also show an experimental selected-read
 recipients preview with the same flag. The Accounts management page can show an
-experimental selected-read accounts preview with the same flag. These sections
-are hidden by default. Restart Vite after changing this flag. They use
-`selectedReadRepositories` to manually load small read-only previews through the
-currently selected backend, but the real management lists, search,
-create/edit/delete actions, merge actions, activation actions, and reorder
-behavior continue to use the existing Dexie paths.
+experimental selected-read accounts preview with the same flag. The SMS Import
+Templates management page can show an experimental selected-read SMS templates
+preview with the same flag. These sections are hidden by default. Restart Vite
+after changing this flag. They use `selectedReadRepositories` to manually load
+small read-only previews through the currently selected backend, but the real
+management lists, search, create/edit/delete actions, merge actions, activation
+actions, import/test-parse behavior, and reorder behavior continue to use the
+existing Dexie paths.
 
 The previews are structural-summary-only: backend/source, counts when available,
 loaded counts, sampled IDs, category id, category bucketId, category active
 state, bucket id, bucket display order, bucket active state, recipient id,
 recipient active state, contact-field presence booleans, account id, account
 active state, account credit flag, account currency, image presence boolean, and
-credit-limit presence boolean. They do not render category names, bucket names,
-recipient names, contact values, aliases, account names, account descriptions,
-credit-limit values, image data, descriptions, raw rows, token values, or SQLite
-paths. `http-readonly` remains experimental and Dexie remains authoritative.
+credit-limit presence boolean. The SMS template preview adds template id,
+template active state, account/payment-method ids, and regex/pattern presence
+booleans only. They do not render category names, bucket names, recipient names,
+contact values, aliases, account names, account descriptions, credit-limit
+values, image data, SMS template names, SMS template descriptions, regex/pattern
+strings, raw SMS examples, raw rows, token values, or SQLite paths.
+`http-readonly` remains experimental and Dexie remains authoritative.
 
 ## Manual Parity Diagnostic
 

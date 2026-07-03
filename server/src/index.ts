@@ -105,7 +105,8 @@ const parseOptionalNonNegativeInteger = (
         "accountId" | "categoryId" | "recipientId" | "budgetSnapshotId"
       >
     | keyof Pick<BudgetSnapshotFilters, "budgetId">
-    | "bucketId",
+    | "bucketId"
+    | "accountId",
 ): number | undefined => {
   if (rawValue === undefined) {
     return undefined;
@@ -188,18 +189,24 @@ const parseLookupFilters = (
   query: {
     activeOnly?: string;
     bucketId?: string;
+    accountId?: string;
   },
 ): LookupFilters => {
   const activeOnly = parseOptionalBoolean(query.activeOnly, "activeOnly");
   const bucketId = parseOptionalNonNegativeInteger(query.bucketId, "bucketId");
+  const accountId = parseOptionalNonNegativeInteger(query.accountId, "accountId");
 
   if (bucketId !== undefined && resource !== "categories") {
     throw new Error("bucketId_unsupported");
+  }
+  if (accountId !== undefined && resource !== "sms-import-templates") {
+    throw new Error("accountId_unsupported");
   }
 
   return {
     activeOnly,
     bucketId,
+    accountId,
   };
 };
 
@@ -942,6 +949,7 @@ for (const resource of lookupResources) {
       offset?: string;
       activeOnly?: string;
       bucketId?: string;
+      accountId?: string;
     };
   }>(`/prototype/repositories/${resource}`, async (request, reply) => {
     let limit: number;

@@ -8,6 +8,7 @@ import {
   BucketDto,
   CategoryDto,
   RecipientDto,
+  SmsImportTemplateDto,
 } from "./types";
 
 export interface LookupListOptions {
@@ -20,7 +21,16 @@ export interface CategoryListOptions extends LookupListOptions {
   bucketId?: number;
 }
 
-type LookupResource = "accounts" | "buckets" | "categories" | "recipients";
+export interface SmsImportTemplateListOptions extends LookupListOptions {
+  accountId?: number;
+}
+
+type LookupResource =
+  | "accounts"
+  | "buckets"
+  | "categories"
+  | "recipients"
+  | "sms-import-templates";
 
 const listLookupRows = async <Row>(
   resource: LookupResource,
@@ -96,4 +106,20 @@ export const getRecipientById = async (
   id: number,
 ): Promise<RecipientDto | undefined> => {
   return getLookupRowById<RecipientDto>("recipients", "recipient", id);
+};
+
+export const listSmsImportTemplates = async (
+  options: SmsImportTemplateListOptions = {},
+): Promise<ApiListResponse<SmsImportTemplateDto>> => {
+  return listLookupRows<SmsImportTemplateDto>("sms-import-templates", options);
+};
+
+export const getSmsImportTemplateById = async (
+  id: number,
+): Promise<SmsImportTemplateDto | undefined> => {
+  return getLookupRowById<SmsImportTemplateDto>(
+    "sms-import-templates",
+    "smsImportTemplate",
+    id,
+  );
 };

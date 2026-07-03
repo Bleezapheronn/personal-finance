@@ -97,6 +97,25 @@ export interface RecipientDto {
   updatedAt: string;
 }
 
+export interface SmsImportTemplateDto {
+  id: number;
+  name: string;
+  description?: string | null;
+  paymentMethodId?: number | null;
+  accountId?: number | null;
+  referencePattern?: string | null;
+  amountPattern?: string | null;
+  recipientNamePattern?: string | null;
+  recipientPhonePattern?: string | null;
+  dateTimePattern?: string | null;
+  costPattern?: string | null;
+  incomePattern?: string | null;
+  expensePattern?: string | null;
+  isActive: number | boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BudgetDto {
   id: number;
   description: string;

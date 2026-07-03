@@ -536,6 +536,12 @@ const LocalApiDiagnostics: React.FC = () => {
           source,
         ),
         loadPreviewResource(
+          "sms import templates",
+          () => repositories.smsImportTemplates.list(listOptions),
+          backend,
+          source,
+        ),
+        loadPreviewResource(
           "budgets",
           () => repositories.budgets.list(listOptions),
           backend,

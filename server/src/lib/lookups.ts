@@ -1,11 +1,22 @@
 import Database from "better-sqlite3";
 
-export type LookupResource = "accounts" | "buckets" | "categories" | "recipients";
-export type LookupDetailKey = "account" | "bucket" | "category" | "recipient";
+export type LookupResource =
+  | "accounts"
+  | "buckets"
+  | "categories"
+  | "recipients"
+  | "sms-import-templates";
+export type LookupDetailKey =
+  | "account"
+  | "bucket"
+  | "category"
+  | "recipient"
+  | "smsImportTemplate";
 
 export interface LookupFilters {
   activeOnly?: boolean;
   bucketId?: number;
+  accountId?: number;
 }
 
 export interface LookupListOptions {
@@ -25,11 +36,12 @@ export interface LookupListResult {
 
 export interface LookupResourceConfig {
   detailKey: LookupDetailKey;
-  tableName: LookupResource;
+  tableName: string;
   selectSql: string;
   orderBySql: string;
   supportsActiveOnly: boolean;
   supportsBucketId: boolean;
+  supportsAccountId: boolean;
 }
 
 const LOOKUP_CONFIGS: Record<LookupResource, LookupResourceConfig> = {
@@ -41,6 +53,7 @@ const LOOKUP_CONFIGS: Record<LookupResource, LookupResourceConfig> = {
     orderBySql: "ORDER BY name ASC, id ASC",
     supportsActiveOnly: true,
     supportsBucketId: false,
+    supportsAccountId: false,
   },
   buckets: {
     detailKey: "bucket",
@@ -51,6 +64,7 @@ const LOOKUP_CONFIGS: Record<LookupResource, LookupResourceConfig> = {
     orderBySql: "ORDER BY displayOrder ASC, id ASC",
     supportsActiveOnly: true,
     supportsBucketId: false,
+    supportsAccountId: false,
   },
   categories: {
     detailKey: "category",
@@ -60,6 +74,7 @@ const LOOKUP_CONFIGS: Record<LookupResource, LookupResourceConfig> = {
     orderBySql: "ORDER BY name ASC, id ASC",
     supportsActiveOnly: true,
     supportsBucketId: true,
+    supportsAccountId: false,
   },
   recipients: {
     detailKey: "recipient",
@@ -69,6 +84,19 @@ const LOOKUP_CONFIGS: Record<LookupResource, LookupResourceConfig> = {
     orderBySql: "ORDER BY name ASC, id ASC",
     supportsActiveOnly: true,
     supportsBucketId: false,
+    supportsAccountId: false,
+  },
+  "sms-import-templates": {
+    detailKey: "smsImportTemplate",
+    tableName: "smsImportTemplates",
+    selectSql: `SELECT id, name, description, paymentMethodId, accountId,
+      referencePattern, amountPattern, recipientNamePattern,
+      recipientPhonePattern, dateTimePattern, costPattern, incomePattern,
+      expensePattern, isActive, createdAt, updatedAt FROM smsImportTemplates`,
+    orderBySql: "ORDER BY name ASC, id ASC",
+    supportsActiveOnly: true,
+    supportsBucketId: false,
+    supportsAccountId: true,
   },
 };
 
@@ -94,6 +122,11 @@ const buildWhere = (
   if (filters.bucketId !== undefined && config.supportsBucketId) {
     clauses.push("bucketId = @bucketId");
     params.bucketId = filters.bucketId;
+  }
+
+  if (filters.accountId !== undefined && config.supportsAccountId) {
+    clauses.push("accountId = @accountId");
+    params.accountId = filters.accountId;
   }
 
   return {

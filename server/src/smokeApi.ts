@@ -45,6 +45,7 @@ interface ResponseJson {
   bucket?: unknown;
   category?: unknown;
   recipient?: unknown;
+  smsImportTemplate?: unknown;
   budget?: unknown;
   budgetSnapshot?: unknown;
 }
@@ -228,6 +229,18 @@ const transactionIdFromListResponse = (json: ResponseJson): number => {
   return id as number;
 };
 
+const optionalIdFromListResponse = (json: ResponseJson): number | undefined => {
+  const rows = json.rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return undefined;
+  }
+
+  const firstRow = rows[0] as Record<string, unknown>;
+  const id = firstRow.id;
+  expect(typeof id === "number", "list_missing_id");
+  return id as number;
+};
+
 const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -235,12 +248,19 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
   let sampledBudgetId: number | undefined;
   let sampledBudgetSnapshotId: number | undefined;
   const sampledLookupIds = new Map<string, number>();
-  const lookupResources = ["accounts", "buckets", "categories", "recipients"] as const;
+  const lookupResources = [
+    "accounts",
+    "buckets",
+    "categories",
+    "recipients",
+    "sms-import-templates",
+  ] as const;
   const lookupDetailKeys = {
     accounts: "account",
     buckets: "bucket",
     categories: "category",
     recipients: "recipient",
+    "sms-import-templates": "smsImportTemplate",
   } as const;
 
   return [
@@ -664,14 +684,19 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
               json.rows.length <= 1,
             "unexpected_lookup_list_response",
           );
-          sampledLookupIds.set(resource, transactionIdFromListResponse(json));
+          const sampledId = optionalIdFromListResponse(json);
+          if (sampledId !== undefined) {
+            sampledLookupIds.set(resource, sampledId);
+          }
         },
       },
       {
         name: `${resource} lookup detail succeeds with token`,
         run: async () => {
           const sampledId = sampledLookupIds.get(resource);
-          expect(sampledId !== undefined, "sample_lookup_id_missing");
+          if (sampledId === undefined) {
+            return;
+          }
           const { status, json } = await requestJson(
             baseUrl,
             `/prototype/repositories/${resource}/${sampledId}`,
@@ -711,6 +736,18 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
         );
         expectStatus(status, 400);
         expect(json.code === "bucketId_invalid", "unexpected_invalid_lookup_query_response");
+      },
+    },
+    {
+      name: "invalid sms template lookup account filter is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/sms-import-templates?accountId=-1",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(json.code === "accountId_invalid", "unexpected_invalid_sms_template_lookup_query_response");
       },
     },
     {

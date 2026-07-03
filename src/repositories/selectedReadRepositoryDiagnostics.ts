@@ -266,6 +266,12 @@ export const runSelectedReadRepositoryDiagnostics = async (
       limit,
     )),
     ...(await runListAndDetailChecks(
+      "sms import templates",
+      (listOptions) => repositories.smsImportTemplates.list(listOptions),
+      repositories.smsImportTemplates.getById,
+      limit,
+    )),
+    ...(await runListAndDetailChecks(
       "budgets",
       (listOptions) => repositories.budgets.list(listOptions),
       repositories.budgets.getById,

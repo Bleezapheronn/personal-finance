@@ -5,6 +5,7 @@ import type {
   BudgetSnapshot,
   Category,
   Recipient,
+  SmsImportTemplate,
   Transaction,
 } from "../db";
 import {
@@ -29,6 +30,7 @@ import type {
   BucketDto,
   CategoryDto,
   RecipientDto,
+  SmsImportTemplateDto,
   TransactionDto,
 } from "./http/types";
 
@@ -100,6 +102,12 @@ export interface SelectedReadRepositories {
     ) => ReadList<Recipient, RecipientDto>;
     getById: (id: number) => ReadOne<Recipient, RecipientDto>;
   };
+  smsImportTemplates: {
+    list: (
+      options?: lookupHttpRepositories.SmsImportTemplateListOptions,
+    ) => ReadList<SmsImportTemplate, SmsImportTemplateDto>;
+    getById: (id: number) => ReadOne<SmsImportTemplate, SmsImportTemplateDto>;
+  };
   budgets: {
     list: (
       options?: budgetHttpRepository.BudgetListOptions,
@@ -141,6 +149,10 @@ const dexieReadRepositories: SelectedReadRepositories = {
     list: (options) => applyDexiePage(db.recipients, options),
     getById: (id) => recipientRepository.getRecipientById(id),
   },
+  smsImportTemplates: {
+    list: (options) => applyDexiePage(db.smsImportTemplates, options),
+    getById: (id) => db.smsImportTemplates.get(id),
+  },
   budgets: {
     list: (options) => applyDexiePage(db.budgets, options),
     getById: (id) => budgetRepository.getBudgetById(id),
@@ -174,6 +186,10 @@ const httpReadonlyReadRepositories: SelectedReadRepositories = {
   recipients: {
     list: (options) => lookupHttpRepositories.listRecipients(options),
     getById: (id) => lookupHttpRepositories.getRecipientById(id),
+  },
+  smsImportTemplates: {
+    list: (options) => lookupHttpRepositories.listSmsImportTemplates(options),
+    getById: (id) => lookupHttpRepositories.getSmsImportTemplateById(id),
   },
   budgets: {
     list: (options) => budgetHttpRepository.listBudgets(options),
