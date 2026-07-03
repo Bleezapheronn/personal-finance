@@ -147,12 +147,19 @@ lets you manually run:
 - backend selection diagnostics
 - selected read repository diagnostics
 - Dexie-vs-HTTP parity diagnostics
+- selected read preview
 
 Diagnostics do not run on page load. Results are summary-only: pass/fail,
 compared checks, failed checks, mismatch totals where available, safe error
 codes, and sampled IDs. The screen must not render raw finance rows, account
 names, recipient names, budget descriptions, transaction descriptions,
 transaction references, token values, or SQLite paths.
+
+The selected read preview is also manual and dev-only. It loads a tiny page from
+each representative selected-read resource through `selectedReadRepositories`
+and displays only resource name, backend/source, count when available, loaded row
+count, sampled IDs, pass/fail status, and safe error code. It does not switch any
+real workflow page to HTTP and does not render raw rows.
 
 Do not commit `.env.local`. Dexie remains authoritative and SQLite remains
 disposable.
