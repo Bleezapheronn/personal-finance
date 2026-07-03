@@ -97,6 +97,37 @@ diagnostics.runRepositoryBackendSelectionDiagnostics({ logSummary: true });
 The diagnostic is not imported by the app, is not auto-run, and does not change
 the selected backend. Dexie remains authoritative.
 
+## Manual Selected Read Facade Diagnostic
+
+`src/repositories/selectedReadRepositoryDiagnostics.ts` exercises the selected
+read facade through representative reads. It uses the currently selected backend:
+Dexie by default, or HTTP read-only when Vite is started with:
+
+```text
+VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly
+```
+
+Restart Vite after changing environment variables. For HTTP mode, the local API
+server must already be running with the local API URL and token configured in the
+Vite environment.
+
+Run the diagnostic manually from the Vite dev console:
+
+```ts
+const diagnostics = await import(
+  "/src/repositories/selectedReadRepositoryDiagnostics.ts"
+);
+await diagnostics.runSelectedReadRepositoryDiagnostics({ logSummary: true });
+```
+
+The diagnostic checks transaction count/list/detail reads plus representative
+list/detail reads for accounts, buckets, categories, recipients, budgets, and
+budget snapshots. Console output is summary-only and uses sampled IDs only. It
+does not print finance rows, account names, recipient names, budget
+descriptions, transaction descriptions, transaction references, or token values.
+It does not mutate data and does not switch the app backend. Dexie remains
+authoritative.
+
 ## Manual Parity Diagnostic
 
 `src/repositories/http/localApiParityDiagnostics.ts` contains a manual
