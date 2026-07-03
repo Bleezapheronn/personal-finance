@@ -12,6 +12,7 @@ import {
   resolveRepositoryBackend,
   type RepositoryBackend,
 } from "./adapterSelection";
+import { db } from "../db";
 import * as accountRepository from "./accountRepository";
 import * as budgetRepository from "./budgetRepository";
 import * as categoryRepository from "./categoryRepository";
@@ -38,6 +39,31 @@ type ReadList<DexieRow, HttpRow> =
   | Promise<ApiListResponse<HttpRow>>;
 
 type ReadOne<DexieRow, HttpRow> = Promise<DexieRow | HttpRow | undefined>;
+
+interface DexieListOptions {
+  limit?: number;
+  offset?: number;
+}
+
+interface DexiePreviewTable<Row> {
+  offset: (offset: number) => {
+    limit: (limit: number) => {
+      toArray: () => Promise<Row[]>;
+    };
+  };
+  toArray: () => Promise<Row[]>;
+}
+
+const applyDexiePage = <Row>(
+  table: DexiePreviewTable<Row>,
+  options: DexieListOptions | undefined,
+): Promise<Row[]> => {
+  if (typeof options?.limit !== "number") {
+    return table.toArray();
+  }
+
+  return table.offset(options.offset ?? 0).limit(options.limit).toArray();
+};
 
 export interface SelectedReadRepositories {
   source: SelectedReadRepositorySource;
@@ -95,32 +121,32 @@ export interface SelectedReadRepositories {
 const dexieReadRepositories: SelectedReadRepositories = {
   source: "dexie",
   transactions: {
-    list: () => transactionRepository.listTransactions(),
+    list: (options) => applyDexiePage(db.transactions, options),
     getById: (id) => transactionRepository.getTransactionById(id),
     count: () => transactionRepository.getTransactionCount(),
   },
   accounts: {
-    list: () => accountRepository.listAccounts(),
+    list: (options) => applyDexiePage(db.accounts, options),
     getById: (id) => accountRepository.getAccountById(id),
   },
   buckets: {
-    list: () => categoryRepository.listBuckets(),
+    list: (options) => applyDexiePage(db.buckets, options),
     getById: (id) => categoryRepository.getBucketById(id),
   },
   categories: {
-    list: () => categoryRepository.listCategories(),
+    list: (options) => applyDexiePage(db.categories, options),
     getById: (id) => categoryRepository.getCategoryById(id),
   },
   recipients: {
-    list: () => recipientRepository.listRecipients(),
+    list: (options) => applyDexiePage(db.recipients, options),
     getById: (id) => recipientRepository.getRecipientById(id),
   },
   budgets: {
-    list: () => budgetRepository.listBudgets(),
+    list: (options) => applyDexiePage(db.budgets, options),
     getById: (id) => budgetRepository.getBudgetById(id),
   },
   budgetSnapshots: {
-    list: () => budgetRepository.listBudgetSnapshots(),
+    list: (options) => applyDexiePage(db.budgetSnapshots, options),
     getById: (id) => budgetRepository.getBudgetSnapshotById(id),
     listForBudget: (budgetId) => budgetRepository.listSnapshotsForBudget(budgetId),
   },
