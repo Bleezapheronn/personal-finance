@@ -15,6 +15,7 @@ export * as budgetRepository from "./budgetRepository";
 export * as reportRepository from "./reportRepository";
 export * as smsImportTemplateRepository from "./smsImportTemplateRepository";
 export * from "./adapterSelection";
+export * from "./selectedReadRepositories";
 
 export const dexieRepositories = {
   accountRepository: accountRepositoryModule,

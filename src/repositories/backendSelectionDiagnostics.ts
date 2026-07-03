@@ -5,6 +5,10 @@ import {
   resolveRepositoryBackend,
   type RepositoryBackend,
 } from "./adapterSelection";
+import {
+  getSelectedReadRepositoriesForBackend,
+  getSelectedReadRepositorySource,
+} from "./selectedReadRepositories";
 
 export interface RepositoryBackendSelectionDiagnosticOptions {
   logSummary?: boolean;
@@ -101,6 +105,37 @@ export const runRepositoryBackendSelectionDiagnostics = (
       "http-readonly write guard throws",
       writeGuardThrowsFor("http-readonly"),
       "http_readonly_write_guard_did_not_throw",
+    ),
+    passOrFail(
+      "undefined selected facade source is dexie",
+      getSelectedReadRepositorySource(undefined) === "dexie",
+      "undefined_selected_facade_not_dexie",
+    ),
+    passOrFail(
+      "explicit dexie selected facade source is dexie",
+      getSelectedReadRepositorySource("dexie") === "dexie",
+      "dexie_selected_facade_not_dexie",
+    ),
+    passOrFail(
+      "explicit http-readonly selected facade source is http-readonly",
+      getSelectedReadRepositorySource("http-readonly") === "http-readonly",
+      "http_readonly_selected_facade_not_http_readonly",
+    ),
+    passOrFail(
+      "unknown selected facade source is dexie",
+      getSelectedReadRepositorySource("bad-value") === "dexie",
+      "unknown_selected_facade_not_dexie",
+    ),
+    passOrFail(
+      "dexie selected facade maps to dexie readers",
+      getSelectedReadRepositoriesForBackend("dexie").source === "dexie",
+      "dexie_selected_facade_source_mismatch",
+    ),
+    passOrFail(
+      "http-readonly selected facade maps to http readers",
+      getSelectedReadRepositoriesForBackend("http-readonly").source ===
+        "http-readonly",
+      "http_readonly_selected_facade_source_mismatch",
     ),
   ];
 

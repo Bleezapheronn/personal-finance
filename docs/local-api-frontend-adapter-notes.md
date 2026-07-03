@@ -60,12 +60,30 @@ The `http-readonly` backend has no write support. Future consumers must not
 silently no-op writes; write attempts in HTTP-readonly mode should fail loudly.
 Dexie remains authoritative.
 
+## Selected Read Facade
+
+`src/repositories/selectedReadRepositories.ts` exposes an opt-in read-only
+facade named `selectedReadRepositories`. It is not imported by existing pages and
+does not change live app behavior. With no backend environment variable, or with
+an unknown value, it selects Dexie readers. With
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`, it can select the
+HTTP read-only adapters for manual experiments.
+
+The facade exposes read groups for transactions, accounts, buckets, categories,
+recipients, budgets, and budget snapshots. It does not expose create, update, or
+delete methods.
+
+Dexie reads return existing app models, including `Date` objects. HTTP reads
+return explicit DTOs with serialized date strings and paginated list response
+shapes. Treat facade return types as backend-specific until a future reviewed
+adapter layer performs explicit conversion.
+
 ## Manual Backend Selection Diagnostic
 
 `src/repositories/backendSelectionDiagnostics.ts` verifies the adapter selection
-scaffold without switching the app backend. It checks fallback behavior,
-`http-readonly` recognition, and the read-only write guard. It does not access
-finance rows and does not mutate data.
+scaffold and selected read facade without switching the app backend. It checks
+fallback behavior, `http-readonly` recognition, facade mapping, and the read-only
+write guard. It does not access finance rows and does not mutate data.
 
 Run it manually from the Vite dev console:
 
