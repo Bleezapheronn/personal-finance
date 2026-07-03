@@ -178,6 +178,11 @@ common read-only preview card shell lives in
 should stay close to each page so sensitive-field redaction remains easy to
 review.
 
+Run `npm run check:selected-read-imports` before changing preview or repository
+adapter wiring. The guard scans frontend source files and fails if selected-read
+or local API HTTP imports appear outside the approved adapter, diagnostic, and
+explicitly gated preview files.
+
 The Categories preview is a separate dev-only read experiment on the same
 screen. It uses `selectedReadRepositories` to load categories and buckets through
 the currently selected backend, then renders only structural fields such as IDs,
