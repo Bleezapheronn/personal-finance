@@ -202,13 +202,15 @@ recipients preview with the same flag. The Accounts management page can show an
 experimental selected-read accounts preview with the same flag. The SMS Import
 Templates management page can show an experimental selected-read SMS templates
 preview with the same flag. The Budget History page can show an experimental
-selected-read budget snapshot preview with the same flag. These sections are
-hidden by default. Restart Vite after changing this flag. They use
+selected-read budget snapshot preview with the same flag. The Transactions page
+can show an experimental selected-read transactions preview with the same flag.
+These sections are hidden by default. Restart Vite after changing this flag. They use
 `selectedReadRepositories` to manually load small read-only previews through the
 currently selected backend, but the real management lists, search,
 create/edit/delete actions, merge actions, activation actions, import/test-parse
-behavior, Budget History grouping/filtering/completion/linking behavior, and
-reorder behavior continue to use the existing Dexie paths.
+behavior, transaction loading/filtering/edit/delete/transfer/export behavior,
+Budget History grouping/filtering/completion/linking behavior, and reorder
+behavior continue to use the existing Dexie paths.
 
 The previews are structural-summary-only: backend/source, counts when available,
 loaded counts, sampled IDs, category id, category bucketId, category active
@@ -219,8 +221,10 @@ credit-limit presence boolean. The SMS template preview adds template id,
 template active state, account/payment-method ids, and regex/pattern presence
 booleans only. The Budget History preview adds budget snapshot id, budget id,
 category/account/recipient ids, due-date day key, frequency, boolean flags, and
-amount sign only. It does not call budget snapshot migration, generation,
-pruning, dedupe, repair, or lifecycle helpers. The previews do not render
+amount sign only. The Transactions preview adds transaction id, date day key,
+amount sign only, transaction-cost presence, transfer flag, category/account/
+recipient ids, and budget snapshot id. It does not call budget snapshot
+migration, generation, pruning, dedupe, repair, or lifecycle helpers. The previews do not render
 category names, bucket names, recipient names, contact values, aliases, account
 names, account descriptions, credit-limit values, image data, SMS template
 names, SMS template descriptions, regex/pattern strings, budget descriptions,

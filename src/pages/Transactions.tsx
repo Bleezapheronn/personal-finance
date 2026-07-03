@@ -30,6 +30,7 @@ import {
   IonFab,
   IonFabButton,
   IonToast,
+  IonBadge,
 } from "@ionic/react";
 
 import { useHistory } from "react-router-dom";
@@ -55,9 +56,25 @@ import {
   recipientRepository,
   transactionRepository,
 } from "../repositories";
+import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
+import {
+  booleanValue,
+  type DevPreviewListResult,
+  isSelectedReadPreviewsEnabled,
+  numberValue,
+  previewRows,
+  safePreviewErrorCode,
+  sampledIds,
+} from "../utils/devPreview";
+import {
+  getRepositoryBackend,
+  type RepositoryBackend,
+} from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
+const SELECTED_READ_PREVIEW_LIMIT = 20;
 
 const normalizeToLocalDay = (value: string | Date): Date => {
   const date = new Date(value);
@@ -86,6 +103,66 @@ interface DuplicateTransactionPrefill {
   description: string;
 }
 
+type AmountSign = "negative" | "positive" | "zero" | "unknown";
+
+interface SelectedReadTransactionPreviewRow {
+  id?: number;
+  dateDayKey?: string;
+  amountSign: AmountSign;
+  hasTransactionCost: boolean;
+  isTransfer?: boolean | null;
+  categoryId?: number;
+  accountId?: number;
+  recipientId?: number;
+  budgetSnapshotId?: number;
+}
+
+interface SelectedReadTransactionsPreview {
+  status: "pass" | "fail";
+  backend: RepositoryBackend;
+  source: string;
+  count?: number;
+  loadedRowCount?: number;
+  sampledIds?: number[];
+  rows: SelectedReadTransactionPreviewRow[];
+  errorCode?: string;
+}
+
+const toDayKey = (value: unknown): string | undefined => {
+  if (typeof value !== "string" && !(value instanceof Date)) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return date.toISOString().slice(0, 10);
+};
+
+const amountSign = (value: unknown): AmountSign => {
+  const amount = numberValue(value);
+  if (amount === undefined) {
+    return "unknown";
+  }
+
+  if (amount < 0) {
+    return "negative";
+  }
+
+  if (amount > 0) {
+    return "positive";
+  }
+
+  return "zero";
+};
+
+const hasTransactionCost = (value: unknown): boolean => {
+  const cost = numberValue(value);
+  return cost !== undefined && cost !== 0;
+};
+
 const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -108,6 +185,10 @@ const Transactions: React.FC = () => {
   const [visibleTransactionWindowDays, setVisibleTransactionWindowDays] =
     useState(TRANSACTION_BATCH_DAYS);
   const [hasMoreTransactions, setHasMoreTransactions] = useState(true);
+  const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
+    useState(false);
+  const [selectedReadPreview, setSelectedReadPreview] =
+    useState<SelectedReadTransactionsPreview | null>(null);
 
   // Filter states - CHANGED: accountId instead of paymentMethodId
   const [selectedAccountId, setSelectedAccountId] = useState<
@@ -128,6 +209,7 @@ const Transactions: React.FC = () => {
   const [selectedDescription, setSelectedDescription] = useState<string>("");
 
   const history = useHistory();
+  const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
 
   const fetchTransactions = async () => {
     setLoading(true);
@@ -271,6 +353,76 @@ const Transactions: React.FC = () => {
     setIsTransferDelete(isTransfer);
     setTransactionToDelete(id);
     setShowDeleteConfirm(true);
+  };
+
+  const loadSelectedReadPreview = async () => {
+    setSelectedReadPreviewLoading(true);
+    setSelectedReadPreview(null);
+
+    const backend = getRepositoryBackend();
+    const repositories = getSelectedReadRepositories(backend);
+    const source = repositories.source;
+
+    try {
+      const [count, result] = await Promise.all([
+        repositories.transactions.count(),
+        repositories.transactions.list({
+          limit: SELECTED_READ_PREVIEW_LIMIT,
+          offset: 0,
+        }),
+      ]);
+      const rows = previewRows(result as DevPreviewListResult);
+
+      if (!rows) {
+        setSelectedReadPreview({
+          status: "fail",
+          backend,
+          source,
+          rows: [],
+          errorCode: "invalid_selected_read_transactions_preview_response",
+        });
+        return;
+      }
+
+      const visibleRows = rows.slice(0, SELECTED_READ_PREVIEW_LIMIT);
+
+      setSelectedReadPreview({
+        status: "pass",
+        backend,
+        source,
+        count,
+        loadedRowCount: visibleRows.length,
+        sampledIds: sampledIds(visibleRows, SELECTED_READ_PREVIEW_LIMIT),
+        rows: visibleRows.map((row) => ({
+          id: numberValue(row.id),
+          dateDayKey: toDayKey((row as { date?: unknown }).date),
+          amountSign: amountSign((row as { amount?: unknown }).amount),
+          hasTransactionCost: hasTransactionCost(
+            (row as { transactionCost?: unknown }).transactionCost,
+          ),
+          isTransfer: booleanValue((row as { isTransfer?: unknown }).isTransfer),
+          categoryId: numberValue((row as { categoryId?: unknown }).categoryId),
+          accountId: numberValue((row as { accountId?: unknown }).accountId),
+          recipientId: numberValue((row as { recipientId?: unknown }).recipientId),
+          budgetSnapshotId: numberValue(
+            (row as { budgetSnapshotId?: unknown }).budgetSnapshotId,
+          ),
+        })),
+      });
+    } catch (err) {
+      setSelectedReadPreview({
+        status: "fail",
+        backend,
+        source,
+        rows: [],
+        errorCode: safePreviewErrorCode(
+          err,
+          "selected_read_transactions_preview_failed",
+        ),
+      });
+    } finally {
+      setSelectedReadPreviewLoading(false);
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -950,6 +1102,83 @@ const Transactions: React.FC = () => {
 
         {loading && <IonSpinner name="crescent" />}
         {error && <IonText color="danger">{error}</IonText>}
+
+        {showSelectedReadPreview && (
+          <SelectedReadPreviewCard
+            title="Experimental selected-read Transactions preview"
+            resourceLabel="Selected-read transactions"
+            loading={selectedReadPreviewLoading}
+            onLoad={() => void loadSelectedReadPreview()}
+            description="This preview manually reads a tiny selected-read transaction sample. It does not replace this page, alter filters, export data, or change edit/delete/transfer behavior."
+          >
+            {selectedReadPreview && (
+              <IonList>
+                <IonItem>
+                  <IonLabel>Backend / source</IonLabel>
+                  <IonText slot="end">
+                    {selectedReadPreview.backend} / {selectedReadPreview.source}
+                  </IonText>
+                </IonItem>
+                <IonItem>
+                  <IonLabel>Status</IonLabel>
+                  <IonBadge
+                    color={
+                      selectedReadPreview.status === "pass"
+                        ? "success"
+                        : "danger"
+                    }
+                    slot="end"
+                  >
+                    {selectedReadPreview.status === "pass" ? "Pass" : "Fail"}
+                  </IonBadge>
+                </IonItem>
+                {selectedReadPreview.errorCode && (
+                  <IonItem>
+                    <IonLabel>Safe error code</IonLabel>
+                    <IonText slot="end">
+                      {selectedReadPreview.errorCode}
+                    </IonText>
+                  </IonItem>
+                )}
+                <IonItem>
+                  <IonLabel>
+                    <h3>Transactions</h3>
+                    <p>
+                      count={selectedReadPreview.count ?? "-"} loaded=
+                      {selectedReadPreview.loadedRowCount ?? "-"} sampledIds=
+                      {selectedReadPreview.sampledIds?.length
+                        ? selectedReadPreview.sampledIds.join(", ")
+                        : "-"}
+                    </p>
+                  </IonLabel>
+                </IonItem>
+                {selectedReadPreview.rows.map((transaction) => (
+                  <IonItem
+                    key={`selected-transaction-${transaction.id ?? "none"}`}
+                  >
+                    <IonLabel>
+                      <h3>transaction id={transaction.id ?? "-"}</h3>
+                      <p>
+                        dateDayKey={transaction.dateDayKey ?? "-"} amountSign=
+                        {transaction.amountSign} hasTransactionCost=
+                        {String(transaction.hasTransactionCost)} isTransfer=
+                        {transaction.isTransfer === undefined
+                          ? "-"
+                          : String(transaction.isTransfer)}
+                      </p>
+                      <p>
+                        categoryId={transaction.categoryId ?? "-"} accountId=
+                        {transaction.accountId ?? "-"} recipientId=
+                        {transaction.recipientId ?? "-"} budgetSnapshotId=
+                        {transaction.budgetSnapshotId ?? "-"}
+                      </p>
+                    </IonLabel>
+                  </IonItem>
+                ))}
+              </IonList>
+            )}
+          </SelectedReadPreviewCard>
+        )}
 
         {!loading && transactions && transactions.length > 0 && (
           <IonCard style={{ margin: 0, marginBottom: "16px" }}>
