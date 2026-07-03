@@ -60,6 +60,25 @@ The `http-readonly` backend has no write support. Future consumers must not
 silently no-op writes; write attempts in HTTP-readonly mode should fail loudly.
 Dexie remains authoritative.
 
+## Manual Backend Selection Diagnostic
+
+`src/repositories/backendSelectionDiagnostics.ts` verifies the adapter selection
+scaffold without switching the app backend. It checks fallback behavior,
+`http-readonly` recognition, and the read-only write guard. It does not access
+finance rows and does not mutate data.
+
+Run it manually from the Vite dev console:
+
+```ts
+const diagnostics = await import(
+  "/src/repositories/backendSelectionDiagnostics.ts"
+);
+diagnostics.runRepositoryBackendSelectionDiagnostics({ logSummary: true });
+```
+
+The diagnostic is not imported by the app, is not auto-run, and does not change
+the selected backend. Dexie remains authoritative.
+
 ## Manual Parity Diagnostic
 
 `src/repositories/http/localApiParityDiagnostics.ts` contains a manual

@@ -14,19 +14,23 @@ const getEnvValue = (key: string): string | undefined => {
   return value ? value : undefined;
 };
 
-export const getRepositoryBackend = (): RepositoryBackend => {
-  const configuredBackend = getEnvValue(REPOSITORY_BACKEND_ENV_VAR);
-
-  if (!configuredBackend) {
+export const resolveRepositoryBackend = (
+  configuredBackend: string | undefined,
+): RepositoryBackend => {
+  const normalizedBackend = configuredBackend?.trim();
+  if (!normalizedBackend) {
     return DEFAULT_REPOSITORY_BACKEND;
   }
 
-  if (repositoryBackendValues.has(configuredBackend as RepositoryBackend)) {
-    return configuredBackend as RepositoryBackend;
+  if (repositoryBackendValues.has(normalizedBackend as RepositoryBackend)) {
+    return normalizedBackend as RepositoryBackend;
   }
 
   return DEFAULT_REPOSITORY_BACKEND;
 };
+
+export const getRepositoryBackend = (): RepositoryBackend =>
+  resolveRepositoryBackend(getEnvValue(REPOSITORY_BACKEND_ENV_VAR));
 
 export const isDexieRepositoryBackend = (): boolean =>
   getRepositoryBackend() === "dexie";
@@ -34,8 +38,14 @@ export const isDexieRepositoryBackend = (): boolean =>
 export const isHttpReadonlyRepositoryBackend = (): boolean =>
   getRepositoryBackend() === "http-readonly";
 
-export const assertRepositoryBackendSupportsWrites = (): void => {
-  if (isHttpReadonlyRepositoryBackend()) {
+export const repositoryBackendSupportsWrites = (
+  backend: RepositoryBackend,
+): boolean => backend === "dexie";
+
+export const assertRepositoryBackendSupportsWrites = (
+  backend: RepositoryBackend = getRepositoryBackend(),
+): void => {
+  if (!repositoryBackendSupportsWrites(backend)) {
     throw new Error("http_readonly_repository_backend_does_not_support_writes");
   }
 };
