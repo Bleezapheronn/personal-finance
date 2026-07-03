@@ -12,11 +12,15 @@ import {
   IonButton,
   IonCard,
   IonCardContent,
+  IonCardHeader,
   IonGrid,
   IonRow,
   IonCol,
   IonAlert,
   IonIcon,
+  IonLabel,
+  IonText,
+  IonBadge,
   IonSpinner,
   IonFab,
   IonFabButton,
@@ -36,6 +40,11 @@ import { AddRecipientModal } from "../components/AddRecipientModal";
 import { findAllDuplicatePairs } from "../utils/recipientMerge";
 import { MergeRecipientsModal } from "../components/MergeRecipientsModal";
 import { recipientRepository, transactionRepository } from "../repositories";
+import {
+  getRepositoryBackend,
+  type RepositoryBackend,
+} from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import type { Recipient } from "../db";
 
 type DeleteState =
@@ -43,6 +52,121 @@ type DeleteState =
   | { type: "used"; recipientId: number; recipientName: string }
   | { type: "used_deactivated"; recipientId: number; recipientName: string }
   | { type: "delete"; recipientId: number; recipientName: string };
+
+interface SelectedReadRecipientPreviewRow {
+  id?: number;
+  isActive?: boolean | null;
+  hasAliases: boolean;
+  hasEmail: boolean;
+  hasPhone: boolean;
+  hasTillNumber: boolean;
+  hasPaybill: boolean;
+  hasAccountNumber: boolean;
+}
+
+interface SelectedReadRecipientsPreview {
+  status: "pass" | "fail";
+  backend: RepositoryBackend;
+  source: string;
+  count?: number;
+  loadedRowCount?: number;
+  sampledIds?: number[];
+  rows: SelectedReadRecipientPreviewRow[];
+  errorCode?: string;
+}
+
+type SelectedReadListResult =
+  | Array<{ id?: unknown }>
+  | {
+      count?: unknown;
+      rows?: unknown;
+    };
+
+const SELECTED_READ_PREVIEWS_FLAG =
+  "VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS";
+const SELECTED_READ_PREVIEW_LIMIT = 20;
+
+const envFlagEnabled = (key: string): boolean => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  return env[key]?.trim() === "true";
+};
+
+const selectedReadRows = (
+  result: SelectedReadListResult
+): Array<{ id?: unknown }> | undefined => {
+  if (Array.isArray(result)) {
+    return result;
+  }
+
+  return Array.isArray(result.rows)
+    ? (result.rows as Array<{ id?: unknown }>)
+    : undefined;
+};
+
+const selectedReadCount = (result: SelectedReadListResult): number | undefined =>
+  Array.isArray(result) || typeof result.count !== "number"
+    ? undefined
+    : result.count;
+
+const numberValue = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const booleanValue = (value: unknown): boolean | null | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  return undefined;
+};
+
+const hasValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  return true;
+};
+
+const sampledIds = (rows: Array<{ id?: unknown }>): number[] =>
+  rows
+    .map((row) => row.id)
+    .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+    .slice(0, SELECTED_READ_PREVIEW_LIMIT);
+
+const safeErrorCode = (error: unknown): string => {
+  if (error instanceof Error && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") {
+      return code;
+    }
+  }
+
+  if (error instanceof TypeError) {
+    return "local_api_unavailable";
+  }
+
+  return "selected_read_recipients_preview_failed";
+};
 
 const RecipientsManagement: React.FC = () => {
   const [recipients, setRecipients] = useState<Recipient[]>([]);
@@ -72,6 +196,11 @@ const RecipientsManagement: React.FC = () => {
     Array<[Recipient, Recipient]>
   >([]);
   const [showMergeModal, setShowMergeModal] = useState(false);
+  const showSelectedReadPreview = envFlagEnabled(SELECTED_READ_PREVIEWS_FLAG);
+  const [selectedReadPreview, setSelectedReadPreview] =
+    useState<SelectedReadRecipientsPreview | null>(null);
+  const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
+    useState(false);
 
   useEffect(() => {
     fetchRecipients();
@@ -320,6 +449,69 @@ const RecipientsManagement: React.FC = () => {
     }
   };
 
+  const loadSelectedReadPreview = async () => {
+    setSelectedReadPreviewLoading(true);
+    setSelectedReadPreview(null);
+
+    const backend = getRepositoryBackend();
+    const repositories = getSelectedReadRepositories(backend);
+    const source = repositories.source;
+
+    try {
+      const result = await repositories.recipients.list({
+        limit: SELECTED_READ_PREVIEW_LIMIT,
+        offset: 0,
+      });
+      const rows = selectedReadRows(result as SelectedReadListResult);
+
+      if (!rows) {
+        setSelectedReadPreview({
+          status: "fail",
+          backend,
+          source,
+          rows: [],
+          errorCode: "invalid_selected_read_recipients_preview_response",
+        });
+        return;
+      }
+
+      const previewRows = rows.slice(0, SELECTED_READ_PREVIEW_LIMIT);
+
+      setSelectedReadPreview({
+        status: "pass",
+        backend,
+        source,
+        count: selectedReadCount(result as SelectedReadListResult),
+        loadedRowCount: previewRows.length,
+        sampledIds: sampledIds(previewRows),
+        rows: previewRows.map((row) => ({
+          id: numberValue(row.id),
+          isActive: booleanValue((row as { isActive?: unknown }).isActive),
+          hasAliases: hasValue((row as { aliases?: unknown }).aliases),
+          hasEmail: hasValue((row as { email?: unknown }).email),
+          hasPhone: hasValue((row as { phone?: unknown }).phone),
+          hasTillNumber: hasValue(
+            (row as { tillNumber?: unknown }).tillNumber
+          ),
+          hasPaybill: hasValue((row as { paybill?: unknown }).paybill),
+          hasAccountNumber: hasValue(
+            (row as { accountNumber?: unknown }).accountNumber
+          ),
+        })),
+      });
+    } catch (error) {
+      setSelectedReadPreview({
+        status: "fail",
+        backend,
+        source,
+        rows: [],
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setSelectedReadPreviewLoading(false);
+    }
+  };
+
   /**
    * initiateDeleteRecipient - Checks if recipient has been used in transactions
    * If used: offer to deactivate instead
@@ -369,6 +561,115 @@ const RecipientsManagement: React.FC = () => {
       </IonHeader>
 
       <IonContent className="ion-padding">
+        {showSelectedReadPreview && (
+          <IonCard>
+            <IonCardHeader>
+              <IonText>
+                <h3>Experimental selected-read recipients preview</h3>
+              </IonText>
+              <IonBadge color="warning">Read-only</IonBadge>
+            </IonCardHeader>
+            <IonCardContent>
+              <IonList>
+                <IonItem>
+                  <IonLabel>
+                    <h3>Dexie remains authoritative</h3>
+                    <p>
+                      This preview uses the selected read facade only when
+                      manually loaded. It does not replace this management
+                      screen or change create, edit, delete, search, or merge
+                      actions.
+                    </p>
+                  </IonLabel>
+                </IonItem>
+                <IonItem>
+                  <IonLabel>Selected-read recipients</IonLabel>
+                  <IonButton
+                    slot="end"
+                    size="small"
+                    onClick={() => void loadSelectedReadPreview()}
+                    disabled={selectedReadPreviewLoading}
+                  >
+                    Load preview
+                  </IonButton>
+                  {selectedReadPreviewLoading && (
+                    <IonSpinner name="crescent" slot="end" />
+                  )}
+                </IonItem>
+              </IonList>
+
+              {selectedReadPreview && (
+                <IonList>
+                  <IonItem>
+                    <IonLabel>Backend / source</IonLabel>
+                    <IonText slot="end">
+                      {selectedReadPreview.backend} /{" "}
+                      {selectedReadPreview.source}
+                    </IonText>
+                  </IonItem>
+                  <IonItem>
+                    <IonLabel>Status</IonLabel>
+                    <IonBadge
+                      color={
+                        selectedReadPreview.status === "pass"
+                          ? "success"
+                          : "danger"
+                      }
+                      slot="end"
+                    >
+                      {selectedReadPreview.status === "pass" ? "Pass" : "Fail"}
+                    </IonBadge>
+                  </IonItem>
+                  {selectedReadPreview.errorCode && (
+                    <IonItem>
+                      <IonLabel>Safe error code</IonLabel>
+                      <IonText slot="end">
+                        {selectedReadPreview.errorCode}
+                      </IonText>
+                    </IonItem>
+                  )}
+                  <IonItem>
+                    <IonLabel>
+                      <h3>Recipients</h3>
+                      <p>
+                        count={selectedReadPreview.count ?? "-"} loaded=
+                        {selectedReadPreview.loadedRowCount ?? "-"} sampledIds=
+                        {selectedReadPreview.sampledIds?.length
+                          ? selectedReadPreview.sampledIds.join(", ")
+                          : "-"}
+                      </p>
+                    </IonLabel>
+                  </IonItem>
+                  {selectedReadPreview.rows.map((recipient) => (
+                    <IonItem
+                      key={`selected-recipient-${recipient.id ?? "none"}`}
+                    >
+                      <IonLabel>
+                        <h3>recipient id={recipient.id ?? "-"}</h3>
+                        <p>
+                          isActive=
+                          {recipient.isActive === undefined
+                            ? "-"
+                            : String(recipient.isActive)}{" "}
+                          hasAliases={String(recipient.hasAliases)} hasEmail=
+                          {String(recipient.hasEmail)} hasPhone=
+                          {String(recipient.hasPhone)}
+                        </p>
+                        <p>
+                          hasTillNumber={String(recipient.hasTillNumber)}{" "}
+                          hasPaybill={String(recipient.hasPaybill)}{" "}
+                          hasAccountNumber=
+                          {String(recipient.hasAccountNumber)}
+                        </p>
+                      </IonLabel>
+                    </IonItem>
+                  ))}
+                </IonList>
+              )}
+            </IonCardContent>
+          </IonCard>
+        )}
+
         {/* NEW: DUPLICATE NOTIFICATION BANNER */}
         {duplicatePairs.length > 0 && (
           <IonCard
