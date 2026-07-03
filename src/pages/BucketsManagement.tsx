@@ -27,6 +27,12 @@ import {
   IonToast,
   IonReorder,
   IonReorderGroup,
+  IonCard,
+  IonCardContent,
+  IonCardHeader,
+  IonText,
+  IonBadge,
+  IonSpinner,
   ItemReorderEventDetail,
 } from "@ionic/react";
 import {
@@ -40,6 +46,8 @@ import {
 } from "ionicons/icons";
 import { db, Bucket, Category } from "../db";
 import { AddCategoryModal } from "../components/AddCategoryModal";
+import { getRepositoryBackend, type RepositoryBackend } from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { categoryRepository, transactionRepository } from "../repositories";
 
 /**
@@ -63,6 +71,114 @@ type DeleteCategoryState =
   | { type: "used"; categoryId: number; categoryName: string }
   | { type: "used_deactivated"; categoryId: number; categoryName: string }
   | { type: "delete"; categoryId: number; categoryName: string };
+
+interface SelectedReadPreviewRow {
+  id?: number;
+}
+
+interface SelectedReadCategoryPreviewRow extends SelectedReadPreviewRow {
+  bucketId?: number;
+  isActive?: boolean | null;
+}
+
+interface SelectedReadBucketPreviewRow extends SelectedReadPreviewRow {
+  displayOrder?: number;
+  isActive?: boolean | null;
+}
+
+interface SelectedReadCategoriesPreview {
+  status: "pass" | "fail";
+  backend: RepositoryBackend;
+  source: string;
+  categories: {
+    count?: number;
+    loadedRowCount?: number;
+    sampledIds?: number[];
+    rows: SelectedReadCategoryPreviewRow[];
+  };
+  buckets: {
+    count?: number;
+    loadedRowCount?: number;
+    sampledIds?: number[];
+    rows: SelectedReadBucketPreviewRow[];
+  };
+  errorCode?: string;
+}
+
+type SelectedReadListResult = Array<{ id?: unknown }> | {
+  count?: unknown;
+  rows?: unknown;
+};
+
+const SELECTED_READ_PREVIEWS_FLAG =
+  "VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS";
+const SELECTED_READ_PREVIEW_LIMIT = 20;
+
+const envFlagEnabled = (key: string): boolean => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  return env[key]?.trim() === "true";
+};
+
+const selectedReadRows = (
+  result: SelectedReadListResult,
+): Array<{ id?: unknown }> | undefined => {
+  if (Array.isArray(result)) {
+    return result;
+  }
+
+  return Array.isArray(result.rows)
+    ? (result.rows as Array<{ id?: unknown }>)
+    : undefined;
+};
+
+const selectedReadCount = (result: SelectedReadListResult): number | undefined =>
+  Array.isArray(result) || typeof result.count !== "number"
+    ? undefined
+    : result.count;
+
+const numberValue = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const booleanValue = (value: unknown): boolean | null | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  return undefined;
+};
+
+const sampledIds = (rows: Array<{ id?: unknown }>): number[] =>
+  rows
+    .map((row) => row.id)
+    .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+    .slice(0, SELECTED_READ_PREVIEW_LIMIT);
+
+const safeErrorCode = (error: unknown): string => {
+  if (error instanceof Error && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") {
+      return code;
+    }
+  }
+
+  if (error instanceof TypeError) {
+    return "local_api_unavailable";
+  }
+
+  return "selected_read_preview_failed";
+};
 
 const BucketsManagement: React.FC = () => {
   // buckets state
@@ -96,6 +212,11 @@ const BucketsManagement: React.FC = () => {
   const [showToast, setShowToast] = useState(false);
   const [alertMessage] = useState("");
   const [showAlert, setShowAlert] = useState(false);
+  const showSelectedReadPreview = envFlagEnabled(SELECTED_READ_PREVIEWS_FLAG);
+  const [selectedReadPreview, setSelectedReadPreview] =
+    useState<SelectedReadCategoriesPreview | null>(null);
+  const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
+    useState(false);
 
   // modal states
   const [showBucketModal, setShowBucketModal] = useState(false);
@@ -335,6 +456,92 @@ const BucketsManagement: React.FC = () => {
   const getCategoriesForBucket = (bId?: number) =>
     categories.filter((c) => c.bucketId === bId);
 
+  const loadSelectedReadPreview = async () => {
+    setSelectedReadPreviewLoading(true);
+    setSelectedReadPreview(null);
+
+    const backend = getRepositoryBackend();
+    const repositories = getSelectedReadRepositories(backend);
+    const source = repositories.source;
+
+    try {
+      const listOptions = {
+        limit: SELECTED_READ_PREVIEW_LIMIT,
+        offset: 0,
+      };
+      const [categoryResult, bucketResult] = await Promise.all([
+        repositories.categories.list(listOptions),
+        repositories.buckets.list(listOptions),
+      ]);
+      const categoryRows = selectedReadRows(
+        categoryResult as SelectedReadListResult,
+      );
+      const bucketRows = selectedReadRows(
+        bucketResult as SelectedReadListResult,
+      );
+
+      if (!categoryRows || !bucketRows) {
+        setSelectedReadPreview({
+          status: "fail",
+          backend,
+          source,
+          categories: { rows: [] },
+          buckets: { rows: [] },
+          errorCode: "invalid_selected_read_preview_response",
+        });
+        return;
+      }
+
+      const categoryPreviewRows = categoryRows.slice(
+        0,
+        SELECTED_READ_PREVIEW_LIMIT,
+      );
+      const bucketPreviewRows = bucketRows.slice(
+        0,
+        SELECTED_READ_PREVIEW_LIMIT,
+      );
+
+      setSelectedReadPreview({
+        status: "pass",
+        backend,
+        source,
+        categories: {
+          count: selectedReadCount(categoryResult as SelectedReadListResult),
+          loadedRowCount: categoryPreviewRows.length,
+          sampledIds: sampledIds(categoryPreviewRows),
+          rows: categoryPreviewRows.map((row) => ({
+            id: numberValue(row.id),
+            bucketId: numberValue((row as { bucketId?: unknown }).bucketId),
+            isActive: booleanValue((row as { isActive?: unknown }).isActive),
+          })),
+        },
+        buckets: {
+          count: selectedReadCount(bucketResult as SelectedReadListResult),
+          loadedRowCount: bucketPreviewRows.length,
+          sampledIds: sampledIds(bucketPreviewRows),
+          rows: bucketPreviewRows.map((row) => ({
+            id: numberValue(row.id),
+            displayOrder: numberValue(
+              (row as { displayOrder?: unknown }).displayOrder,
+            ),
+            isActive: booleanValue((row as { isActive?: unknown }).isActive),
+          })),
+        },
+      });
+    } catch (error) {
+      setSelectedReadPreview({
+        status: "fail",
+        backend,
+        source,
+        categories: { rows: [] },
+        buckets: { rows: [] },
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setSelectedReadPreviewLoading(false);
+    }
+  };
+
   const handleOpenBucketModal = () => {
     resetForm();
     setShowBucketModal(true);
@@ -544,6 +751,131 @@ const BucketsManagement: React.FC = () => {
             <IonIcon icon={add} />
           </IonFabButton>
         </IonFab>
+
+        {showSelectedReadPreview && (
+          <IonCard>
+            <IonCardHeader>
+              <IonText>
+                <h3>Experimental selected-read preview</h3>
+              </IonText>
+              <IonBadge color="warning">Read-only</IonBadge>
+            </IonCardHeader>
+            <IonCardContent>
+              <IonList>
+                <IonItem>
+                  <IonLabel>
+                    <h3>Dexie remains authoritative</h3>
+                    <p>
+                      This preview uses the selected read facade only when
+                      manually loaded. It does not replace this management
+                      screen or change create, edit, delete, or reorder actions.
+                    </p>
+                  </IonLabel>
+                </IonItem>
+                <IonItem>
+                  <IonLabel>Selected-read categories and buckets</IonLabel>
+                  <IonButton
+                    slot="end"
+                    size="small"
+                    onClick={() => void loadSelectedReadPreview()}
+                    disabled={selectedReadPreviewLoading}
+                  >
+                    Load preview
+                  </IonButton>
+                  {selectedReadPreviewLoading && (
+                    <IonSpinner name="crescent" slot="end" />
+                  )}
+                </IonItem>
+              </IonList>
+
+              {selectedReadPreview && (
+                <IonList>
+                  <IonItem>
+                    <IonLabel>Backend / source</IonLabel>
+                    <IonText slot="end">
+                      {selectedReadPreview.backend} /{" "}
+                      {selectedReadPreview.source}
+                    </IonText>
+                  </IonItem>
+                  <IonItem>
+                    <IonLabel>Status</IonLabel>
+                    <IonBadge
+                      color={
+                        selectedReadPreview.status === "pass"
+                          ? "success"
+                          : "danger"
+                      }
+                      slot="end"
+                    >
+                      {selectedReadPreview.status === "pass" ? "Pass" : "Fail"}
+                    </IonBadge>
+                  </IonItem>
+                  {selectedReadPreview.errorCode && (
+                    <IonItem>
+                      <IonLabel>Safe error code</IonLabel>
+                      <IonText slot="end">
+                        {selectedReadPreview.errorCode}
+                      </IonText>
+                    </IonItem>
+                  )}
+                  <IonItem>
+                    <IonLabel>
+                      <h3>Categories</h3>
+                      <p>
+                        count={selectedReadPreview.categories.count ?? "-"}{" "}
+                        loaded=
+                        {selectedReadPreview.categories.loadedRowCount ?? "-"}{" "}
+                        sampledIds=
+                        {selectedReadPreview.categories.sampledIds?.length
+                          ? selectedReadPreview.categories.sampledIds.join(", ")
+                          : "-"}
+                      </p>
+                    </IonLabel>
+                  </IonItem>
+                  {selectedReadPreview.categories.rows.map((category) => (
+                    <IonItem key={`selected-category-${category.id ?? "none"}`}>
+                      <IonLabel>
+                        <h3>category id={category.id ?? "-"}</h3>
+                        <p>
+                          bucketId={category.bucketId ?? "-"} isActive=
+                          {category.isActive === undefined
+                            ? "-"
+                            : String(category.isActive)}
+                        </p>
+                      </IonLabel>
+                    </IonItem>
+                  ))}
+                  <IonItem>
+                    <IonLabel>
+                      <h3>Buckets</h3>
+                      <p>
+                        count={selectedReadPreview.buckets.count ?? "-"} loaded=
+                        {selectedReadPreview.buckets.loadedRowCount ?? "-"}{" "}
+                        sampledIds=
+                        {selectedReadPreview.buckets.sampledIds?.length
+                          ? selectedReadPreview.buckets.sampledIds.join(", ")
+                          : "-"}
+                      </p>
+                    </IonLabel>
+                  </IonItem>
+                  {selectedReadPreview.buckets.rows.map((bucket) => (
+                    <IonItem key={`selected-bucket-${bucket.id ?? "none"}`}>
+                      <IonLabel>
+                        <h3>bucket id={bucket.id ?? "-"}</h3>
+                        <p>
+                          displayOrder={bucket.displayOrder ?? "-"} isActive=
+                          {bucket.isActive === undefined
+                            ? "-"
+                            : String(bucket.isActive)}
+                        </p>
+                      </IonLabel>
+                    </IonItem>
+                  ))}
+                </IonList>
+              )}
+            </IonCardContent>
+          </IonCard>
+        )}
 
         {/* Buckets list with categories nested as accordions */}
         <IonAccordionGroup>

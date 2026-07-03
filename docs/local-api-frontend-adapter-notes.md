@@ -17,6 +17,7 @@ VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie
 VITE_PERSONAL_FINANCE_LOCAL_API_URL=http://127.0.0.1:3147
 VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN=<local prototype token>
 VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS=true
+VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS=true
 ```
 
 `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND` supports:
@@ -33,6 +34,11 @@ switch any live page or route to HTTP.
 Local API Diagnostics screen. The screen is hidden by default and should remain
 off for normal app use. Restart Vite after changing any `VITE_` environment
 value.
+
+`VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS=true` enables opt-in
+selected-read preview sections on real workflow screens. These previews are
+hidden by default, read-only, and experimental. They do not replace the real
+screen data source or write behavior. Restart Vite after changing this flag.
 
 Do not commit `.env` files or token values. The local API client fails closed
 when its URL or token is missing, and it does not include token values in thrown
@@ -173,6 +179,22 @@ does not switch any normal workflow page to HTTP.
 
 Do not commit `.env.local`. Dexie remains authoritative and SQLite remains
 disposable.
+
+## Real-Screen Selected Read Previews
+
+The Categories/Buckets management page can show an experimental selected-read
+preview when `VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS=true` is set.
+This section is hidden by default. It uses `selectedReadRepositories` to manually
+load a small read-only categories/buckets preview through the currently selected
+backend, but the real management list, create/edit/delete actions, and reorder
+behavior continue to use the existing Dexie paths.
+
+The preview is structural-summary-only: backend/source, counts when available,
+loaded counts, sampled IDs, category id, category bucketId, category active
+state, bucket id, bucket display order, and bucket active state. It does not
+render category names, bucket names, descriptions, raw rows, token values, or
+SQLite paths. `http-readonly` remains experimental and Dexie remains
+authoritative.
 
 ## Manual Parity Diagnostic
 
