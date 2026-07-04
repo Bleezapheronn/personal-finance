@@ -184,6 +184,12 @@ adapter wiring. The guard scans frontend source files and fails if selected-read
 or local API HTTP imports appear outside the approved adapter, diagnostic, and
 explicitly gated preview files.
 
+Run `npm run check:no-runtime-artifacts` before committing local API or SQLite
+prototype work. The guard checks the git worktree for artifact-like paths such
+as `.env` files, local tokens, SQLite databases, generated backups, exports,
+logs, import summaries, and report JSON files without reading or printing file
+contents.
+
 The Categories preview is a separate dev-only read experiment on the same
 screen. It uses `selectedReadRepositories` to load categories and buckets through
 the currently selected backend, then renders only structural fields such as IDs,

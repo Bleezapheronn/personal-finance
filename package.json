@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "check:selected-read-imports": "node scripts/check-selected-read-imports.mjs",
+    "check:no-runtime-artifacts": "node scripts/check-no-runtime-artifacts.mjs",
     "test.e2e": "cypress run",
     "test.unit": "vitest",
     "lint": "eslint"
