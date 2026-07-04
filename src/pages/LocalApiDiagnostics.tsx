@@ -79,6 +79,7 @@ interface DiagnosticSummary {
   totalMismatches?: number;
   sampledIds?: Array<number | string>;
   codes?: string[];
+  hasWarnings?: boolean;
   errorCode?: string;
 }
 
@@ -202,6 +203,10 @@ const sampledIds = (checks: Array<{ sampledIds?: number[] }>): number[] => {
 };
 
 const statusColor = (summary: DiagnosticSummary): string => {
+  if (summary.status === "pass" && summary.hasWarnings === true) {
+    return "warning";
+  }
+
   if (summary.status === "pass") {
     return "success";
   }
@@ -223,6 +228,10 @@ const statusText = (summary: DiagnosticSummary): string => {
   }
 
   if (summary.status === "pass") {
+    if (summary.hasWarnings === true) {
+      return "Pass with warnings";
+    }
+
     return "Pass";
   }
 
@@ -1479,6 +1488,7 @@ const LocalApiDiagnostics: React.FC = () => {
         ok: result.ok,
         comparedChecks: result.comparedChecks,
         failedChecks: result.failedChecks,
+        hasWarnings: result.warningCodes.length > 0,
         sampledIds: [
           ...new Set([...result.sampledDexieIds, ...result.sampledHttpIds]),
         ].slice(0, 12),
