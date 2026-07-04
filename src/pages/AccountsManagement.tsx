@@ -51,6 +51,7 @@ import {
   trashOutline,
   checkmarkCircleOutline,
   closeCircleOutline,
+  warningOutline,
 } from "ionicons/icons";
 import { db } from "../db";
 import { AddAccountModal } from "../components/AddAccountModal";
@@ -105,6 +106,46 @@ interface SelectedReadAccountsPreview {
 }
 
 const SELECTED_READ_PREVIEW_LIMIT = 20;
+const ACCOUNTS_READ_EXPERIMENT_FLAG =
+  "VITE_PERSONAL_FINANCE_ACCOUNTS_READ_EXPERIMENT";
+const ACCOUNTS_READ_EXPERIMENT_LIMIT = 500;
+
+const isAccountsReadExperimentEnabled = (): boolean => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  return env[ACCOUNTS_READ_EXPERIMENT_FLAG]?.trim() === "true";
+};
+
+const dateValue = (value: unknown): Date => {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return new Date(0);
+};
+
+const selectedReadRowToAccount = (row: { id?: unknown }): Account => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: numberValue(source.id),
+    name: stringValue(source.name) ?? "",
+    description: stringValue(source.description),
+    currency: stringValue(source.currency),
+    imageBlob: null,
+    isActive: booleanValue(source.isActive) !== false,
+    isCredit: booleanValue(source.isCredit) === true,
+    creditLimit: numberValue(source.creditLimit),
+    createdAt: dateValue(source.createdAt),
+    updatedAt: dateValue(source.updatedAt),
+  };
+};
 
 const AccountsManagement: React.FC = () => {
   // Account state
@@ -124,6 +165,18 @@ const AccountsManagement: React.FC = () => {
     useState<SelectedReadAccountsPreview | null>(null);
   const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
     useState(false);
+  const [accountsReadExperimentCount, setAccountsReadExperimentCount] =
+    useState<number | undefined>(undefined);
+
+  const selectedBackend = getRepositoryBackend();
+  const accountsReadExperimentEnabled = isAccountsReadExperimentEnabled();
+  const accountsReadExperimentHttpReadonly =
+    accountsReadExperimentEnabled && selectedBackend === "http-readonly";
+
+  const showReadExperimentWriteDisabledToast = () => {
+    setToastMessage("Switch back to Dexie to edit accounts");
+    setShowToast(true);
+  };
 
   // Track blob URLs for cleanup
   const blobUrlsRef = useRef<Set<string>>(new Set());
@@ -155,7 +208,28 @@ const AccountsManagement: React.FC = () => {
       });
       blobUrlsRef.current.clear();
 
-      const fetched: Account[] = await accountRepository.listAccounts();
+      let fetched: Account[];
+      let selectedReadCount: number | undefined;
+
+      if (accountsReadExperimentHttpReadonly) {
+        const repositories = getSelectedReadRepositories(selectedBackend);
+        const result = await repositories.accounts.list({
+          limit: ACCOUNTS_READ_EXPERIMENT_LIMIT,
+          offset: 0,
+        });
+        const rows = previewRows(result as DevPreviewListResult);
+
+        if (!rows) {
+          throw new Error("invalid_accounts_read_experiment_response");
+        }
+
+        fetched = rows.map(selectedReadRowToAccount);
+        selectedReadCount = previewCount(result as DevPreviewListResult);
+      } else {
+        fetched = await accountRepository.listAccounts();
+      }
+
+      setAccountsReadExperimentCount(selectedReadCount);
       const withPreview: LocalAccount[] = fetched.map((a) => {
         let preview: string | undefined;
         if (a.imageBlob) {
@@ -176,6 +250,11 @@ const AccountsManagement: React.FC = () => {
    * handleAccountSaved - Called when account is added/updated via modal
    */
   const handleAccountSaved = async (isEdit: boolean) => {
+    if (accountsReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     setEditingAccount(null);
     setToastMessage(
       isEdit ? "Account updated successfully!" : "Account added successfully!"
@@ -188,6 +267,11 @@ const AccountsManagement: React.FC = () => {
    * handleEditAccount - Opens modal with account data
    */
   const handleEditAccount = (account: Account) => {
+    if (accountsReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     setEditingAccount(account);
     setShowAddAccountModal(true);
   };
@@ -208,6 +292,11 @@ const AccountsManagement: React.FC = () => {
    * initiateDeleteAccount - Check account usage and set appropriate delete state
    */
   const initiateDeleteAccount = async (account: Account) => {
+    if (accountsReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     try {
       setLoading(true);
 
@@ -248,6 +337,12 @@ const AccountsManagement: React.FC = () => {
    * handleDeactivateAccount - Deactivates an account instead of deleting
    */
   const handleDeactivateAccount = async (accountId: number) => {
+    if (accountsReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      setDeleteState({ type: "none" });
+      return;
+    }
+
     try {
       setLoading(true);
       await db.accounts.update(accountId, { isActive: false });
@@ -266,6 +361,12 @@ const AccountsManagement: React.FC = () => {
    * handleDeleteAccount - Removes an account from the database
    */
   const handleDeleteAccount = async (accountId: number) => {
+    if (accountsReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      setDeleteState({ type: "none" });
+      return;
+    }
+
     try {
       setLoading(true);
       await db.accounts.delete(accountId);
@@ -285,6 +386,11 @@ const AccountsManagement: React.FC = () => {
    * handleToggleAccountActive - Toggles account active/inactive status
    */
   const handleToggleAccountActive = async (account: Account) => {
+    if (accountsReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     try {
       setLoading(true);
       const newStatus = account.isActive === false ? true : false;
@@ -453,13 +559,50 @@ const AccountsManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
+        {accountsReadExperimentEnabled && (
+          <IonCard>
+            <IonCardContent>
+              <IonText
+                color={
+                  accountsReadExperimentHttpReadonly ? "warning" : "medium"
+                }
+              >
+                <p>
+                  <IonIcon icon={warningOutline} />{" "}
+                  {accountsReadExperimentHttpReadonly
+                    ? "Accounts read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie to edit."
+                    : "Accounts read experiment flag is active with the Dexie backend. Existing Dexie write behavior remains available."}
+                </p>
+                {accountsReadExperimentHttpReadonly && (
+                  <p>
+                    This is a list-only experiment. Transaction-derived account
+                    usage checks remain on the existing Dexie path.
+                  </p>
+                )}
+                {accountsReadExperimentHttpReadonly &&
+                  accountsReadExperimentCount !== undefined &&
+                  accountsReadExperimentCount > accounts.length && (
+                    <p>
+                      Showing {accounts.length} of {accountsReadExperimentCount}{" "}
+                      accounts from the bounded selected-read page.
+                    </p>
+                  )}
+              </IonText>
+            </IonCardContent>
+          </IonCard>
+        )}
+
         {loading && <IonSpinner />}
 
         {/* ACCOUNTS LIST */}
         <IonCard>
           <IonCardContent>
             {accounts.length === 0 ? (
-              <p>No accounts yet. Tap the + button to add one.</p>
+              <p>
+                {accountsReadExperimentHttpReadonly
+                  ? "No accounts were loaded by the read experiment."
+                  : "No accounts yet. Tap the + button to add one."}
+              </p>
             ) : (
               <IonList>
                 {accounts.map((account: LocalAccount) => {
@@ -537,45 +680,49 @@ const AccountsManagement: React.FC = () => {
                               </p>
                             )}
                           </IonCol>
-                          <IonCol size="auto">
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              color="secondary"
-                              title="Edit Account"
-                              onClick={() => handleEditAccount(account)}
-                            >
-                              <IonIcon icon={createOutline} />
-                            </IonButton>
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              title={
-                                isInactive
-                                  ? "Activate account"
-                                  : "Deactivate account"
-                              }
-                              onClick={() => handleToggleAccountActive(account)}
-                              color={isInactive ? "medium" : "success"}
-                            >
-                              <IonIcon
-                                icon={
+                          {!accountsReadExperimentHttpReadonly && (
+                            <IonCol size="auto">
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                color="secondary"
+                                title="Edit Account"
+                                onClick={() => handleEditAccount(account)}
+                              >
+                                <IonIcon icon={createOutline} />
+                              </IonButton>
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                title={
                                   isInactive
-                                    ? closeCircleOutline
-                                    : checkmarkCircleOutline
+                                    ? "Activate account"
+                                    : "Deactivate account"
                                 }
-                              />
-                            </IonButton>
+                                onClick={() =>
+                                  handleToggleAccountActive(account)
+                                }
+                                color={isInactive ? "medium" : "success"}
+                              >
+                                <IonIcon
+                                  icon={
+                                    isInactive
+                                      ? closeCircleOutline
+                                      : checkmarkCircleOutline
+                                  }
+                                />
+                              </IonButton>
 
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              color="danger"
-                              onClick={() => initiateDeleteAccount(account)}
-                            >
-                              <IonIcon icon={trashOutline} />
-                            </IonButton>
-                          </IonCol>
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                color="danger"
+                                onClick={() => initiateDeleteAccount(account)}
+                              >
+                                <IonIcon icon={trashOutline} />
+                              </IonButton>
+                            </IonCol>
+                          )}
                         </IonRow>
                       </IonGrid>
                     </IonItem>
@@ -655,28 +802,32 @@ const AccountsManagement: React.FC = () => {
         />
 
         {/* MODALS */}
-        <AddAccountModal
-          isOpen={showAddAccountModal}
-          onClose={() => {
-            setShowAddAccountModal(false);
-            setEditingAccount(null);
-          }}
-          onAccountAdded={() => handleAccountSaved(!!editingAccount)}
-          editingAccount={editingAccount}
-        />
+        {!accountsReadExperimentHttpReadonly && (
+          <AddAccountModal
+            isOpen={showAddAccountModal}
+            onClose={() => {
+              setShowAddAccountModal(false);
+              setEditingAccount(null);
+            }}
+            onAccountAdded={() => handleAccountSaved(!!editingAccount)}
+            editingAccount={editingAccount}
+          />
+        )}
 
         {/* FAB BUTTON FOR ADDING ACCOUNTS */}
-        <IonFab vertical="bottom" horizontal="end" slot="fixed">
-          <IonFabButton
-            onClick={() => {
-              setEditingAccount(null);
-              setShowAddAccountModal(true);
-            }}
-            title="Add Account"
-          >
-            <IonIcon icon={add} />
-          </IonFabButton>
-        </IonFab>
+        {!accountsReadExperimentHttpReadonly && (
+          <IonFab vertical="bottom" horizontal="end" slot="fixed">
+            <IonFabButton
+              onClick={() => {
+                setEditingAccount(null);
+                setShowAddAccountModal(true);
+              }}
+              title="Add Account"
+            >
+              <IonIcon icon={add} />
+            </IonFabButton>
+          </IonFab>
+        )}
 
         {/* TOAST NOTIFICATIONS */}
         <IonToast

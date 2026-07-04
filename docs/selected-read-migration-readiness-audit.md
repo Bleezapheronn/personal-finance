@@ -1,8 +1,9 @@
 # Selected-Read Migration Readiness Audit
 
 Status: prototype-ready with diagnostics and narrow, off-by-default read-path
-experiments for Recipients and Buckets/Categories. No real workflow screen is
-switched to HTTP unless an explicit per-screen experiment flag is enabled.
+experiments for Recipients, Buckets/Categories, and Accounts. No real workflow
+screen is switched to HTTP unless an explicit per-screen experiment flag is
+enabled.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable and must be
 seeded from a full backup before comparison. The local API and HTTP repository
@@ -38,6 +39,9 @@ adapters are read-only. No write methods or write endpoints exist.
 - Buckets/Categories management has one flag-gated read experiment; it remains
   read-only and disables create, edit, activate/deactivate, delete, and bucket
   reorder controls in `http-readonly` mode.
+- Accounts management has one flag-gated read experiment; it remains read-only
+  and disables create, edit, activate/deactivate, and delete controls in
+  `http-readonly` mode.
 - Local API Diagnostics includes a manual Buckets/Categories read experiment
   diagnostic that compares Dexie and selected-read `http-readonly` counts,
   normalized IDs, bucket display ordering, category grouping, active-state
@@ -197,6 +201,16 @@ Current narrow experiments:
 - In `http-readonly` mode, the Recipients list may load through the selected
   read facade, but create, edit, activate/deactivate, delete, and merge actions
   remain disabled because writes have not migrated.
+
+- Accounts management has a per-screen read experiment flag:
+  `VITE_PERSONAL_FINANCE_ACCOUNTS_READ_EXPERIMENT=true`.
+- Default behavior remains Dexie.
+- In `http-readonly` mode, the Accounts list may load through the selected read
+  facade, but create, edit, activate/deactivate, and delete actions remain
+  disabled because writes have not migrated.
+- The Accounts experiment is list-only. It does not migrate transaction reads or
+  account-balance semantics; transaction-derived usage checks remain on the
+  existing Dexie path.
 - Rollback is switching the relevant experiment flag off or setting the repository
   backend back to `dexie`, then restarting Vite.
 
