@@ -9,6 +9,11 @@ Dexie / IndexedDB remains authoritative. SQLite remains disposable and must be
 seeded from a full backup before comparison. The local API and HTTP repository
 adapters are read-only. No write methods or write endpoints exist.
 
+High-risk workflow areas have a separate planning document:
+[high-risk-selected-read-parity-plan.md](high-risk-selected-read-parity-plan.md).
+Use that plan before attempting any Transactions, Reports, Budget, or Budget
+History `http-readonly` experiment.
+
 ## Implemented
 
 - Local Fastify prototype server with token and origin guards.
