@@ -175,7 +175,16 @@ ordering match status, and counts when available. Count availability is
 informational and is not itself an ordering mismatch. Ordering differences are
 expected to be surfaced before any real screen migration because pagination,
 previews, and first-page UI behavior depend on stable ordering. This diagnostic
-does not fix repository ordering.
+does not expose raw rows or sensitive fields.
+
+Selected-read lookup/management ordering has been normalized for accounts,
+buckets, categories, recipients, and SMS import templates. Those selected-read
+Dexie paths now use deterministic ordering before paging to match the read-only
+HTTP lookup endpoints: buckets by display order then ID, and the other lookup
+resources by name then ID. This does not change the real management page data
+sources or write behavior. Transactions, budgets, and budget snapshots remain
+intentionally unnormalized in this pass and may still show ordering mismatches
+until their higher-risk ordering semantics are reviewed separately.
 
 The selected read preview is also manual and dev-only. It intentionally caps
 loaded preview rows to a tiny sample and does not load or display full tables.

@@ -56,6 +56,18 @@ interface DexiePreviewTable<Row> {
   toArray: () => Promise<Row[]>;
 }
 
+interface IdRow {
+  id?: number;
+}
+
+interface NamedRow extends IdRow {
+  name?: string | null;
+}
+
+interface OrderedRow extends IdRow {
+  displayOrder?: number | null;
+}
+
 const applyDexiePage = <Row>(
   table: DexiePreviewTable<Row>,
   options: DexieListOptions | undefined,
@@ -65,6 +77,52 @@ const applyDexiePage = <Row>(
   }
 
   return table.offset(options.offset ?? 0).limit(options.limit).toArray();
+};
+
+const compareText = (left: string | null | undefined, right: string | null | undefined): number => {
+  const normalizedLeft = left ?? "";
+  const normalizedRight = right ?? "";
+
+  if (normalizedLeft < normalizedRight) {
+    return -1;
+  }
+
+  if (normalizedLeft > normalizedRight) {
+    return 1;
+  }
+
+  return 0;
+};
+
+const compareIds = (left: IdRow, right: IdRow): number =>
+  (left.id ?? Number.MAX_SAFE_INTEGER) - (right.id ?? Number.MAX_SAFE_INTEGER);
+
+const compareByNameThenId = <Row extends NamedRow>(
+  left: Row,
+  right: Row,
+): number => compareText(left.name, right.name) || compareIds(left, right);
+
+const compareByDisplayOrderThenId = <Row extends OrderedRow>(
+  left: Row,
+  right: Row,
+): number =>
+  (left.displayOrder ?? 0) - (right.displayOrder ?? 0) ||
+  compareIds(left, right);
+
+const applySortedDexiePage = async <Row>(
+  table: DexiePreviewTable<Row>,
+  options: DexieListOptions | undefined,
+  compare: (left: Row, right: Row) => number,
+): Promise<Row[]> => {
+  const rows = await table.toArray();
+  const sortedRows = [...rows].sort(compare);
+
+  if (typeof options?.limit !== "number") {
+    return sortedRows;
+  }
+
+  const offset = options.offset ?? 0;
+  return sortedRows.slice(offset, offset + options.limit);
 };
 
 export interface SelectedReadRepositories {
@@ -134,23 +192,28 @@ const dexieReadRepositories: SelectedReadRepositories = {
     count: () => transactionRepository.getTransactionCount(),
   },
   accounts: {
-    list: (options) => applyDexiePage(db.accounts, options),
+    list: (options) =>
+      applySortedDexiePage(db.accounts, options, compareByNameThenId),
     getById: (id) => accountRepository.getAccountById(id),
   },
   buckets: {
-    list: (options) => applyDexiePage(db.buckets, options),
+    list: (options) =>
+      applySortedDexiePage(db.buckets, options, compareByDisplayOrderThenId),
     getById: (id) => categoryRepository.getBucketById(id),
   },
   categories: {
-    list: (options) => applyDexiePage(db.categories, options),
+    list: (options) =>
+      applySortedDexiePage(db.categories, options, compareByNameThenId),
     getById: (id) => categoryRepository.getCategoryById(id),
   },
   recipients: {
-    list: (options) => applyDexiePage(db.recipients, options),
+    list: (options) =>
+      applySortedDexiePage(db.recipients, options, compareByNameThenId),
     getById: (id) => recipientRepository.getRecipientById(id),
   },
   smsImportTemplates: {
-    list: (options) => applyDexiePage(db.smsImportTemplates, options),
+    list: (options) =>
+      applySortedDexiePage(db.smsImportTemplates, options, compareByNameThenId),
     getById: (id) => db.smsImportTemplates.get(id),
   },
   budgets: {
