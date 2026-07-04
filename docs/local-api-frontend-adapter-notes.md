@@ -437,6 +437,36 @@ This diagnostic does not replace the normal gates: use a fresh backup,
 matching SQLite import, restarted API server, `verify:sqlite`, `smoke:api`,
 and `npm run check:local-api-safety` before trusting Dexie-vs-HTTP results.
 
+## SMS Templates Read Experiment
+
+`VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true` enables a narrow
+real-screen selected-read experiment for the SMS Import Templates management
+list. The flag is off by default and is separate from the redacted preview
+flag. Restart Vite after changing it.
+
+When the flag is off, SMS Import Templates management uses the existing Dexie
+read/write paths exactly as before. When the flag is on and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, the page remains on Dexie and
+keeps the normal create, edit, activate/deactivate, delete, import, and
+test-parse behavior. When the flag is on and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`, the list is loaded
+through `selectedReadRepositories.smsImportTemplates`; create, edit,
+activate/deactivate, delete, import, and test-parse actions are hidden or
+disabled because HTTP remains read-only.
+
+The `http-readonly` experiment is list-only. The visible list continues to show
+template names and linked account names where available, matching the existing
+management list shape as closely as practical. Regex and pattern strings are
+not shown in the `http-readonly` list experiment because the edit/test
+workflows remain Dexie-only. The selected-read lookup endpoint is capped to a
+bounded page, and the page labels the result if the loaded SMS template count
+is lower than the reported total. Roll back by turning
+`VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT` off or setting
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite. Before
+trusting HTTP results, use a fresh backup, matching SQLite import, restarted
+API server, `verify:sqlite`, `smoke:api`, and
+`npm run check:local-api-safety`.
+
 ## Manual Parity Diagnostic
 
 `src/repositories/http/localApiParityDiagnostics.ts` contains a manual

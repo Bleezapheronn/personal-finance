@@ -34,6 +34,7 @@ import {
   close,
   checkmarkCircleOutline,
   closeCircleOutline,
+  warningOutline,
 } from "ionicons/icons";
 import { db, SmsImportTemplate, Account } from "../db";
 import {
@@ -56,6 +57,7 @@ import {
   previewRows,
   safePreviewErrorCode,
   sampledIds,
+  stringValue,
 } from "../utils/devPreview";
 
 type LocalAccount = Account & { previewUrl?: string };
@@ -87,6 +89,61 @@ interface SelectedReadSmsTemplatePreview {
 }
 
 const SELECTED_READ_PREVIEW_LIMIT = 20;
+const SMS_TEMPLATES_READ_EXPERIMENT_FLAG =
+  "VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT";
+const SMS_TEMPLATES_READ_EXPERIMENT_LIMIT = 500;
+
+const isSmsTemplatesReadExperimentEnabled = (): boolean => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  return env[SMS_TEMPLATES_READ_EXPERIMENT_FLAG]?.trim() === "true";
+};
+
+const dateValue = (value: unknown): Date => {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return new Date(0);
+};
+
+const selectedReadRowToSmsTemplate = (row: {
+  id?: unknown;
+}): SmsImportTemplate => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: numberValue(source.id),
+    name: stringValue(source.name) ?? "",
+    description: stringValue(source.description),
+    paymentMethodId: numberValue(source.paymentMethodId),
+    accountId: numberValue(source.accountId),
+    referencePattern: stringValue(source.referencePattern),
+    amountPattern: stringValue(source.amountPattern),
+    recipientNamePattern: stringValue(source.recipientNamePattern),
+    recipientPhonePattern: stringValue(source.recipientPhonePattern),
+    dateTimePattern: stringValue(source.dateTimePattern),
+    costPattern: stringValue(source.costPattern),
+    incomePattern: stringValue(source.incomePattern),
+    expensePattern: stringValue(source.expensePattern),
+    isActive: booleanValue(source.isActive) !== false,
+    createdAt: dateValue(source.createdAt),
+    updatedAt: dateValue(source.updatedAt),
+  };
+};
+
+const compareSmsTemplatesByExistingDisplayOrder = (
+  left: SmsImportTemplate,
+  right: SmsImportTemplate,
+): number =>
+  (left.id ?? Number.MAX_SAFE_INTEGER) -
+  (right.id ?? Number.MAX_SAFE_INTEGER);
 
 const SmsImportTemplatesManagement: React.FC = () => {
   const [templates, setTemplates] = useState<SmsImportTemplate[]>([]);
@@ -129,6 +186,19 @@ const SmsImportTemplatesManagement: React.FC = () => {
     useState<SelectedReadSmsTemplatePreview | null>(null);
   const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
     useState(false);
+  const [smsTemplatesReadExperimentCount, setSmsTemplatesReadExperimentCount] =
+    useState<number | undefined>(undefined);
+
+  const selectedBackend = getRepositoryBackend();
+  const smsTemplatesReadExperimentEnabled =
+    isSmsTemplatesReadExperimentEnabled();
+  const smsTemplatesReadExperimentHttpReadonly =
+    smsTemplatesReadExperimentEnabled && selectedBackend === "http-readonly";
+
+  const showReadExperimentActionDisabledToast = () => {
+    setToastMessage("Switch back to Dexie to edit SMS import templates");
+    setShowToast(true);
+  };
 
   useEffect(() => {
     // Capture current blob URLs for cleanup
@@ -152,10 +222,31 @@ const SmsImportTemplatesManagement: React.FC = () => {
       });
       blobUrlsRef.current.clear();
 
-      const [temps, accs] = await Promise.all([
-        smsImportTemplateRepository.listTemplates(),
-        accountRepository.listAccounts(),
-      ]);
+      let temps: SmsImportTemplate[];
+      let selectedReadCount: number | undefined;
+      const accsPromise = accountRepository.listAccounts();
+
+      if (smsTemplatesReadExperimentHttpReadonly) {
+        const repositories = getSelectedReadRepositories(selectedBackend);
+        const result = await repositories.smsImportTemplates.list({
+          limit: SMS_TEMPLATES_READ_EXPERIMENT_LIMIT,
+          offset: 0,
+        });
+        const rows = previewRows(result as DevPreviewListResult);
+
+        if (!rows) {
+          throw new Error("invalid_sms_templates_read_experiment_response");
+        }
+
+        temps = rows
+          .map(selectedReadRowToSmsTemplate)
+          .sort(compareSmsTemplatesByExistingDisplayOrder);
+        selectedReadCount = previewCount(result as DevPreviewListResult);
+      } else {
+        temps = await smsImportTemplateRepository.listTemplates();
+      }
+
+      const accs = await accsPromise;
 
       // Convert accounts to include preview URLs
       const accountsWithPreview: LocalAccount[] = accs.map((a) => {
@@ -168,6 +259,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
       });
 
       setTemplates(temps);
+      setSmsTemplatesReadExperimentCount(selectedReadCount);
       setAccounts(accountsWithPreview);
     } catch (err) {
       console.error("Failed to load SMS import templates:", err);
@@ -205,6 +297,11 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleEditTemplate - Opens modal with template data
    */
   const handleEditTemplate = (template: SmsImportTemplate) => {
+    if (smsTemplatesReadExperimentHttpReadonly) {
+      showReadExperimentActionDisabledToast();
+      return;
+    }
+
     setEditingTemplate(template);
     setFormName(template.name);
     setFormDescription(template.description || "");
@@ -225,6 +322,11 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleSave - Saves or updates template
    */
   const handleSave = async () => {
+    if (smsTemplatesReadExperimentHttpReadonly) {
+      showReadExperimentActionDisabledToast();
+      return;
+    }
+
     setFormError("");
 
     if (!formName.trim()) {
@@ -292,6 +394,11 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleToggleTemplateActive - Toggles template active/inactive status
    */
   const handleToggleTemplateActive = async (template: SmsImportTemplate) => {
+    if (smsTemplatesReadExperimentHttpReadonly) {
+      showReadExperimentActionDisabledToast();
+      return;
+    }
+
     try {
       setLoading(true);
       const newStatus = template.isActive ? false : true;
@@ -313,6 +420,12 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleDeleteTemplate - Removes template from database
    */
   const handleDeleteTemplate = async (templateId: number) => {
+    if (smsTemplatesReadExperimentHttpReadonly) {
+      showReadExperimentActionDisabledToast();
+      setDeleteTemplateId(null);
+      return;
+    }
+
     try {
       setLoading(true);
       await db.smsImportTemplates.delete(templateId);
@@ -520,13 +633,52 @@ const SmsImportTemplatesManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
+        {smsTemplatesReadExperimentEnabled && (
+          <IonCard>
+            <IonCardContent>
+              <IonText
+                color={
+                  smsTemplatesReadExperimentHttpReadonly ? "warning" : "medium"
+                }
+              >
+                <p>
+                  <IonIcon icon={warningOutline} />{" "}
+                  {smsTemplatesReadExperimentHttpReadonly
+                    ? "SMS Templates read experiment is active. List is loaded through selected-read `http-readonly`; writes, imports, and test-parse actions are disabled. Switch back to Dexie to edit."
+                    : "SMS Templates read experiment flag is active with the Dexie backend. Existing Dexie write, import, and test-parse behavior remains available."}
+                </p>
+                {smsTemplatesReadExperimentHttpReadonly && (
+                  <p>
+                    This is a list-only experiment. Regex and pattern values are
+                    not shown unless you switch back to Dexie and open the edit
+                    workflow.
+                  </p>
+                )}
+                {smsTemplatesReadExperimentHttpReadonly &&
+                  smsTemplatesReadExperimentCount !== undefined &&
+                  smsTemplatesReadExperimentCount > templates.length && (
+                    <p>
+                      Showing {templates.length} of{" "}
+                      {smsTemplatesReadExperimentCount} SMS templates from the
+                      bounded selected-read page.
+                    </p>
+                  )}
+              </IonText>
+            </IonCardContent>
+          </IonCard>
+        )}
+
         {loading && <IonSpinner />}
 
         {/* TEMPLATES LIST */}
         <IonCard>
           <IonCardContent>
             {templates.length === 0 ? (
-              <p>No SMS import templates yet. Tap the + button to add one.</p>
+              <p>
+                {smsTemplatesReadExperimentHttpReadonly
+                  ? "No SMS import templates were loaded by the read experiment."
+                  : "No SMS import templates yet. Tap the + button to add one."}
+              </p>
             ) : (
               <IonList>
                 {templates.map((template) => {
@@ -600,48 +752,50 @@ const SmsImportTemplatesManagement: React.FC = () => {
                           </IonCol>
 
                           {/* ACTION BUTTONS */}
-                          <IonCol size="auto">
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              onClick={() => handleEditTemplate(template)}
-                            >
-                              <IonIcon icon={createOutline} />
-                            </IonButton>
+                          {!smsTemplatesReadExperimentHttpReadonly && (
+                            <IonCol size="auto">
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                onClick={() => handleEditTemplate(template)}
+                              >
+                                <IonIcon icon={createOutline} />
+                              </IonButton>
 
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              title={
-                                isInactive
-                                  ? "Activate template"
-                                  : "Deactivate template"
-                              }
-                              onClick={() =>
-                                handleToggleTemplateActive(template)
-                              }
-                              color={isInactive ? "medium" : "success"}
-                            >
-                              <IonIcon
-                                icon={
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                title={
                                   isInactive
-                                    ? closeCircleOutline
-                                    : checkmarkCircleOutline
+                                    ? "Activate template"
+                                    : "Deactivate template"
                                 }
-                              />
-                            </IonButton>
+                                onClick={() =>
+                                  handleToggleTemplateActive(template)
+                                }
+                                color={isInactive ? "medium" : "success"}
+                              >
+                                <IonIcon
+                                  icon={
+                                    isInactive
+                                      ? closeCircleOutline
+                                      : checkmarkCircleOutline
+                                  }
+                                />
+                              </IonButton>
 
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              color="danger"
-                              onClick={() =>
-                                setDeleteTemplateId(template.id ?? null)
-                              }
-                            >
-                              <IonIcon icon={trashOutline} />
-                            </IonButton>
-                          </IonCol>
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                color="danger"
+                                onClick={() =>
+                                  setDeleteTemplateId(template.id ?? null)
+                                }
+                              >
+                                <IonIcon icon={trashOutline} />
+                              </IonButton>
+                            </IonCol>
+                          )}
                         </IonRow>
                       </IonGrid>
                     </IonItem>
@@ -654,7 +808,9 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
         {/* ALERT: Delete template confirmation */}
         <IonAlert
-          isOpen={deleteTemplateId !== null}
+          isOpen={
+            deleteTemplateId !== null && !smsTemplatesReadExperimentHttpReadonly
+          }
           onDidDismiss={() => setDeleteTemplateId(null)}
           header="Delete Template"
           message="Are you sure you want to delete this SMS import template?"
@@ -676,7 +832,12 @@ const SmsImportTemplatesManagement: React.FC = () => {
         />
 
         {/* MODAL: Add/Edit Template */}
-        <IonModal isOpen={showAddTemplateModal} onDidDismiss={handleCloseModal}>
+        <IonModal
+          isOpen={
+            showAddTemplateModal && !smsTemplatesReadExperimentHttpReadonly
+          }
+          onDidDismiss={handleCloseModal}
+        >
           <IonHeader>
             <IonToolbar>
               <IonTitle>
@@ -990,17 +1151,19 @@ const SmsImportTemplatesManagement: React.FC = () => {
         </IonModal>
 
         {/* FAB BUTTON FOR ADDING TEMPLATES */}
-        <IonFab vertical="bottom" horizontal="end" slot="fixed">
-          <IonFabButton
-            onClick={() => {
-              resetForm();
-              setShowAddTemplateModal(true);
-            }}
-            title="Add Template"
-          >
-            <IonIcon icon={add} />
-          </IonFabButton>
-        </IonFab>
+        {!smsTemplatesReadExperimentHttpReadonly && (
+          <IonFab vertical="bottom" horizontal="end" slot="fixed">
+            <IonFabButton
+              onClick={() => {
+                resetForm();
+                setShowAddTemplateModal(true);
+              }}
+              title="Add Template"
+            >
+              <IonIcon icon={add} />
+            </IonFabButton>
+          </IonFab>
+        )}
 
         {/* TOAST NOTIFICATIONS */}
         <IonToast

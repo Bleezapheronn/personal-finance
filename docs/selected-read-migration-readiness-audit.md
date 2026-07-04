@@ -1,9 +1,9 @@
 # Selected-Read Migration Readiness Audit
 
 Status: prototype-ready with diagnostics and narrow, off-by-default read-path
-experiments for Recipients, Buckets/Categories, and Accounts. No real workflow
-screen is switched to HTTP unless an explicit per-screen experiment flag is
-enabled.
+experiments for Recipients, Buckets/Categories, Accounts, and SMS Import
+Templates. No real workflow screen is switched to HTTP unless an explicit
+per-screen experiment flag is enabled.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable and must be
 seeded from a full backup before comparison. The local API and HTTP repository
@@ -42,6 +42,9 @@ adapters are read-only. No write methods or write endpoints exist.
 - Accounts management has one flag-gated read experiment; it remains read-only
   and disables create, edit, activate/deactivate, and delete controls in
   `http-readonly` mode.
+- SMS Import Templates management has one flag-gated read experiment; it
+  remains read-only and disables create, edit, activate/deactivate, delete,
+  import, and test-parse actions in `http-readonly` mode.
 - Local API Diagnostics includes a manual Buckets/Categories read experiment
   diagnostic that compares Dexie and selected-read `http-readonly` counts,
   normalized IDs, bucket display ordering, category grouping, active-state
@@ -138,6 +141,7 @@ the API against that SQLite. Stale SQLite can cause false mismatches.
 | Recipients | `VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and merge disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
 | Buckets/Categories | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and reorder disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
 | Accounts | `VITE_PERSONAL_FINANCE_ACCOUNTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, and delete disabled in `http-readonly` | Passes with warning | Account images/icons intentionally omitted; transaction-derived usage checks remain on the Dexie path and are not migrated | Turn flag off or set backend to `dexie`, then restart Vite |
+| SMS Import Templates | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, import, and test-parse actions disabled in `http-readonly` | Preview/diagnostic baseline only | Regex and pattern strings are not shown in the `http-readonly` list experiment; edit/test workflows remain Dexie-only | Turn flag off or set backend to `dexie`, then restart Vite |
 
 ## Migration Gates
 
@@ -239,6 +243,17 @@ Current narrow experiments:
 - The Accounts experiment intentionally omits account images/icons in
   `http-readonly` mode. Full visual parity requires a separate image/blob
   handling plan if needed.
+
+- SMS Import Templates management has a per-screen read experiment flag:
+  `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true`.
+- Default behavior remains Dexie.
+- In `http-readonly` mode, the SMS template list may load through the selected
+  read facade, but create, edit, activate/deactivate, delete, import, and
+  test-parse actions remain disabled because writes and parsing workflows have
+  not migrated.
+- The SMS Templates experiment is list-only. Template names and linked account
+  names may be shown in the real management list, but regex/pattern strings
+  remain confined to the Dexie-only edit/test workflows.
 - Rollback is switching the relevant experiment flag off or setting the repository
   backend back to `dexie`, then restarting Vite.
 
