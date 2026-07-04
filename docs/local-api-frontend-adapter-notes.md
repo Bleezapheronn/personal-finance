@@ -182,9 +182,9 @@ buckets, categories, recipients, and SMS import templates. Those selected-read
 Dexie paths now use deterministic ordering before paging to match the read-only
 HTTP lookup endpoints: buckets by display order then ID, and the other lookup
 resources by name then ID. This does not change the real management page data
-sources or write behavior. Transactions, budgets, and budget snapshots remain
-intentionally unnormalized in this pass and may still show ordering mismatches
-until their higher-risk ordering semantics are reviewed separately.
+sources or write behavior. Budget snapshots remain intentionally unnormalized
+and may still show ordering mismatches until their higher-risk ordering
+semantics are reviewed separately.
 
 Selected-read transaction ordering has also been normalized between Dexie and
 HTTP read-only paths. It follows the existing live Transactions page semantics:
@@ -193,9 +193,17 @@ the same date, combined total ascending within the same sign, and ID ascending
 as a deterministic tie-breaker. Sorting happens before selected-read
 limit/offset pagination, and transaction filters remain applied before sorting.
 The real Transactions page still uses its existing Dexie loading, filtering,
-edit/delete/transfer, and export behavior. Budgets and budget snapshots remain
-intentionally unnormalized until their ordering semantics are reviewed
-separately.
+edit/delete/transfer, and export behavior.
+
+Selected-read budget ordering has also been normalized between Dexie and HTTP
+read-only paths. It uses due date ascending with ID ascending as the
+deterministic tie-breaker, matching the existing read-only HTTP budget endpoint
+and the Budget page's primary due-date-oriented occurrence display. Sorting
+happens before selected-read limit/offset pagination, and budget filters remain
+applied before sorting. The real Budget page still uses its existing Dexie
+loading, snapshot migration/coverage helpers, create/edit/delete behavior, and
+Budget History behavior. Budget snapshots remain intentionally unnormalized
+until their ordering semantics are reviewed separately.
 
 The selected read preview is also manual and dev-only. It intentionally caps
 loaded preview rows to a tiny sample and does not load or display full tables.

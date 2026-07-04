@@ -223,6 +223,71 @@ const countSelectedReadTransactions = async (
   ).length;
 };
 
+const budgetTime = (date: Date | string | undefined): number => {
+  if (date instanceof Date) {
+    return date.getTime();
+  }
+
+  if (typeof date === "string") {
+    return new Date(date).getTime();
+  }
+
+  return 0;
+};
+
+const compareBudgetsByDueDateThenId = (
+  left: Budget,
+  right: Budget,
+): number => budgetTime(left.dueDate) - budgetTime(right.dueDate) ||
+  compareIds(left, right);
+
+const budgetMatchesFilters = (
+  budget: Budget,
+  options: budgetHttpRepository.BudgetListOptions | undefined,
+): boolean => {
+  if (options?.activeOnly === true && budget.isActive !== true) {
+    return false;
+  }
+
+  if (options?.categoryId !== undefined && budget.categoryId !== options.categoryId) {
+    return false;
+  }
+
+  if (options?.accountId !== undefined && budget.accountId !== options.accountId) {
+    return false;
+  }
+
+  if (options?.recipientId !== undefined && budget.recipientId !== options.recipientId) {
+    return false;
+  }
+
+  if (options?.frequency !== undefined && budget.frequency !== options.frequency) {
+    return false;
+  }
+
+  if (options?.isGoal !== undefined && budget.isGoal !== options.isGoal) {
+    return false;
+  }
+
+  return true;
+};
+
+const applyBudgetFiltersAndPage = async (
+  options: budgetHttpRepository.BudgetListOptions | undefined,
+): Promise<Budget[]> => {
+  const budgets = await db.budgets.toArray();
+  const sortedRows = budgets
+    .filter((budget) => budgetMatchesFilters(budget, options))
+    .sort(compareBudgetsByDueDateThenId);
+
+  if (typeof options?.limit !== "number") {
+    return sortedRows;
+  }
+
+  const offset = options.offset ?? 0;
+  return sortedRows.slice(offset, offset + options.limit);
+};
+
 const applySortedDexiePage = async <Row>(
   table: DexiePreviewTable<Row>,
   options: DexieListOptions | undefined,
@@ -331,7 +396,7 @@ const dexieReadRepositories: SelectedReadRepositories = {
     getById: (id) => db.smsImportTemplates.get(id),
   },
   budgets: {
-    list: (options) => applyDexiePage(db.budgets, options),
+    list: (options) => applyBudgetFiltersAndPage(options),
     getById: (id) => budgetRepository.getBudgetById(id),
   },
   budgetSnapshots: {
