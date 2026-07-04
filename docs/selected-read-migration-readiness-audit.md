@@ -161,7 +161,7 @@ History without a separate parity plan.
 | Buckets/Categories | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and reorder disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
 | Accounts | `VITE_PERSONAL_FINANCE_ACCOUNTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, and delete disabled in `http-readonly` | Passes with warning | Account images/icons intentionally omitted; transaction-derived usage checks remain on the Dexie path and are not migrated | Turn flag off or set backend to `dexie`, then restart Vite |
 | SMS Import Templates | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true` | Existing Dexie read/write/import/test-parse behavior | List loads through selected-read | Writes, imports, and test-parse actions disabled in `http-readonly` | Passes | Regex/pattern values are not exposed in `http-readonly`; edit/test workflow requires Dexie | Turn flag off or set backend to `dexie`, then restart Vite |
-| Transactions | `VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT=true` | Existing Dexie read/write/import/export/transfer behavior | List loads through selected-read with paginated capped reads | Detail navigation, create, edit, delete, duplicate, transfer, import, and CSV export disabled in `http-readonly` | Transactions read parity diagnostic passes with fresh matching SQLite | High-risk workflow screen; HTTP-loaded list is read-only and capped for the experiment | Turn flag off or set backend to `dexie`, then restart Vite |
+| Transactions | `VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT=true` | Existing Dexie Transactions behavior | List loads through selected-read with paginated reads | Detail navigation, add, edit, delete, duplicate, transfer, import, and CSV export disabled in `http-readonly` | Transactions read parity diagnostic passes with fresh matching SQLite | High-risk workflow screen; account/payment icons may show placeholders because images/icons are omitted from the read-only HTTP path; writes, exports, and transfers are not migrated; fresh backup/import/API restart required before trusting parity | Turn flag off or set backend to `dexie`, then restart Vite |
 
 ## Migration Gates
 
@@ -284,6 +284,9 @@ Current narrow experiments:
 - The Transactions experiment is high-risk and should only be trusted after a
   fresh matching SQLite baseline and passing Transactions read parity
   diagnostic.
+- Account/payment icons may fall back to placeholders in `http-readonly`
+  because account image/icon data is not migrated through the read-only HTTP
+  path.
 - Rollback is switching the relevant experiment flag off or setting the repository
   backend back to `dexie`, then restarting Vite.
 

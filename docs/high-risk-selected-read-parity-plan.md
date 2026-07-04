@@ -110,7 +110,11 @@ through the selected-read facade with paginated, capped reads. Detail
 navigation, edit, delete, duplicate, transfer, import, and CSV export controls
 remain disabled because no detail/write/export workflow has migrated. This
 experiment remains local-dev only and requires a fresh matching SQLite baseline
-before its HTTP results are trusted.
+before its HTTP results are trusted. Account/payment icons may show placeholders
+in `http-readonly` because account image/icon data is intentionally omitted
+from the read-only HTTP path. Passing read parity does not authorize
+transaction writes, exports, transfers, detail workflow migration, or any change
+to Dexie as the authoritative store.
 
 ## Reports
 
@@ -270,6 +274,8 @@ restore the current Dexie path and leave all historical snapshots unchanged.
 - No write endpoints.
 - No HTTP-backed creates, updates, or deletes.
 - No transaction mutation.
+- No Transactions write, export, transfer, or detail workflow migration based
+  only on the read experiment.
 - No budget snapshot generation, pruning, dedupe, or repair.
 - No Reports page switch based only on the structural sample preview.
 - No high-risk screen experiment based on stale SQLite comparisons.

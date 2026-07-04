@@ -241,6 +241,12 @@ server, passing Transactions read parity diagnostic, `verify:sqlite`,
 `VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT` off or setting
 `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite.
 
+This experiment is read-only and local-dev only. Passing Transactions read
+parity does not authorize writes, exports, transfers, or making SQLite
+authoritative. Account/payment icons may fall back to placeholders in
+`http-readonly` because account image/icon data is omitted from the read-only
+HTTP path.
+
 Selected-read budget ordering has also been normalized between Dexie and HTTP
 read-only paths. It uses due date ascending with ID ascending as the
 deterministic tie-breaker, matching the existing read-only HTTP budget endpoint
