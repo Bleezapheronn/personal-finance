@@ -229,9 +229,32 @@ aggregate rounding. Output is summary-only: loaded/reported counts, page size,
 pages loaded, truncation flags, period counts, mismatch counts by aggregate
 field, first few mismatching period keys, safe result codes, and the fresh
 backup/import reminder. It does not render raw rows, descriptions, references,
-names, individual amount values, tokens, or SQLite paths. This is not a Reports
-screen experiment and does not authorize switching the real Reports page to
-HTTP.
+names, individual amount values, tokens, or SQLite paths. This diagnostic must
+pass against a fresh matching SQLite baseline before trusting the Reports read
+experiment.
+
+## Reports Read Experiment
+
+`VITE_PERSONAL_FINANCE_REPORTS_READ_EXPERIMENT=true` enables a narrow
+real-screen selected-read experiment for Reports. The flag is off by default
+and is separate from preview/diagnostic flags. Restart Vite after changing it.
+
+When the flag is off, Reports uses the existing Dexie report repository path.
+When the flag is on with `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`,
+Reports still uses the existing Dexie report path. When the flag is on with
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`, the main period
+report loads transaction, category, and bucket inputs through the selected-read
+facade with paginated reads and then applies the same local report calculation
+semantics. The current cap is 5,000 transaction inputs per selected period. If
+the selected-read transaction load is truncated, the page shows a warning and
+the rendered totals must not be treated as full-confidence report totals.
+
+In `http-readonly` experiment mode, the monthly spending chart and
+bucket/category drilldown modal are disabled because those paths still call
+Dexie-backed report helpers. No report writes, export paths, server-side report
+calculation endpoints, or aggregate API endpoints are added. Roll back by
+turning `VITE_PERSONAL_FINANCE_REPORTS_READ_EXPERIMENT` off or setting
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite.
 
 ## Transactions Read Experiment
 
@@ -337,9 +360,10 @@ income/expense/transfer counts, and rounded sample totals derived from
 `amount + transactionCost`. It is a structural report-style preview, not full
 Reports parity: it does not apply the real Reports page period selection,
 bucket exclusion, chart, or bucket/category breakdown semantics. The real
-Reports page remains unchanged and does not import selected-read or HTTP
-repositories. Use the separate manual Reports parity diagnostic when comparing
-aggregate report totals; the structural preview is not a parity gate.
+Reports page has a separate flag-gated read experiment described above; with
+the flag off, it remains on the existing Dexie report path. Use the separate
+manual Reports parity diagnostic when comparing aggregate report totals; the
+structural preview is not a parity gate.
 
 Do not commit `.env.local`. Dexie remains authoritative and SQLite remains
 disposable.

@@ -9,8 +9,9 @@ The current management-read baseline is intentionally narrow. Recipients,
 Buckets/Categories, Accounts, and SMS Import Templates have off-by-default,
 flag-gated read experiments and diagnostics. Transactions also has a separate
 off-by-default, high-risk read experiment after a passing screen-specific
-parity diagnostic. These experiments do not make HTTP authoritative and do not
-approve write migration.
+parity diagnostic. Reports also has a separate off-by-default, high-risk read
+experiment after a passing aggregate parity diagnostic. These experiments do
+not make HTTP authoritative and do not approve write migration.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
 remains read-only. No write methods or write endpoints exist.
@@ -158,15 +159,17 @@ exclusions, or rounding can silently change charts and totals.
   classification, signed expense totals, transfer inclusion through normal
   category/bucket semantics, local JavaScript date grouping, and 2-decimal
   rounding. It is summary-only and does not expose raw rows or individual
-  amount values. Passing it is not approval to switch the real Reports page.
+  amount values. Passing it is not approval to migrate chart, drilldown, export,
+  or write behavior.
 - A date grouping diagnostic that confirms local JS grouping matches current
   Dexie behavior.
 - A rounding diagnostic that catches cent-level aggregate drift.
 
 ### Forbidden Without Separate Plan
 
-- Switching the Reports page based only on the structural Reports preview.
-- Switching the Reports page based only on the aggregate Reports parity
+- Expanding the Reports experiment based only on the structural Reports
+  preview.
+- Expanding the Reports experiment based only on the aggregate Reports parity
   diagnostic without chart input, bucket/category breakdown, and UI period
   behavior parity.
 - Changing chart or aggregate formulas.
@@ -179,6 +182,22 @@ exclusions, or rounding can silently change charts and totals.
 The experiment must be behind a Reports-specific flag. Rollback must restore
 all Reports calculations to the current Dexie/report-service path immediately
 after disabling the flag and restarting Vite.
+
+### Current Experiment
+
+`VITE_PERSONAL_FINANCE_REPORTS_READ_EXPERIMENT=true` enables a narrow Reports
+read experiment. When the flag is off, Reports uses the existing Dexie report
+path. When the flag is on with backend `dexie`, Reports still uses the existing
+Dexie path. In `http-readonly` mode, the main period report loads transaction,
+category, and bucket inputs through selected-read paginated reads capped at
+5,000 transaction inputs for the selected period, then applies the same local
+report calculation semantics. Truncated selected-read loads show an on-page
+warning and must not be treated as full-confidence totals. The monthly chart
+and bucket/category drilldown modal remain disabled in `http-readonly` because
+those paths still rely on Dexie-backed report helpers. This remains local-dev
+only and does not authorize report writes, export behavior, server-side
+aggregate endpoints, chart migration, drilldown migration, or any change to
+Dexie as the authoritative store.
 
 ## Budget
 

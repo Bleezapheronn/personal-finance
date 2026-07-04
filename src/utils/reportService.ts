@@ -63,6 +63,31 @@ export interface BucketCategoryBreakdownResult {
 
 export type PeriodType = "month" | "quarter" | "year";
 
+export interface ReportTransactionInput {
+  categoryId: number;
+  date: Date | string;
+  amount: number;
+  transactionCost?: number | null;
+}
+
+export interface ReportCategoryInput {
+  id?: number;
+  name?: string | null;
+  bucketId: number;
+  isActive?: boolean | number;
+}
+
+export interface ReportBucketInput {
+  id?: number;
+  name?: string | null;
+  minPercentage: number;
+  maxPercentage: number;
+  minFixedAmount?: number | null;
+  isActive: boolean | number;
+  displayOrder: number;
+  excludeFromReports: boolean | number;
+}
+
 // Get date range for a specific period
 export const getDateRangeForPeriod = (
   periodType: PeriodType,
@@ -99,25 +124,35 @@ export const getDateRangeForPeriod = (
   }
 };
 
-// Generate report for a specific period
-export const generatePeriodReport = async (
+const dateValue = (date: Date | string): Date => {
+  return date instanceof Date ? date : new Date(date);
+};
+
+const booleanValue = (value: boolean | number | undefined): boolean => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  return value === 1;
+};
+
+export const generatePeriodReportFromInputs = (
   periodType: PeriodType,
   date: Date = new Date(),
-): Promise<PeriodReport> => {
+  transactions: ReportTransactionInput[],
+  buckets: ReportBucketInput[],
+  categories: ReportCategoryInput[],
+): PeriodReport => {
   const { start, end, label } = getDateRangeForPeriod(periodType, date);
-
-  // Fetch all transactions in the date range
-  const allTransactions = await db.transactions
-    .where("date")
-    .between(start, end)
-    .toArray();
-
-  // Fetch buckets and categories
-  const buckets = await db.buckets.toArray();
-  const categories = await db.categories.toArray();
+  const allTransactions = transactions.filter((txn) => {
+    const txnDate = dateValue(txn.date);
+    return txnDate >= start && txnDate <= end;
+  });
 
   // Find the income bucket (excluded from reports)
-  const incomeBucket = buckets.find((b) => b.excludeFromReports);
+  const incomeBucket = buckets.find((b) =>
+    booleanValue(b.excludeFromReports),
+  );
 
   // Calculate totals
   let totalIncome = 0;
@@ -130,7 +165,7 @@ export const generatePeriodReport = async (
 
   // Initialize bucket totals
   buckets.forEach((bucket) => {
-    if (bucket.isActive) {
+    if (bucket.id !== undefined && booleanValue(bucket.isActive)) {
       bucketTotalsMap.set(bucket.id!, {
         income: 0,
         expense: 0,
@@ -187,7 +222,12 @@ export const generatePeriodReport = async (
 
   // Generate bucket reports
   const bucketReports: BucketReport[] = buckets
-    .filter((b) => b.isActive && !b.excludeFromReports)
+    .filter(
+      (b) =>
+        b.id !== undefined &&
+        booleanValue(b.isActive) &&
+        !booleanValue(b.excludeFromReports),
+    )
     .map((bucket) => {
       const totals = bucketTotalsMap.get(bucket.id!) || {
         income: 0,
@@ -220,7 +260,7 @@ export const generatePeriodReport = async (
         totalAmount: totalAmount,
         minPercentage: bucket.minPercentage,
         maxPercentage: bucket.maxPercentage,
-        minFixedAmount: bucket.minFixedAmount,
+        minFixedAmount: bucket.minFixedAmount ?? undefined,
         actualPercentage,
         status,
         income: totals.income,
@@ -245,6 +285,32 @@ export const generatePeriodReport = async (
     netTotal,
     bucketReports,
   };
+};
+
+// Generate report for a specific period
+export const generatePeriodReport = async (
+  periodType: PeriodType,
+  date: Date = new Date(),
+): Promise<PeriodReport> => {
+  const { start, end } = getDateRangeForPeriod(periodType, date);
+
+  // Fetch all transactions in the date range
+  const allTransactions = await db.transactions
+    .where("date")
+    .between(start, end)
+    .toArray();
+
+  // Fetch buckets and categories
+  const buckets = await db.buckets.toArray();
+  const categories = await db.categories.toArray();
+
+  return generatePeriodReportFromInputs(
+    periodType,
+    date,
+    allTransactions,
+    buckets,
+    categories,
+  );
 };
 
 // Navigate to previous period
