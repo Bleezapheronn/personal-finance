@@ -141,14 +141,17 @@ These are local-dev read experiments only. They do not make HTTP
 authoritative, do not imply writes are safe to migrate, and do not replace the
 fresh-backup verification gates. Before trusting a fresh diagnostic run, export
 a fresh backup, import that backup into matching disposable SQLite, and restart
-the API against that SQLite. Stale SQLite can cause false mismatches.
+the API against that SQLite. Stale SQLite can cause false mismatches. Four
+real read experiments now exist: Recipients, Buckets/Categories, Accounts, and
+SMS Import Templates. Do not expand to Transactions, Reports, Budget, or Budget
+History without a separate parity plan.
 
 | Screen / area | Experiment flag | Default behavior | `http-readonly` behavior | Write behavior | Diagnostic status | Known limitations | Rollback |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Recipients | `VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and merge disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
 | Buckets/Categories | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and reorder disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
 | Accounts | `VITE_PERSONAL_FINANCE_ACCOUNTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, and delete disabled in `http-readonly` | Passes with warning | Account images/icons intentionally omitted; transaction-derived usage checks remain on the Dexie path and are not migrated | Turn flag off or set backend to `dexie`, then restart Vite |
-| SMS Import Templates | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, import, and test-parse actions disabled in `http-readonly` | Diagnostic available | Regex and pattern strings are not shown in the `http-readonly` list experiment or diagnostic; edit/test workflows remain Dexie-only | Turn flag off or set backend to `dexie`, then restart Vite |
+| SMS Import Templates | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true` | Existing Dexie read/write/import/test-parse behavior | List loads through selected-read | Writes, imports, and test-parse actions disabled in `http-readonly` | Passes | Regex/pattern values are not exposed in `http-readonly`; edit/test workflow requires Dexie | Turn flag off or set backend to `dexie`, then restart Vite |
 
 ## Migration Gates
 
