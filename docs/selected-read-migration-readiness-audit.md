@@ -137,6 +137,7 @@ Manual Vite/browser checks:
 - Recipients read experiment diagnostic
 - Accounts read experiment diagnostic
 - SMS Templates read experiment diagnostic
+- Transactions read parity diagnostic
 - Dexie-vs-HTTP parity diagnostic
 - target screen selected-read preview in both `dexie` and `http-readonly`
 

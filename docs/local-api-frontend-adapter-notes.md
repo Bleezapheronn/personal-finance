@@ -159,6 +159,7 @@ lets you manually run:
 - selected read repository diagnostics
 - selected-read ordering diagnostics
 - Dexie-vs-HTTP parity diagnostics
+- Transactions read parity diagnostics
 - selected read preview
 - Categories preview
 - Reports diagnostic preview
@@ -195,6 +196,25 @@ as a deterministic tie-breaker. Sorting happens before selected-read
 limit/offset pagination, and transaction filters remain applied before sorting.
 The real Transactions page still uses its existing Dexie loading, filtering,
 edit/delete/transfer, and export behavior.
+
+Local API Diagnostics also includes a manual Transactions read parity
+diagnostic. It compares selected-read Dexie transactions with selected-read
+`http-readonly` transactions using paginated reads. The diagnostic uses a small
+page size that respects the server limit and continues until it reaches the
+reported count, the diagnostic maximum, or an empty page. Output is
+summary-only: counts, page size, pages loaded, truncation status, sampled IDs,
+order match, field mismatch counts by field name, amount-sign mismatch count,
+transaction-cost presence/sign mismatch counts, transfer-linkage mismatch
+count, and budgetSnapshotId mismatch count. It does not render transaction
+descriptions, transaction references, account/category/recipient names, amount
+values, transactionCost values, original currency/exchange-rate values, raw row
+data, tokens, or SQLite paths. It is a diagnostic gate only and does not
+authorize a real Transactions screen switch by itself. If Dexie and HTTP
+reported counts differ, the diagnostic reports a baseline/count mismatch;
+that usually means SQLite was not imported from a fresh backup matching current
+Dexie data. Trust results only after exporting a fresh backup, importing it into
+matching disposable SQLite, restarting the API, and rerunning `verify:sqlite`,
+`smoke:api`, and `npm run check:local-api-safety`.
 
 Selected-read budget ordering has also been normalized between Dexie and HTTP
 read-only paths. It uses due date ascending with ID ascending as the

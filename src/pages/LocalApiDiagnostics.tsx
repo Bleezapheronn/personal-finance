@@ -53,6 +53,10 @@ import {
   runSmsTemplatesReadExperimentDiagnostics,
   type SmsTemplatesReadExperimentDiagnosticResult,
 } from "../repositories/smsTemplatesReadExperimentDiagnostics";
+import {
+  runTransactionsReadParityDiagnostics,
+  type TransactionsReadParityDiagnosticResult,
+} from "../repositories/transactionsReadParityDiagnostics";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiParityDiagnostics";
 import {
@@ -160,6 +164,7 @@ type BucketsCategoriesReadExperimentSummary =
 type AccountsReadExperimentSummary = AccountsReadExperimentDiagnosticResult;
 type SmsTemplatesReadExperimentSummary =
   SmsTemplatesReadExperimentDiagnosticResult;
+type TransactionsReadParitySummary = TransactionsReadParityDiagnosticResult;
 
 const getEnvValue = (key: string): string | undefined => {
   const env = import.meta.env as Record<string, string | undefined>;
@@ -1036,6 +1041,161 @@ const SmsTemplatesReadExperimentResultCard: React.FC<{
   </IonCard>
 );
 
+const TransactionsReadParityResultCard: React.FC<{
+  summary: TransactionsReadParitySummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>Transactions Read Parity Results</h3>
+      </IonText>
+      <IonBadge color={summary.ok ? "success" : "danger"}>
+        {summary.ok ? "Pass" : "Fail"}
+      </IonBadge>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Limit</IonLabel>
+          <IonText slot="end">{summary.limit}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Page size</IonLabel>
+          <IonText slot="end">{summary.pageSize}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie count</IonLabel>
+          <IonText slot="end">
+            {summary.dexieLoadedCount}/{summary.dexieReportedCount ?? "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie pages loaded</IonLabel>
+          <IonText slot="end">{summary.dexiePagesLoaded}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie truncated</IonLabel>
+          <IonText slot="end">{String(summary.dexieTruncated)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP count</IonLabel>
+          <IonText slot="end">
+            {summary.httpLoadedCount}/{summary.httpReportedCount ?? "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP pages loaded</IonLabel>
+          <IonText slot="end">{summary.httpPagesLoaded}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP truncated</IonLabel>
+          <IonText slot="end">{String(summary.httpTruncated)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Baseline counts match</IonLabel>
+          <IonText slot="end">{String(summary.baselineCountsMatch)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Parity limited by baseline mismatch</IonLabel>
+          <IonText slot="end">
+            {String(summary.parityLimitedByBaselineMismatch)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Rows normalized</IonLabel>
+          <IonText slot="end">
+            dexie={String(summary.allDexieRowsNormalized)} http=
+            {String(summary.allHttpRowsNormalized)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled Dexie IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledDexieIds.length
+              ? summary.sampledDexieIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled HTTP IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledHttpIds.length
+              ? summary.sampledHttpIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Loaded IDs match</IonLabel>
+          <IonText slot="end">{String(summary.loadedIdsMatch)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Display order matches</IonLabel>
+          <IonText slot="end">{String(summary.displayOrderMatches)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Amount sign mismatches</IonLabel>
+          <IonText slot="end">{summary.amountSignMismatchCount}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Transaction cost presence/sign mismatches</IonLabel>
+          <IonText slot="end">
+            {summary.transactionCostPresenceMismatchCount}/
+            {summary.transactionCostSignMismatchCount}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Transfer linkage mismatch count</IonLabel>
+          <IonText slot="end">{summary.transferLinkageMismatchCount}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Budget snapshot ID mismatch count</IonLabel>
+          <IonText slot="end">{summary.budgetSnapshotIdMismatchCount}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Field mismatch counts</h3>
+            <p>
+              {Object.keys(summary.fieldMismatchCounts).length
+                ? Object.entries(summary.fieldMismatchCounts)
+                    .map(([field, count]) => `${field}=${count}`)
+                    .join(", ")
+                : "none"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Baseline note</h3>
+            <p>{summary.baselineNote}</p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Compared checks</IonLabel>
+          <IonText slot="end">{summary.comparedChecks}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Failed checks</IonLabel>
+          <IonText slot="end">{summary.failedChecks}</IonText>
+        </IonItem>
+        {summary.checks.map((check) => (
+          <IonItem key={check.name}>
+            <IonLabel>
+              <h3>{check.name}</h3>
+              {check.code && <p>code={check.code}</p>}
+            </IonLabel>
+            <IonBadge
+              color={check.status === "pass" ? "success" : "danger"}
+              slot="end"
+            >
+              {check.status === "pass" ? "Pass" : "Fail"}
+            </IonBadge>
+          </IonItem>
+        ))}
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
 const LocalApiDiagnostics: React.FC = () => {
   const enabled = isLocalApiDiagnosticsEnabled();
   const currentBackend = getRepositoryBackend();
@@ -1063,6 +1223,10 @@ const LocalApiDiagnostics: React.FC = () => {
     smsTemplatesReadExperimentSummary,
     setSmsTemplatesReadExperimentSummary,
   ] = useState<SmsTemplatesReadExperimentSummary | null>(null);
+  const [
+    transactionsReadParitySummary,
+    setTransactionsReadParitySummary,
+  ] = useState<TransactionsReadParitySummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -1097,6 +1261,11 @@ const LocalApiDiagnostics: React.FC = () => {
     smsTemplatesReadExperiment: {
       key: "smsTemplatesReadExperiment",
       title: "SMS Templates Read Experiment",
+      status: "idle",
+    },
+    transactionsReadParity: {
+      key: "transactionsReadParity",
+      title: "Transactions Read Parity",
       status: "idle",
     },
   });
@@ -1676,6 +1845,43 @@ const LocalApiDiagnostics: React.FC = () => {
     }
   };
 
+  const runTransactionsReadParityDiagnostic = async (): Promise<void> => {
+    const key = "transactionsReadParity";
+    setRunningKey(key);
+    updateSummary({ ...summaries[key], status: "running" });
+    setTransactionsReadParitySummary(null);
+
+    try {
+      const result = await runTransactionsReadParityDiagnostics();
+      setTransactionsReadParitySummary(result);
+      updateSummary({
+        key,
+        title: "Transactions Read Parity",
+        status: result.ok ? "pass" : "fail",
+        ok: result.ok,
+        comparedChecks: result.comparedChecks,
+        failedChecks: result.failedChecks,
+        sampledIds: [
+          ...new Set([...result.sampledDexieIds, ...result.sampledHttpIds]),
+        ].slice(0, 12),
+        codes: uniqueCodes(
+          result.checks.map((check) => ({
+            code: check.code,
+          })),
+        ),
+      });
+    } catch (error) {
+      updateSummary({
+        key,
+        title: "Transactions Read Parity",
+        status: "fail",
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setRunningKey(null);
+    }
+  };
+
   const isRunning = runningKey !== null;
 
   return (
@@ -1899,6 +2105,22 @@ const LocalApiDiagnostics: React.FC = () => {
                       Run
                     </IonButton>
                   </IonItem>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>Transactions read parity diagnostic</IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() => void runTransactionsReadParityDiagnostic()}
+                      disabled={isRunning}
+                    >
+                      Run
+                    </IonButton>
+                  </IonItem>
                 </IonList>
                 <IonText color="medium">
                   <p style={{ fontSize: "0.85rem" }}>
@@ -1916,7 +2138,11 @@ const LocalApiDiagnostics: React.FC = () => {
                     credit-limit presence only. The SMS Templates experiment
                     diagnostic compares counts, normalized IDs,
                     display-pipeline ordering, active counts, account ID
-                    distribution, and pattern-presence distribution only.
+                    distribution, and pattern-presence distribution only. The
+                    Transactions read parity diagnostic compares counts,
+                    sampled IDs, ordering, field mismatch counts, amount sign
+                    counts, transaction-cost presence/sign counts, transfer
+                    linkage counts, and budget-snapshot link counts only.
                   </p>
                 </IonText>
               </IonCardContent>
@@ -1951,6 +2177,12 @@ const LocalApiDiagnostics: React.FC = () => {
             {smsTemplatesReadExperimentSummary && (
               <SmsTemplatesReadExperimentResultCard
                 summary={smsTemplatesReadExperimentSummary}
+              />
+            )}
+
+            {transactionsReadParitySummary && (
+              <TransactionsReadParityResultCard
+                summary={transactionsReadParitySummary}
               />
             )}
 

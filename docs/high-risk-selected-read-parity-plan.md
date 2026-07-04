@@ -73,6 +73,13 @@ reports.
 
 - A Transactions screen-specific parity diagnostic that compares Dexie and
   `http-readonly` for list/filter/search/order/detail behavior.
+- The initial manual Transactions read parity diagnostic in Local API
+  Diagnostics may be used as an early gate for count, ID, ordering, selected
+  field, amount-sign, transaction-cost, transfer-linkage, and budgetSnapshotId
+  parity. It paginates Dexie and `http-readonly` selected-read results before
+  comparison and reports stale-baseline/count mismatches separately from row
+  parity mismatches. Passing this diagnostic is not approval to switch the real
+  Transactions screen.
 - A transfer-pair diagnostic that treats reciprocal mismatch, self-links, and
   inconsistent transfer flags as hard failures.
 - A budget snapshot linkage diagnostic for transaction rows displayed on the
