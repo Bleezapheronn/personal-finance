@@ -57,6 +57,10 @@ import {
   runTransactionsReadParityDiagnostics,
   type TransactionsReadParityDiagnosticResult,
 } from "../repositories/transactionsReadParityDiagnostics";
+import {
+  runReportsParityDiagnostics,
+  type ReportsParityDiagnosticResult,
+} from "../repositories/reportsParityDiagnostics";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiParityDiagnostics";
 import {
@@ -165,6 +169,7 @@ type AccountsReadExperimentSummary = AccountsReadExperimentDiagnosticResult;
 type SmsTemplatesReadExperimentSummary =
   SmsTemplatesReadExperimentDiagnosticResult;
 type TransactionsReadParitySummary = TransactionsReadParityDiagnosticResult;
+type ReportsParitySummary = ReportsParityDiagnosticResult;
 
 const getEnvValue = (key: string): string | undefined => {
   const env = import.meta.env as Record<string, string | undefined>;
@@ -1196,6 +1201,146 @@ const TransactionsReadParityResultCard: React.FC<{
   </IonCard>
 );
 
+const ReportsParityResultCard: React.FC<{
+  summary: ReportsParitySummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>Reports Parity Results</h3>
+      </IonText>
+      <IonBadge color={summary.ok ? "success" : "danger"}>
+        {summary.ok ? "Pass" : "Fail"}
+      </IonBadge>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Limit</IonLabel>
+          <IonText slot="end">{summary.limit}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Page size</IonLabel>
+          <IonText slot="end">{summary.pageSize}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie count</IonLabel>
+          <IonText slot="end">
+            {summary.dexieLoadedCount}/{summary.dexieReportedCount ?? "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie pages loaded</IonLabel>
+          <IonText slot="end">{summary.dexiePagesLoaded}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie truncated</IonLabel>
+          <IonText slot="end">{String(summary.dexieTruncated)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP count</IonLabel>
+          <IonText slot="end">
+            {summary.httpLoadedCount}/{summary.httpReportedCount ?? "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP pages loaded</IonLabel>
+          <IonText slot="end">{summary.httpPagesLoaded}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP truncated</IonLabel>
+          <IonText slot="end">{String(summary.httpTruncated)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Baseline counts match</IonLabel>
+          <IonText slot="end">{String(summary.baselineCountsMatch)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Parity limited by baseline mismatch</IonLabel>
+          <IonText slot="end">
+            {String(summary.parityLimitedByBaselineMismatch)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Period types compared</IonLabel>
+          <IonText slot="end">
+            {summary.periodTypesCompared.join(", ")}
+          </IonText>
+        </IonItem>
+        {summary.periodTypesCompared.map((periodType) => (
+          <IonItem key={periodType}>
+            <IonLabel>
+              <h3>{periodType}</h3>
+              <p>
+                periods={summary.periodsCompared[periodType]} countMatch=
+                {String(summary.periodCountMatches[periodType])} keyOrderMatch=
+                {String(summary.periodKeyOrderMatches[periodType])}
+              </p>
+              <p>
+                mismatches{" "}
+                {Object.entries(summary.aggregateMismatchCounts[periodType])
+                  .map(([field, count]) => `${field}=${count}`)
+                  .join(", ")}
+              </p>
+              <p>
+                sampled keys{" "}
+                {summary.sampledMismatchingPeriodKeys[periodType].length
+                  ? summary.sampledMismatchingPeriodKeys[periodType].join(", ")
+                  : "none"}
+              </p>
+            </IonLabel>
+          </IonItem>
+        ))}
+        <IonItem>
+          <IonLabel>
+            <h3>Mismatch samples</h3>
+            <p>
+              {summary.mismatchSamples.length
+                ? summary.mismatchSamples
+                    .map(
+                      (sample) =>
+                        `${sample.periodType}:${sample.periodKey} (${sample.fields.join(
+                          ", ",
+                        )})`,
+                    )
+                    .join("; ")
+                : "none"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Baseline note</h3>
+            <p>{summary.baselineNote}</p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Compared checks</IonLabel>
+          <IonText slot="end">{summary.comparedChecks}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Failed checks</IonLabel>
+          <IonText slot="end">{summary.failedChecks}</IonText>
+        </IonItem>
+        {summary.checks.map((check) => (
+          <IonItem key={check.name}>
+            <IonLabel>
+              <h3>{check.name}</h3>
+              {check.code && <p>code={check.code}</p>}
+            </IonLabel>
+            <IonBadge
+              color={check.status === "pass" ? "success" : "danger"}
+              slot="end"
+            >
+              {check.status === "pass" ? "Pass" : "Fail"}
+            </IonBadge>
+          </IonItem>
+        ))}
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
 const LocalApiDiagnostics: React.FC = () => {
   const enabled = isLocalApiDiagnosticsEnabled();
   const currentBackend = getRepositoryBackend();
@@ -1227,6 +1372,8 @@ const LocalApiDiagnostics: React.FC = () => {
     transactionsReadParitySummary,
     setTransactionsReadParitySummary,
   ] = useState<TransactionsReadParitySummary | null>(null);
+  const [reportsParitySummary, setReportsParitySummary] =
+    useState<ReportsParitySummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -1266,6 +1413,11 @@ const LocalApiDiagnostics: React.FC = () => {
     transactionsReadParity: {
       key: "transactionsReadParity",
       title: "Transactions Read Parity",
+      status: "idle",
+    },
+    reportsParity: {
+      key: "reportsParity",
+      title: "Reports Parity",
       status: "idle",
     },
   });
@@ -1882,6 +2034,48 @@ const LocalApiDiagnostics: React.FC = () => {
     }
   };
 
+  const runReportsParityDiagnostic = async (): Promise<void> => {
+    const key = "reportsParity";
+    setRunningKey(key);
+    updateSummary({ ...summaries[key], status: "running" });
+    setReportsParitySummary(null);
+
+    try {
+      const result = await runReportsParityDiagnostics();
+      setReportsParitySummary(result);
+      updateSummary({
+        key,
+        title: "Reports Parity",
+        status: result.ok ? "pass" : "fail",
+        ok: result.ok,
+        comparedChecks: result.comparedChecks,
+        failedChecks: result.failedChecks,
+        totalMismatches: result.mismatchSamples.length,
+        sampledIds: [
+          ...new Set(
+            result.periodTypesCompared.flatMap(
+              (periodType) => result.sampledMismatchingPeriodKeys[periodType],
+            ),
+          ),
+        ].slice(0, 12),
+        codes: uniqueCodes(
+          result.checks.map((check) => ({
+            code: check.code,
+          })),
+        ),
+      });
+    } catch (error) {
+      updateSummary({
+        key,
+        title: "Reports Parity",
+        status: "fail",
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setRunningKey(null);
+    }
+  };
+
   const isRunning = runningKey !== null;
 
   return (
@@ -2121,6 +2315,22 @@ const LocalApiDiagnostics: React.FC = () => {
                       Run
                     </IonButton>
                   </IonItem>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>Reports parity diagnostic</IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() => void runReportsParityDiagnostic()}
+                      disabled={isRunning}
+                    >
+                      Run
+                    </IonButton>
+                  </IonItem>
                 </IonList>
                 <IonText color="medium">
                   <p style={{ fontSize: "0.85rem" }}>
@@ -2142,7 +2352,9 @@ const LocalApiDiagnostics: React.FC = () => {
                     Transactions read parity diagnostic compares counts,
                     sampled IDs, ordering, field mismatch counts, amount sign
                     counts, transaction-cost presence/sign counts, transfer
-                    linkage counts, and budget-snapshot link counts only.
+                    linkage counts, and budget-snapshot link counts only. The
+                    Reports parity diagnostic compares monthly, quarterly, and
+                    yearly aggregate totals and period keys only.
                   </p>
                 </IonText>
               </IonCardContent>
@@ -2184,6 +2396,10 @@ const LocalApiDiagnostics: React.FC = () => {
               <TransactionsReadParityResultCard
                 summary={transactionsReadParitySummary}
               />
+            )}
+
+            {reportsParitySummary && (
+              <ReportsParityResultCard summary={reportsParitySummary} />
             )}
 
             <IonCard>

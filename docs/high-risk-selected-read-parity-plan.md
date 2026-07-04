@@ -149,6 +149,16 @@ exclusions, or rounding can silently change charts and totals.
 
 - A Reports-specific parity diagnostic that compares the same report periods
   and breakdowns the live page renders.
+- The initial manual Reports parity diagnostic in Local API Diagnostics may be
+  used as an early gate for monthly, quarterly, and yearly period key/order
+  parity, `totalIncome`, `totalExpense`, `netTotal`, contributing transaction
+  count, stale-baseline detection, and truncation detection. It uses paginated
+  selected-read transaction reads and follows the current report semantics for
+  `amount + transactionCost`, `excludeFromReports` income-bucket
+  classification, signed expense totals, transfer inclusion through normal
+  category/bucket semantics, local JavaScript date grouping, and 2-decimal
+  rounding. It is summary-only and does not expose raw rows or individual
+  amount values. Passing it is not approval to switch the real Reports page.
 - A date grouping diagnostic that confirms local JS grouping matches current
   Dexie behavior.
 - A rounding diagnostic that catches cent-level aggregate drift.
@@ -156,6 +166,9 @@ exclusions, or rounding can silently change charts and totals.
 ### Forbidden Without Separate Plan
 
 - Switching the Reports page based only on the structural Reports preview.
+- Switching the Reports page based only on the aggregate Reports parity
+  diagnostic without chart input, bucket/category breakdown, and UI period
+  behavior parity.
 - Changing chart or aggregate formulas.
 - Changing transfer inclusion/exclusion semantics.
 - Changing bucket exclusion behavior.

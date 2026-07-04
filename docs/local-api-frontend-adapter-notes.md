@@ -160,6 +160,7 @@ lets you manually run:
 - selected-read ordering diagnostics
 - Dexie-vs-HTTP parity diagnostics
 - Transactions read parity diagnostics
+- Reports parity diagnostics
 - selected read preview
 - Categories preview
 - Reports diagnostic preview
@@ -215,6 +216,22 @@ that usually means SQLite was not imported from a fresh backup matching current
 Dexie data. Trust results only after exporting a fresh backup, importing it into
 matching disposable SQLite, restarting the API, and rerunning `verify:sqlite`,
 `smoke:api`, and `npm run check:local-api-safety`.
+
+Local API Diagnostics also includes a manual Reports parity diagnostic. It
+compares Dexie-derived report aggregates with selected-read `http-readonly`
+transaction-derived aggregates using paginated reads. The diagnostic covers
+monthly, quarterly, and yearly period keys/order, `totalIncome`, `totalExpense`,
+`netTotal`, and contributing transaction count. It follows the current report
+semantics for `amount + transactionCost`, income-bucket classification through
+`excludeFromReports`, signed expense totals, transfer inclusion through normal
+category/bucket semantics, local JavaScript date grouping, and 2-decimal
+aggregate rounding. Output is summary-only: loaded/reported counts, page size,
+pages loaded, truncation flags, period counts, mismatch counts by aggregate
+field, first few mismatching period keys, safe result codes, and the fresh
+backup/import reminder. It does not render raw rows, descriptions, references,
+names, individual amount values, tokens, or SQLite paths. This is not a Reports
+screen experiment and does not authorize switching the real Reports page to
+HTTP.
 
 ## Transactions Read Experiment
 
@@ -321,7 +338,8 @@ income/expense/transfer counts, and rounded sample totals derived from
 Reports parity: it does not apply the real Reports page period selection,
 bucket exclusion, chart, or bucket/category breakdown semantics. The real
 Reports page remains unchanged and does not import selected-read or HTTP
-repositories.
+repositories. Use the separate manual Reports parity diagnostic when comparing
+aggregate report totals; the structural preview is not a parity gate.
 
 Do not commit `.env.local`. Dexie remains authoritative and SQLite remains
 disposable.

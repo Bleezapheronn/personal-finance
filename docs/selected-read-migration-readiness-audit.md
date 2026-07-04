@@ -75,6 +75,11 @@ History `http-readonly` experiment.
   account ID distribution, pattern-presence distribution, and truncation status
   without rendering template names, account names, regex strings, pattern
   values, raw SMS examples, descriptions, or raw rows.
+- Local API Diagnostics includes a manual Reports parity diagnostic that
+  compares monthly, quarterly, and yearly aggregate period keys/order,
+  `totalIncome`, `totalExpense`, `netTotal`, and contributing transaction
+  counts without rendering raw transaction rows, descriptions, references,
+  names, individual amount values, tokens, or SQLite paths.
 - No create, update, delete, import, restore, or repair HTTP paths exist.
 - No write no-ops exist; future HTTP write attempts must fail loudly.
 - Browser token exposure is accepted only for this local prototype, never for
@@ -141,6 +146,7 @@ Manual Vite/browser checks:
 - Accounts read experiment diagnostic
 - SMS Templates read experiment diagnostic
 - Transactions read parity diagnostic
+- Reports parity diagnostic
 - Dexie-vs-HTTP parity diagnostic
 - target screen selected-read preview in both `dexie` and `http-readonly`
 
@@ -177,6 +183,8 @@ Before any real screen can switch to `http-readonly`, all gates below must pass:
 - Selected-read ordering diagnostic shows all resources as `Match`.
 - Dexie-vs-HTTP parity diagnostic passes against the fresh backup-generated
   SQLite database.
+- For Reports work, the Reports parity diagnostic passes against the fresh
+  backup-generated SQLite database.
 - The target screen preview has loaded successfully in both modes.
 - The change is behind an explicit flag and defaults to Dexie.
 - A rollback path exists and has been written down before the switch.
@@ -214,6 +222,8 @@ Required baseline checks before evaluating the candidate:
 - Run selected-read diagnostics in Dexie mode.
 - Run selected-read diagnostics in `http-readonly` mode.
 - Confirm the selected-read ordering diagnostic shows all resources as `Match`.
+- For Reports candidates, confirm the Reports parity diagnostic passes without
+  truncation or baseline mismatch.
 - Confirm stale SQLite is not being used as the comparison source.
 
 Approval rules:

@@ -23,6 +23,7 @@ const approvedFiles = new Set(
     "src/repositories/bucketsCategoriesReadExperimentDiagnostics.ts",
     "src/repositories/index.ts",
     "src/repositories/recipientsReadExperimentDiagnostics.ts",
+    "src/repositories/reportsParityDiagnostics.ts",
     "src/repositories/selectedReadOrderingDiagnostics.ts",
     "src/repositories/selectedReadRepositories.ts",
     "src/repositories/selectedReadRepositoryDiagnostics.ts",
