@@ -182,9 +182,7 @@ buckets, categories, recipients, and SMS import templates. Those selected-read
 Dexie paths now use deterministic ordering before paging to match the read-only
 HTTP lookup endpoints: buckets by display order then ID, and the other lookup
 resources by name then ID. This does not change the real management page data
-sources or write behavior. Budget snapshots remain intentionally unnormalized
-and may still show ordering mismatches until their higher-risk ordering
-semantics are reviewed separately.
+sources or write behavior.
 
 Selected-read transaction ordering has also been normalized between Dexie and
 HTTP read-only paths. It follows the existing live Transactions page semantics:
@@ -202,8 +200,20 @@ and the Budget page's primary due-date-oriented occurrence display. Sorting
 happens before selected-read limit/offset pagination, and budget filters remain
 applied before sorting. The real Budget page still uses its existing Dexie
 loading, snapshot migration/coverage helpers, create/edit/delete behavior, and
-Budget History behavior. Budget snapshots remain intentionally unnormalized
-until their ordering semantics are reviewed separately.
+Budget History behavior.
+
+Selected-read budget snapshot ordering has been normalized between Dexie and
+HTTP read-only paths. It follows Budget History's date-descending display
+semantics with ID ascending as the deterministic tie-breaker, preserving the
+Dexie primary-key order that the live page effectively keeps for same-date
+snapshot rows. Sorting happens before selected-read limit/offset pagination,
+and snapshot filters remain applied before sorting. The real Budget History and
+Budget pages still use their existing Dexie loading, grouping, filtering,
+completion, linking, editing, delete behavior, and snapshot lifecycle helpers.
+No snapshot generation, pruning, dedupe, repair, creation, or update behavior is
+changed. With this normalization, all selected-read ordering diagnostic
+resources should match when Dexie and the disposable SQLite database are seeded
+from the same backup.
 
 The selected read preview is also manual and dev-only. It intentionally caps
 loaded preview rows to a tiny sample and does not load or display full tables.

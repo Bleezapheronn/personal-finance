@@ -288,6 +288,73 @@ const applyBudgetFiltersAndPage = async (
   return sortedRows.slice(offset, offset + options.limit);
 };
 
+const compareBudgetSnapshotsByDueDateThenId = (
+  left: BudgetSnapshot,
+  right: BudgetSnapshot,
+): number => budgetTime(right.dueDate) - budgetTime(left.dueDate) ||
+  compareIds(left, right);
+
+const budgetSnapshotMatchesFilters = (
+  snapshot: BudgetSnapshot,
+  options: budgetHttpRepository.BudgetSnapshotListOptions | undefined,
+): boolean => {
+  if (options?.budgetId !== undefined && snapshot.budgetId !== options.budgetId) {
+    return false;
+  }
+
+  if (options?.categoryId !== undefined && snapshot.categoryId !== options.categoryId) {
+    return false;
+  }
+
+  if (options?.accountId !== undefined && snapshot.accountId !== options.accountId) {
+    return false;
+  }
+
+  if (options?.recipientId !== undefined && snapshot.recipientId !== options.recipientId) {
+    return false;
+  }
+
+  if (
+    options?.isHistorical !== undefined &&
+    snapshot.isHistorical !== options.isHistorical
+  ) {
+    return false;
+  }
+
+  const dueDateTime = budgetTime(snapshot.dueDate);
+  if (
+    options?.dateFrom !== undefined &&
+    dueDateTime < budgetTime(options.dateFrom)
+  ) {
+    return false;
+  }
+
+  if (
+    options?.dateTo !== undefined &&
+    dueDateTime > budgetTime(options.dateTo)
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
+const applyBudgetSnapshotFiltersAndPage = async (
+  options: budgetHttpRepository.BudgetSnapshotListOptions | undefined,
+): Promise<BudgetSnapshot[]> => {
+  const snapshots = await db.budgetSnapshots.toArray();
+  const sortedRows = snapshots
+    .filter((snapshot) => budgetSnapshotMatchesFilters(snapshot, options))
+    .sort(compareBudgetSnapshotsByDueDateThenId);
+
+  if (typeof options?.limit !== "number") {
+    return sortedRows;
+  }
+
+  const offset = options.offset ?? 0;
+  return sortedRows.slice(offset, offset + options.limit);
+};
+
 const applySortedDexiePage = async <Row>(
   table: DexiePreviewTable<Row>,
   options: DexieListOptions | undefined,
@@ -400,9 +467,10 @@ const dexieReadRepositories: SelectedReadRepositories = {
     getById: (id) => budgetRepository.getBudgetById(id),
   },
   budgetSnapshots: {
-    list: (options) => applyDexiePage(db.budgetSnapshots, options),
+    list: (options) => applyBudgetSnapshotFiltersAndPage(options),
     getById: (id) => budgetRepository.getBudgetSnapshotById(id),
-    listForBudget: (budgetId) => budgetRepository.listSnapshotsForBudget(budgetId),
+    listForBudget: (budgetId, options) =>
+      applyBudgetSnapshotFiltersAndPage({ ...options, budgetId }),
   },
 };
 

@@ -211,7 +211,7 @@ export const listBudgetSnapshots = (
 
   const rows = db
     .prepare(
-      `${BUDGET_SNAPSHOT_SELECT_SQL}${whereSql} ORDER BY dueDate DESC, id DESC LIMIT @limit OFFSET @offset`,
+      `${BUDGET_SNAPSHOT_SELECT_SQL}${whereSql} ORDER BY dueDate DESC, id ASC LIMIT @limit OFFSET @offset`,
     )
     .all({ ...params, limit: options.limit, offset: options.offset }) as Record<
     string,
