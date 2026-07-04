@@ -61,6 +61,12 @@ adapters are read-only. No write methods or write endpoints exist.
   truncation status without rendering account details. Account image/icon
   mismatches are reported as a visible limitation/warning because the current
   `http-readonly` prototype intentionally omits account image blobs.
+- Local API Diagnostics includes a manual SMS Templates read experiment
+  diagnostic that compares Dexie and selected-read `http-readonly` counts,
+  normalized IDs, display ordering, row normalization, active-state counts,
+  account ID distribution, pattern-presence distribution, and truncation status
+  without rendering template names, account names, regex strings, pattern
+  values, raw SMS examples, descriptions, or raw rows.
 - No create, update, delete, import, restore, or repair HTTP paths exist.
 - No write no-ops exist; future HTTP write attempts must fail loudly.
 - Browser token exposure is accepted only for this local prototype, never for
@@ -125,6 +131,7 @@ Manual Vite/browser checks:
 - Buckets/Categories read experiment diagnostic
 - Recipients read experiment diagnostic
 - Accounts read experiment diagnostic
+- SMS Templates read experiment diagnostic
 - Dexie-vs-HTTP parity diagnostic
 - target screen selected-read preview in both `dexie` and `http-readonly`
 
@@ -141,7 +148,7 @@ the API against that SQLite. Stale SQLite can cause false mismatches.
 | Recipients | `VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and merge disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
 | Buckets/Categories | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and reorder disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
 | Accounts | `VITE_PERSONAL_FINANCE_ACCOUNTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, and delete disabled in `http-readonly` | Passes with warning | Account images/icons intentionally omitted; transaction-derived usage checks remain on the Dexie path and are not migrated | Turn flag off or set backend to `dexie`, then restart Vite |
-| SMS Import Templates | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, import, and test-parse actions disabled in `http-readonly` | Preview/diagnostic baseline only | Regex and pattern strings are not shown in the `http-readonly` list experiment; edit/test workflows remain Dexie-only | Turn flag off or set backend to `dexie`, then restart Vite |
+| SMS Import Templates | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, import, and test-parse actions disabled in `http-readonly` | Diagnostic available | Regex and pattern strings are not shown in the `http-readonly` list experiment or diagnostic; edit/test workflows remain Dexie-only | Turn flag off or set backend to `dexie`, then restart Vite |
 
 ## Migration Gates
 

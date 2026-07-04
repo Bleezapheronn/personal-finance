@@ -467,6 +467,16 @@ trusting HTTP results, use a fresh backup, matching SQLite import, restarted
 API server, `verify:sqlite`, `smoke:api`, and
 `npm run check:local-api-safety`.
 
+Local API Diagnostics includes a manual SMS Templates read experiment
+diagnostic. It compares Dexie and selected-read `http-readonly` SMS template
+counts, normalized IDs, display-pipeline ordering, active-state counts,
+account ID distribution, pattern-presence distribution, row normalization, and
+truncation status. It is summary-only and does not render template names,
+account names, regex/pattern strings, raw SMS examples, descriptions, or raw
+rows. It does not replace the normal gates: use a fresh backup, matching
+SQLite import, restarted API server, `verify:sqlite`, `smoke:api`, and
+`npm run check:local-api-safety` before trusting Dexie-vs-HTTP results.
+
 ## Manual Parity Diagnostic
 
 `src/repositories/http/localApiParityDiagnostics.ts` contains a manual

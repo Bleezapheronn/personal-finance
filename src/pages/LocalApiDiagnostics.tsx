@@ -49,6 +49,10 @@ import {
   runAccountsReadExperimentDiagnostics,
   type AccountsReadExperimentDiagnosticResult,
 } from "../repositories/accountsReadExperimentDiagnostics";
+import {
+  runSmsTemplatesReadExperimentDiagnostics,
+  type SmsTemplatesReadExperimentDiagnosticResult,
+} from "../repositories/smsTemplatesReadExperimentDiagnostics";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiParityDiagnostics";
 import {
@@ -154,6 +158,8 @@ type RecipientsReadExperimentSummary =
 type BucketsCategoriesReadExperimentSummary =
   BucketsCategoriesReadExperimentDiagnosticResult;
 type AccountsReadExperimentSummary = AccountsReadExperimentDiagnosticResult;
+type SmsTemplatesReadExperimentSummary =
+  SmsTemplatesReadExperimentDiagnosticResult;
 
 const getEnvValue = (key: string): string | undefined => {
   const env = import.meta.env as Record<string, string | undefined>;
@@ -827,6 +833,10 @@ const AccountsReadExperimentResultCard: React.FC<{
           <IonText slot="end">{String(summary.httpTruncated)}</IonText>
         </IonItem>
         <IonItem>
+          <IonLabel>HTTP rows normalized</IonLabel>
+          <IonText slot="end">{String(summary.allHttpRowsNormalized)}</IonText>
+        </IonItem>
+        <IonItem>
           <IonLabel>Sampled Dexie IDs</IonLabel>
           <IonText slot="end">
             {summary.sampledDexieIds.length
@@ -906,6 +916,113 @@ const AccountsReadExperimentResultCard: React.FC<{
           <IonLabel>Failed checks</IonLabel>
           <IonText slot="end">{summary.failedChecks}</IonText>
         </IonItem>
+        {summary.checks.map((check) => (
+          <IonItem key={check.name}>
+            <IonLabel>
+              <h3>{check.name}</h3>
+              {check.code && <p>code={check.code}</p>}
+            </IonLabel>
+            <IonBadge
+              color={check.status === "pass" ? "success" : "danger"}
+              slot="end"
+            >
+              {check.status === "pass" ? "Pass" : "Fail"}
+            </IonBadge>
+          </IonItem>
+        ))}
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
+const SmsTemplatesReadExperimentResultCard: React.FC<{
+  summary: SmsTemplatesReadExperimentSummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>SMS Templates Read Experiment Results</h3>
+      </IonText>
+      <IonBadge color={summary.ok ? "success" : "danger"}>
+        {summary.ok ? "Pass" : "Fail"}
+      </IonBadge>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Limit</IonLabel>
+          <IonText slot="end">{summary.limit}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie count</IonLabel>
+          <IonText slot="end">
+            {summary.dexieLoadedCount}/{summary.dexieDerivedCount}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP count</IonLabel>
+          <IonText slot="end">
+            {summary.httpLoadedCount}/{summary.httpReportedCount ?? "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP truncated</IonLabel>
+          <IonText slot="end">{String(summary.httpTruncated)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled Dexie IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledDexieIds.length
+              ? summary.sampledDexieIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled HTTP IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledHttpIds.length
+              ? summary.sampledHttpIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Loaded IDs match</IonLabel>
+          <IonText slot="end">{String(summary.loadedIdsMatch)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Display order matches</IonLabel>
+          <IonText slot="end">{String(summary.displayOrderMatches)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Active counts match</IonLabel>
+          <IonText slot="end">
+            {String(summary.activeStateCountsMatch)} (
+            {summary.dexieActiveCount}/{summary.httpActiveCount})
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Account ID distribution matches</IonLabel>
+          <IonText slot="end">
+            {String(summary.accountIdDistributionMatches)} (
+            {summary.dexieAccountIdKeyCount}/{summary.httpAccountIdKeyCount})
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Pattern presence distribution matches</IonLabel>
+          <IonText slot="end">
+            {String(summary.patternPresenceDistributionMatches)} (
+            {summary.dexiePatternPresenceKeyCount}/
+            {summary.httpPatternPresenceKeyCount})
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Compared checks</IonLabel>
+          <IonText slot="end">{summary.comparedChecks}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Failed checks</IonLabel>
+          <IonText slot="end">{summary.failedChecks}</IonText>
+        </IonItem>
         {summary.checks
           .filter((check) => check.status === "fail")
           .map((check) => (
@@ -942,6 +1059,10 @@ const LocalApiDiagnostics: React.FC = () => {
   ] = useState<BucketsCategoriesReadExperimentSummary | null>(null);
   const [accountsReadExperimentSummary, setAccountsReadExperimentSummary] =
     useState<AccountsReadExperimentSummary | null>(null);
+  const [
+    smsTemplatesReadExperimentSummary,
+    setSmsTemplatesReadExperimentSummary,
+  ] = useState<SmsTemplatesReadExperimentSummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -971,6 +1092,11 @@ const LocalApiDiagnostics: React.FC = () => {
     bucketsCategoriesReadExperiment: {
       key: "bucketsCategoriesReadExperiment",
       title: "Buckets/Categories Read Experiment",
+      status: "idle",
+    },
+    smsTemplatesReadExperiment: {
+      key: "smsTemplatesReadExperiment",
+      title: "SMS Templates Read Experiment",
       status: "idle",
     },
   });
@@ -1513,6 +1639,43 @@ const LocalApiDiagnostics: React.FC = () => {
     }
   };
 
+  const runSmsTemplatesReadExperimentDiagnostic = async (): Promise<void> => {
+    const key = "smsTemplatesReadExperiment";
+    setRunningKey(key);
+    updateSummary({ ...summaries[key], status: "running" });
+    setSmsTemplatesReadExperimentSummary(null);
+
+    try {
+      const result = await runSmsTemplatesReadExperimentDiagnostics();
+      setSmsTemplatesReadExperimentSummary(result);
+      updateSummary({
+        key,
+        title: "SMS Templates Read Experiment",
+        status: result.ok ? "pass" : "fail",
+        ok: result.ok,
+        comparedChecks: result.comparedChecks,
+        failedChecks: result.failedChecks,
+        sampledIds: [
+          ...new Set([...result.sampledDexieIds, ...result.sampledHttpIds]),
+        ].slice(0, 12),
+        codes: uniqueCodes(
+          result.checks.map((check) => ({
+            code: check.code,
+          })),
+        ),
+      });
+    } catch (error) {
+      updateSummary({
+        key,
+        title: "SMS Templates Read Experiment",
+        status: "fail",
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setRunningKey(null);
+    }
+  };
+
   const isRunning = runningKey !== null;
 
   return (
@@ -1718,6 +1881,24 @@ const LocalApiDiagnostics: React.FC = () => {
                       Run
                     </IonButton>
                   </IonItem>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>SMS Templates read experiment diagnostic</IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() =>
+                        void runSmsTemplatesReadExperimentDiagnostic()
+                      }
+                      disabled={isRunning}
+                    >
+                      Run
+                    </IonButton>
+                  </IonItem>
                 </IonList>
                 <IonText color="medium">
                   <p style={{ fontSize: "0.85rem" }}>
@@ -1732,7 +1913,10 @@ const LocalApiDiagnostics: React.FC = () => {
                     The Accounts experiment diagnostic compares counts,
                     normalized IDs, display-pipeline ordering, active/credit
                     counts, currency distribution, image presence, and
-                    credit-limit presence only.
+                    credit-limit presence only. The SMS Templates experiment
+                    diagnostic compares counts, normalized IDs,
+                    display-pipeline ordering, active counts, account ID
+                    distribution, and pattern-presence distribution only.
                   </p>
                 </IonText>
               </IonCardContent>
@@ -1761,6 +1945,12 @@ const LocalApiDiagnostics: React.FC = () => {
             {accountsReadExperimentSummary && (
               <AccountsReadExperimentResultCard
                 summary={accountsReadExperimentSummary}
+              />
+            )}
+
+            {smsTemplatesReadExperimentSummary && (
+              <SmsTemplatesReadExperimentResultCard
+                summary={smsTemplatesReadExperimentSummary}
               />
             )}
 
