@@ -147,6 +147,13 @@ const selectedReadRowToAccount = (row: { id?: unknown }): Account => {
   };
 };
 
+const compareAccountsByExistingDisplayOrder = (
+  left: Account,
+  right: Account,
+): number =>
+  (left.id ?? Number.MAX_SAFE_INTEGER) -
+  (right.id ?? Number.MAX_SAFE_INTEGER);
+
 const AccountsManagement: React.FC = () => {
   // Account state
   const [accounts, setAccounts] = useState<LocalAccount[]>([]);
@@ -223,7 +230,9 @@ const AccountsManagement: React.FC = () => {
           throw new Error("invalid_accounts_read_experiment_response");
         }
 
-        fetched = rows.map(selectedReadRowToAccount);
+        fetched = rows
+          .map(selectedReadRowToAccount)
+          .sort(compareAccountsByExistingDisplayOrder);
         selectedReadCount = previewCount(result as DevPreviewListResult);
       } else {
         fetched = await accountRepository.listAccounts();

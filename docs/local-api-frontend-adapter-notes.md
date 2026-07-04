@@ -408,8 +408,10 @@ The `http-readonly` experiment is list-only. The Accounts page does not migrate
 transaction reads or account-balance calculations in this slice; transaction
 usage checks remain on the existing Dexie path and writes stay disabled in
 HTTP mode. The selected-read lookup endpoint is capped to a bounded page, and
-the page labels the result if the loaded account count is lower than the
-reported total. Roll back by turning
+the page applies the existing Accounts screen display order after loading so
+the visible list matches the Dexie page as closely as practical. The page
+labels the result if the loaded account count is lower than the reported total.
+Roll back by turning
 `VITE_PERSONAL_FINANCE_ACCOUNTS_READ_EXPERIMENT` off or setting
 `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite.
 

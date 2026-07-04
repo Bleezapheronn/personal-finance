@@ -211,6 +211,9 @@ Current narrow experiments:
 - The Accounts experiment is list-only. It does not migrate transaction reads or
   account-balance semantics; transaction-derived usage checks remain on the
   existing Dexie path.
+- The Accounts experiment applies the existing Accounts screen display order
+  after loading selected-read rows. This is a page-level display alignment and
+  does not change the global selected-read ordering diagnostic baseline.
 - Rollback is switching the relevant experiment flag off or setting the repository
   backend back to `dexie`, then restarting Vite.
 
