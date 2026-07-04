@@ -125,6 +125,20 @@ Manual Vite/browser checks:
 - Dexie-vs-HTTP parity diagnostic
 - target screen selected-read preview in both `dexie` and `http-readonly`
 
+## Current Real Read Experiment Status
+
+These are local-dev read experiments only. They do not make HTTP
+authoritative, do not imply writes are safe to migrate, and do not replace the
+fresh-backup verification gates. Before trusting a fresh diagnostic run, export
+a fresh backup, import that backup into matching disposable SQLite, and restart
+the API against that SQLite. Stale SQLite can cause false mismatches.
+
+| Screen / area | Experiment flag | Default behavior | `http-readonly` behavior | Write behavior | Diagnostic status | Known limitations | Rollback |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Recipients | `VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and merge disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
+| Buckets/Categories | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and reorder disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
+| Accounts | `VITE_PERSONAL_FINANCE_ACCOUNTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, and delete disabled in `http-readonly` | Passes with warning | Account images/icons intentionally omitted; transaction-derived usage checks remain on the Dexie path and are not migrated | Turn flag off or set backend to `dexie`, then restart Vite |
+
 ## Migration Gates
 
 Before any real screen can switch to `http-readonly`, all gates below must pass:

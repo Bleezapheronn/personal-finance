@@ -315,6 +315,10 @@ amount values, transaction descriptions, transaction references, raw SMS
 examples, raw rows, token values, or SQLite paths. `http-readonly` remains
 experimental and Dexie remains authoritative.
 
+See `docs/selected-read-migration-readiness-audit.md` for the current
+read-experiment status matrix, including diagnostic status, known limitations,
+and rollback notes.
+
 ## Buckets/Categories Read Experiment
 
 `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT=true` enables a
