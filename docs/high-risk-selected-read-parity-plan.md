@@ -7,8 +7,10 @@ budget snapshot lifecycle changes.
 
 The current management-read baseline is intentionally narrow. Recipients,
 Buckets/Categories, Accounts, and SMS Import Templates have off-by-default,
-flag-gated read experiments and diagnostics. That baseline does not make HTTP
-authoritative and does not approve migration of workflow-critical pages.
+flag-gated read experiments and diagnostics. Transactions also has a separate
+off-by-default, high-risk read experiment after a passing screen-specific
+parity diagnostic. These experiments do not make HTTP authoritative and do not
+approve write migration.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
 remains read-only. No write methods or write endpoints exist.
@@ -99,6 +101,16 @@ reports.
 The experiment must be behind a Transactions-specific flag. Turning the flag
 off or setting the backend to `dexie`, followed by a Vite restart, must restore
 the current Dexie page behavior.
+
+### Current Experiment
+
+`VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT=true` enables the
+Transactions list read experiment. In `http-readonly` mode the list is loaded
+through the selected-read facade with paginated, capped reads. Detail
+navigation, edit, delete, duplicate, transfer, import, and CSV export controls
+remain disabled because no detail/write/export workflow has migrated. This
+experiment remains local-dev only and requires a fresh matching SQLite baseline
+before its HTTP results are trusted.
 
 ## Reports
 

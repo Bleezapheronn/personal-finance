@@ -1,9 +1,9 @@
 # Selected-Read Migration Readiness Audit
 
 Status: prototype-ready with diagnostics and narrow, off-by-default read-path
-experiments for Recipients, Buckets/Categories, Accounts, and SMS Import
-Templates. No real workflow screen is switched to HTTP unless an explicit
-per-screen experiment flag is enabled.
+experiments for Recipients, Buckets/Categories, Accounts, SMS Import Templates,
+and Transactions. No real workflow screen is switched to HTTP unless an
+explicit per-screen experiment flag is enabled.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable and must be
 seeded from a full backup before comparison. The local API and HTTP repository
@@ -50,6 +50,9 @@ History `http-readonly` experiment.
 - SMS Import Templates management has one flag-gated read experiment; it
   remains read-only and disables create, edit, activate/deactivate, delete,
   import, and test-parse actions in `http-readonly` mode.
+- Transactions has one high-risk flag-gated read experiment; it remains
+  read-only and disables detail navigation, create, edit, delete, duplicate,
+  transfer, import, and export actions in `http-readonly` mode.
 - Local API Diagnostics includes a manual Buckets/Categories read experiment
   diagnostic that compares Dexie and selected-read `http-readonly` counts,
   normalized IDs, bucket display ordering, category grouping, active-state
@@ -147,9 +150,9 @@ These are local-dev read experiments only. They do not make HTTP
 authoritative, do not imply writes are safe to migrate, and do not replace the
 fresh-backup verification gates. Before trusting a fresh diagnostic run, export
 a fresh backup, import that backup into matching disposable SQLite, and restart
-the API against that SQLite. Stale SQLite can cause false mismatches. Four
-real read experiments now exist: Recipients, Buckets/Categories, Accounts, and
-SMS Import Templates. Do not expand to Transactions, Reports, Budget, or Budget
+the API against that SQLite. Stale SQLite can cause false mismatches. Five
+real read experiments now exist: Recipients, Buckets/Categories, Accounts, SMS
+Import Templates, and Transactions. Do not expand to Reports, Budget, or Budget
 History without a separate parity plan.
 
 | Screen / area | Experiment flag | Default behavior | `http-readonly` behavior | Write behavior | Diagnostic status | Known limitations | Rollback |
@@ -158,6 +161,7 @@ History without a separate parity plan.
 | Buckets/Categories | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, delete, and reorder disabled in `http-readonly` | Passes | No known current read-path limitation | Turn flag off or set backend to `dexie`, then restart Vite |
 | Accounts | `VITE_PERSONAL_FINANCE_ACCOUNTS_READ_EXPERIMENT=true` | Dexie | Loads through selected-read | Create, edit, activate/deactivate, and delete disabled in `http-readonly` | Passes with warning | Account images/icons intentionally omitted; transaction-derived usage checks remain on the Dexie path and are not migrated | Turn flag off or set backend to `dexie`, then restart Vite |
 | SMS Import Templates | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true` | Existing Dexie read/write/import/test-parse behavior | List loads through selected-read | Writes, imports, and test-parse actions disabled in `http-readonly` | Passes | Regex/pattern values are not exposed in `http-readonly`; edit/test workflow requires Dexie | Turn flag off or set backend to `dexie`, then restart Vite |
+| Transactions | `VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT=true` | Existing Dexie read/write/import/export/transfer behavior | List loads through selected-read with paginated capped reads | Detail navigation, create, edit, delete, duplicate, transfer, import, and CSV export disabled in `http-readonly` | Transactions read parity diagnostic passes with fresh matching SQLite | High-risk workflow screen; HTTP-loaded list is read-only and capped for the experiment | Turn flag off or set backend to `dexie`, then restart Vite |
 
 ## Migration Gates
 
@@ -216,7 +220,7 @@ Approval rules:
 
 - Default behavior must remain Dexie.
 - Any real screen experiment must be behind an explicit flag.
-- The first migration should avoid Transactions, Reports, Budget, and Budget
+- The first high-risk migration should avoid Reports, Budget, and Budget
   History unless stronger screen-specific parity checks exist.
 - No write path migration is allowed without a separate written plan.
 - Do not infer production or local-network safety from the current browser-token
@@ -270,13 +274,24 @@ Current narrow experiments:
 - The SMS Templates experiment is list-only. Template names and linked account
   names may be shown in the real management list, but regex/pattern strings
   remain confined to the Dexie-only edit/test workflows.
+- Transactions has a per-screen read experiment flag:
+  `VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT=true`.
+- Default behavior remains Dexie.
+- In `http-readonly` mode, the Transactions list may load through the selected
+  read facade with paginated capped reads, but detail navigation, create, edit,
+  delete, duplicate, transfer, import, and CSV export actions remain disabled
+  because detail, write, and export workflows have not migrated.
+- The Transactions experiment is high-risk and should only be trusted after a
+  fresh matching SQLite baseline and passing Transactions read parity
+  diagnostic.
 - Rollback is switching the relevant experiment flag off or setting the repository
   backend back to `dexie`, then restarting Vite.
 
 ## First-Candidate Guidance
 
-Prefer low-risk read-only or management-summary screens for the first real
-switch. Avoid Transactions, Reports, Budget, and Budget History as first real
+Prefer low-risk read-only or management-summary screens for first migrations.
+Transactions now has a high-risk read experiment only after additional
+screen-specific parity checks. Avoid Reports, Budget, and Budget History as real
 HTTP-backed screens unless additional screen-specific parity checks are added
 and reviewed.
 

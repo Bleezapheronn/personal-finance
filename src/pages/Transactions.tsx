@@ -60,8 +60,10 @@ import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCa
 import {
   booleanValue,
   type DevPreviewListResult,
+  envFlagEnabled,
   isSelectedReadPreviewsEnabled,
   numberValue,
+  previewCount,
   previewRows,
   safePreviewErrorCode,
   sampledIds,
@@ -75,6 +77,14 @@ import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
 const SELECTED_READ_PREVIEW_LIMIT = 20;
+const TRANSACTIONS_READ_EXPERIMENT_FLAG =
+  "VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT";
+const TRANSACTIONS_READ_EXPERIMENT_LIMIT = 5000;
+const TRANSACTIONS_READ_EXPERIMENT_PAGE_SIZE = 200;
+const LOOKUP_READ_EXPERIMENT_LIMIT = 5000;
+
+const isTransactionsReadExperimentEnabled = (): boolean =>
+  envFlagEnabled(TRANSACTIONS_READ_EXPERIMENT_FLAG);
 
 const normalizeToLocalDay = (value: string | Date): Date => {
   const date = new Date(value);
@@ -127,6 +137,251 @@ interface SelectedReadTransactionsPreview {
   rows: SelectedReadTransactionPreviewRow[];
   errorCode?: string;
 }
+
+interface TransactionsReadExperimentLoadResult {
+  transactions: Transaction[];
+  reportedCount?: number;
+  pagesLoaded: number;
+  truncated: boolean;
+}
+
+const dateValue = (value: unknown): Date => {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return date;
+    }
+  }
+
+  return new Date(0);
+};
+
+const optionalNumber = (value: unknown): number | undefined => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  return numberValue(value);
+};
+
+const optionalString = (value: unknown): string | undefined => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  return typeof value === "string" ? value : undefined;
+};
+
+const optionalBoolean = (value: unknown): boolean | undefined => {
+  const normalized = booleanValue(value);
+  return normalized === null ? undefined : normalized;
+};
+
+const selectedReadRowToTransaction = (row: { id?: unknown }): Transaction => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: optionalNumber(source.id),
+    categoryId: numberValue(source.categoryId) ?? 0,
+    paymentChannelId: optionalNumber(source.paymentChannelId),
+    accountId: optionalNumber(source.accountId),
+    recipientId: numberValue(source.recipientId) ?? 0,
+    date: dateValue(source.date),
+    amount: numberValue(source.amount) ?? 0,
+    originalAmount: optionalNumber(source.originalAmount),
+    originalCurrency: optionalString(source.originalCurrency),
+    exchangeRate: optionalNumber(source.exchangeRate),
+    transactionReference: optionalString(source.transactionReference),
+    transactionCost: optionalNumber(source.transactionCost),
+    description: optionalString(source.description),
+    transferPairId: optionalNumber(source.transferPairId),
+    isTransfer: optionalBoolean(source.isTransfer),
+    budgetId: optionalNumber(source.budgetId),
+    occurrenceDate:
+      source.occurrenceDate === null || source.occurrenceDate === undefined
+        ? undefined
+        : dateValue(source.occurrenceDate),
+    budgetSnapshotId: optionalNumber(source.budgetSnapshotId),
+  };
+};
+
+const selectedReadRowToAccount = (row: { id?: unknown }): Account => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: optionalNumber(source.id),
+    name: optionalString(source.name) ?? "",
+    description: optionalString(source.description),
+    currency: optionalString(source.currency),
+    isActive: optionalBoolean(source.isActive) ?? true,
+    isCredit: optionalBoolean(source.isCredit) ?? false,
+    creditLimit: optionalNumber(source.creditLimit),
+    createdAt: dateValue(source.createdAt),
+    updatedAt: dateValue(source.updatedAt),
+  };
+};
+
+const selectedReadRowToBucket = (row: { id?: unknown }): Bucket => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: optionalNumber(source.id),
+    name: optionalString(source.name) ?? "",
+    description: optionalString(source.description),
+    minPercentage: numberValue(source.minPercentage) ?? 0,
+    maxPercentage: numberValue(source.maxPercentage) ?? 0,
+    minFixedAmount: optionalNumber(source.minFixedAmount),
+    isActive: optionalBoolean(source.isActive) ?? true,
+    displayOrder: numberValue(source.displayOrder) ?? 0,
+    excludeFromReports: optionalBoolean(source.excludeFromReports) ?? false,
+    createdAt: dateValue(source.createdAt),
+    updatedAt: dateValue(source.updatedAt),
+  };
+};
+
+const selectedReadRowToCategory = (row: { id?: unknown }): Category => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: optionalNumber(source.id),
+    name: optionalString(source.name) ?? "",
+    bucketId: numberValue(source.bucketId) ?? 0,
+    description: optionalString(source.description),
+    isActive: optionalBoolean(source.isActive) ?? true,
+    createdAt: dateValue(source.createdAt),
+    updatedAt: dateValue(source.updatedAt),
+  };
+};
+
+const selectedReadRowToRecipient = (row: { id?: unknown }): Recipient => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: optionalNumber(source.id),
+    name: optionalString(source.name) ?? "",
+    aliases: optionalString(source.aliases),
+    email: optionalString(source.email),
+    phone: optionalString(source.phone),
+    tillNumber: optionalString(source.tillNumber),
+    paybill: optionalString(source.paybill),
+    accountNumber: optionalString(source.accountNumber),
+    description: optionalString(source.description),
+    isActive: optionalBoolean(source.isActive) ?? true,
+    createdAt: dateValue(source.createdAt),
+    updatedAt: dateValue(source.updatedAt),
+  };
+};
+
+const selectedReadListRows = (
+  result: DevPreviewListResult,
+  errorCode: string,
+): Array<{ id?: unknown }> => {
+  const rows = previewRows(result);
+  if (!rows) {
+    throw new Error(errorCode);
+  }
+
+  return rows;
+};
+
+const loadSelectedReadTransactionExperimentRows = async (
+  repositories: ReturnType<typeof getSelectedReadRepositories>,
+): Promise<TransactionsReadExperimentLoadResult> => {
+  const transactions: Transaction[] = [];
+  let reportedCount: number | undefined;
+  let pagesLoaded = 0;
+
+  while (transactions.length < TRANSACTIONS_READ_EXPERIMENT_LIMIT) {
+    const limit = Math.min(
+      TRANSACTIONS_READ_EXPERIMENT_PAGE_SIZE,
+      TRANSACTIONS_READ_EXPERIMENT_LIMIT - transactions.length,
+    );
+    const result = await repositories.transactions.list({
+      limit,
+      offset: transactions.length,
+    });
+    const rows = selectedReadListRows(
+      result as DevPreviewListResult,
+      "invalid_transactions_read_experiment_response",
+    );
+
+    reportedCount ??= previewCount(result as DevPreviewListResult);
+    pagesLoaded += 1;
+    transactions.push(...rows.map(selectedReadRowToTransaction));
+
+    if (rows.length === 0) {
+      break;
+    }
+
+    if (reportedCount !== undefined && transactions.length >= reportedCount) {
+      break;
+    }
+
+    if (rows.length < limit) {
+      break;
+    }
+  }
+
+  return {
+    transactions,
+    reportedCount,
+    pagesLoaded,
+    truncated:
+      reportedCount !== undefined ? transactions.length < reportedCount : false,
+  };
+};
+
+const loadSelectedReadLookupRows = async (
+  repositories: ReturnType<typeof getSelectedReadRepositories>,
+): Promise<{
+  accounts: Account[];
+  buckets: Bucket[];
+  categories: Category[];
+  recipients: Recipient[];
+}> => {
+  const [accountsResult, bucketsResult, categoriesResult, recipientsResult] =
+    await Promise.all([
+      repositories.accounts.list({
+        limit: LOOKUP_READ_EXPERIMENT_LIMIT,
+        offset: 0,
+      }),
+      repositories.buckets.list({
+        limit: LOOKUP_READ_EXPERIMENT_LIMIT,
+        offset: 0,
+      }),
+      repositories.categories.list({
+        limit: LOOKUP_READ_EXPERIMENT_LIMIT,
+        offset: 0,
+      }),
+      repositories.recipients.list({
+        limit: LOOKUP_READ_EXPERIMENT_LIMIT,
+        offset: 0,
+      }),
+    ]);
+
+  return {
+    accounts: selectedReadListRows(
+      accountsResult as DevPreviewListResult,
+      "invalid_transactions_read_experiment_accounts_response",
+    ).map(selectedReadRowToAccount),
+    buckets: selectedReadListRows(
+      bucketsResult as DevPreviewListResult,
+      "invalid_transactions_read_experiment_buckets_response",
+    ).map(selectedReadRowToBucket),
+    categories: selectedReadListRows(
+      categoriesResult as DevPreviewListResult,
+      "invalid_transactions_read_experiment_categories_response",
+    ).map(selectedReadRowToCategory),
+    recipients: selectedReadListRows(
+      recipientsResult as DevPreviewListResult,
+      "invalid_transactions_read_experiment_recipients_response",
+    ).map(selectedReadRowToRecipient),
+  };
+};
 
 const toDayKey = (value: unknown): string | undefined => {
   if (typeof value !== "string" && !(value instanceof Date)) {
@@ -185,6 +440,10 @@ const Transactions: React.FC = () => {
   const [visibleTransactionWindowDays, setVisibleTransactionWindowDays] =
     useState(TRANSACTION_BATCH_DAYS);
   const [hasMoreTransactions, setHasMoreTransactions] = useState(true);
+  const [
+    transactionsReadExperimentLoad,
+    setTransactionsReadExperimentLoad,
+  ] = useState<TransactionsReadExperimentLoadResult | null>(null);
   const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
     useState(false);
   const [selectedReadPreview, setSelectedReadPreview] =
@@ -210,18 +469,45 @@ const Transactions: React.FC = () => {
 
   const history = useHistory();
   const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
+  const selectedBackend = getRepositoryBackend();
+  const transactionsReadExperimentEnabled =
+    isTransactionsReadExperimentEnabled();
+  const transactionsReadExperimentHttpReadonly =
+    transactionsReadExperimentEnabled && selectedBackend === "http-readonly";
 
   const fetchTransactions = async () => {
     setLoading(true);
 
     try {
-      const [allTransactions, cats, bkts, recs, accs] = await Promise.all([
-        transactionRepository.listTransactions(),
-        categoryRepository.listCategories(),
-        categoryRepository.listBuckets(),
-        recipientRepository.listRecipients(),
-        accountRepository.listAccounts(),
-      ]);
+      let allTransactions: Transaction[];
+      let cats: Category[];
+      let bkts: Bucket[];
+      let recs: Recipient[];
+      let accs: Account[];
+      let experimentLoad: TransactionsReadExperimentLoadResult | null = null;
+
+      if (transactionsReadExperimentHttpReadonly) {
+        const repositories = getSelectedReadRepositories(selectedBackend);
+        const [transactionLoad, lookupRows] = await Promise.all([
+          loadSelectedReadTransactionExperimentRows(repositories),
+          loadSelectedReadLookupRows(repositories),
+        ]);
+
+        allTransactions = transactionLoad.transactions;
+        cats = lookupRows.categories;
+        bkts = lookupRows.buckets;
+        recs = lookupRows.recipients;
+        accs = lookupRows.accounts;
+        experimentLoad = transactionLoad;
+      } else {
+        [allTransactions, cats, bkts, recs, accs] = await Promise.all([
+          transactionRepository.listTransactions(),
+          categoryRepository.listCategories(),
+          categoryRepository.listBuckets(),
+          recipientRepository.listRecipients(),
+          accountRepository.listAccounts(),
+        ]);
+      }
 
       // REMOVED: paymentMethods fetch - no longer needed
 
@@ -229,6 +515,7 @@ const Transactions: React.FC = () => {
       setBuckets(bkts);
       setRecipients(recs);
       setAccounts(accs);
+      setTransactionsReadExperimentLoad(experimentLoad);
 
       // Convert account image blobs to URLs
       const imageMap = new Map<number, string>();
@@ -264,6 +551,7 @@ const Transactions: React.FC = () => {
       setError("");
     } catch (err) {
       setError("Failed to load transactions.");
+      setTransactionsReadExperimentLoad(null);
       console.error(err);
     } finally {
       setLoading(false);
@@ -275,8 +563,19 @@ const Transactions: React.FC = () => {
     fetchTransactions();
   });
 
+  const showTransactionsReadExperimentActionDisabled = () => {
+    setError(
+      "Transactions read experiment is active. Switch back to Dexie to manage transactions.",
+    );
+  };
+
   // Handler to navigate to Transaction Details page with transaction ID
   const handleView = (id?: number) => {
+    if (transactionsReadExperimentHttpReadonly) {
+      showTransactionsReadExperimentActionDisabled();
+      return;
+    }
+
     if (id !== undefined) {
       history.push(`/transaction-details/${id}`);
     }
@@ -284,12 +583,22 @@ const Transactions: React.FC = () => {
 
   // Handler to navigate to Edit Transaction page
   const handleEdit = (id?: number) => {
+    if (transactionsReadExperimentHttpReadonly) {
+      showTransactionsReadExperimentActionDisabled();
+      return;
+    }
+
     if (id !== undefined) {
       history.push(`/edit/${id}`);
     }
   };
 
   const handleDuplicate = async (txn: Transaction) => {
+    if (transactionsReadExperimentHttpReadonly) {
+      showTransactionsReadExperimentActionDisabled();
+      return;
+    }
+
     if (!txn.id) {
       return;
     }
@@ -349,6 +658,11 @@ const Transactions: React.FC = () => {
   // Handler to delete a transaction with confirmation
   const handleDeleteClick = async (id?: number) => {
     if (id === undefined) return;
+    if (transactionsReadExperimentHttpReadonly) {
+      showTransactionsReadExperimentActionDisabled();
+      return;
+    }
+
     const isTransfer = await transactionRepository.isTransferTransaction(id);
     setIsTransferDelete(isTransfer);
     setTransactionToDelete(id);
@@ -427,6 +741,14 @@ const Transactions: React.FC = () => {
 
   const handleConfirmDelete = async () => {
     if (transactionToDelete === undefined) return;
+    if (transactionsReadExperimentHttpReadonly) {
+      showTransactionsReadExperimentActionDisabled();
+      setShowDeleteConfirm(false);
+      setTransactionToDelete(undefined);
+      setIsTransferDelete(false);
+      return;
+    }
+
     try {
       // Get the transaction to check if it's a transfer
       const txnToDelete = await db.transactions.get(transactionToDelete);
@@ -1020,29 +1342,33 @@ const Transactions: React.FC = () => {
           </IonButtons>
           <IonTitle>Transactions</IonTitle>
           <IonButtons slot="end">
-            <IonButton
-              onClick={async () => {
-                try {
-                  const csv = await exportTransactionsToCSV();
-                  const filename = `transactions-${
-                    new Date().toISOString().split("T")[0]
-                  }.csv`;
-                  downloadCSV(csv, filename);
-                } catch (err) {
-                  console.error("Export failed:", err);
-                  // Show error toast
-                }
-              }}
-              title="Export Transactions to CSV"
-            >
-              <IonIcon icon={downloadOutline} />
-            </IonButton>
-            <IonButton
-              onClick={() => setShowImportModal(true)}
-              title="Import transactions from CSV"
-            >
-              <IonIcon icon={cloudUploadOutline} />
-            </IonButton>
+            {!transactionsReadExperimentHttpReadonly && (
+              <>
+                <IonButton
+                  onClick={async () => {
+                    try {
+                      const csv = await exportTransactionsToCSV();
+                      const filename = `transactions-${
+                        new Date().toISOString().split("T")[0]
+                      }.csv`;
+                      downloadCSV(csv, filename);
+                    } catch (err) {
+                      console.error("Export failed:", err);
+                      // Show error toast
+                    }
+                  }}
+                  title="Export Transactions to CSV"
+                >
+                  <IonIcon icon={downloadOutline} />
+                </IonButton>
+                <IonButton
+                  onClick={() => setShowImportModal(true)}
+                  title="Import transactions from CSV"
+                >
+                  <IonIcon icon={cloudUploadOutline} />
+                </IonButton>
+              </>
+            )}
           </IonButtons>
         </IonToolbar>
       </IonHeader>
@@ -1102,6 +1428,36 @@ const Transactions: React.FC = () => {
 
         {loading && <IonSpinner name="crescent" />}
         {error && <IonText color="danger">{error}</IonText>}
+
+        {transactionsReadExperimentEnabled && (
+          <IonCard style={{ margin: 0, marginBottom: "16px" }}>
+            <IonCardContent>
+              <IonText
+                color={
+                  transactionsReadExperimentHttpReadonly ? "warning" : "medium"
+                }
+              >
+                <p style={{ marginTop: 0 }}>
+                  {transactionsReadExperimentHttpReadonly
+                    ? "Transactions read experiment is active. List is loaded through selected-read `http-readonly`; detail, edit, delete, duplicate, transfer, import, and export actions are disabled. Switch back to Dexie to manage transactions."
+                    : "Transactions read experiment flag is active with the Dexie backend. Existing Dexie behavior remains available."}
+                </p>
+                <p style={{ marginBottom: 0, color: "#666", fontSize: "0.85rem" }}>
+                  Backend: {selectedBackend}
+                  {transactionsReadExperimentHttpReadonly &&
+                    transactionsReadExperimentLoad &&
+                    `; loaded ${transactionsReadExperimentLoad.transactions.length} transaction rows across ${transactionsReadExperimentLoad.pagesLoaded} page(s)`}
+                  {transactionsReadExperimentHttpReadonly &&
+                    transactionsReadExperimentLoad?.reportedCount !== undefined &&
+                    ` of ${transactionsReadExperimentLoad.reportedCount} reported`}
+                  {transactionsReadExperimentHttpReadonly &&
+                    transactionsReadExperimentLoad?.truncated &&
+                    ". This experiment is capped; refresh the matching SQLite baseline before using this as a migration signal."}
+                </p>
+              </IonText>
+            </IonCardContent>
+          </IonCard>
+        )}
 
         {showSelectedReadPreview && (
           <SelectedReadPreviewCard
@@ -1892,38 +2248,40 @@ const Transactions: React.FC = () => {
                             </div>
                             <p style={{ margin: "0" }}>&nbsp;</p>
                             {/* Edit/Delete buttons */}
-                            <IonRow className="item-actions">
-                              <IonCol className="item-actions-container">
-                                <IonButton
-                                  fill="clear"
-                                  size="small"
-                                  style={{ marginRight: "0" }}
-                                  onClick={() => handleDuplicate(txn)}
-                                  title="Duplicate Transaction"
-                                >
-                                  <IonIcon slot="end" icon={copyOutline} />
-                                </IonButton>
-                                <IonButton
-                                  fill="clear"
-                                  size="small"
-                                  style={{ marginRight: "0" }}
-                                  onClick={() => handleEdit(txn.id)}
-                                  title="Edit Transaction"
-                                >
-                                  <IonIcon slot="end" icon={createOutline} />
-                                </IonButton>
-                                <IonButton
-                                  fill="clear"
-                                  size="small"
-                                  style={{ marginRight: "0" }}
-                                  color="danger"
-                                  onClick={() => handleDeleteClick(txn.id)}
-                                  title="Delete Transaction"
-                                >
-                                  <IonIcon slot="end" icon={trashOutline} />
-                                </IonButton>
-                              </IonCol>
-                            </IonRow>
+                            {!transactionsReadExperimentHttpReadonly && (
+                              <IonRow className="item-actions">
+                                <IonCol className="item-actions-container">
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    style={{ marginRight: "0" }}
+                                    onClick={() => handleDuplicate(txn)}
+                                    title="Duplicate Transaction"
+                                  >
+                                    <IonIcon slot="end" icon={copyOutline} />
+                                  </IonButton>
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    style={{ marginRight: "0" }}
+                                    onClick={() => handleEdit(txn.id)}
+                                    title="Edit Transaction"
+                                  >
+                                    <IonIcon slot="end" icon={createOutline} />
+                                  </IonButton>
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    style={{ marginRight: "0" }}
+                                    color="danger"
+                                    onClick={() => handleDeleteClick(txn.id)}
+                                    title="Delete Transaction"
+                                  >
+                                    <IonIcon slot="end" icon={trashOutline} />
+                                  </IonButton>
+                                </IonCol>
+                              </IonRow>
+                            )}
                           </IonCol>
                         </IonRow>
                       </IonGrid>
@@ -1969,26 +2327,30 @@ const Transactions: React.FC = () => {
           </>
         )}
 
-        <ImportModal
-          isOpen={showImportModal}
-          onDidDismiss={() => setShowImportModal(false)}
-          onImportComplete={() => {
-            setShowImportModal(false);
-            // Reload transactions
-            window.location.reload();
-          }}
-        />
+        {!transactionsReadExperimentHttpReadonly && (
+          <ImportModal
+            isOpen={showImportModal}
+            onDidDismiss={() => setShowImportModal(false)}
+            onImportComplete={() => {
+              setShowImportModal(false);
+              // Reload transactions
+              window.location.reload();
+            }}
+          />
+        )}
       </IonContent>
 
       {/* FAB BUTTON FOR ADDING TRANSACTIONS */}
-      <IonFab vertical="bottom" horizontal="end" slot="fixed">
-        <IonFabButton
-          onClick={() => history.push("/add")}
-          title="Add Transaction"
-        >
-          <IonIcon icon={addOutline} />
-        </IonFabButton>
-      </IonFab>
+      {!transactionsReadExperimentHttpReadonly && (
+        <IonFab vertical="bottom" horizontal="end" slot="fixed">
+          <IonFabButton
+            onClick={() => history.push("/add")}
+            title="Add Transaction"
+          >
+            <IonIcon icon={addOutline} />
+          </IonFabButton>
+        </IonFab>
+      )}
     </IonPage>
   );
 };

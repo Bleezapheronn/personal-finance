@@ -216,6 +216,31 @@ Dexie data. Trust results only after exporting a fresh backup, importing it into
 matching disposable SQLite, restarting the API, and rerunning `verify:sqlite`,
 `smoke:api`, and `npm run check:local-api-safety`.
 
+## Transactions Read Experiment
+
+`VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT=true` enables a narrow
+real-screen selected-read experiment for the Transactions list. The flag is off
+by default and is separate from the redacted preview flag. Restart Vite after
+changing it.
+
+When the flag is off, the Transactions page uses the existing Dexie read,
+filter, edit, delete, duplicate, transfer, import, and export behavior. When
+the flag is on with `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, behavior
+remains on the existing Dexie path. When the flag is on with
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`, the list is loaded
+through the selected-read facade in paginated batches capped for the experiment.
+The page shows a local-dev banner with the backend, loaded count, page count,
+and any truncation warning.
+
+In `http-readonly` mode, detail navigation, create, edit, delete, duplicate,
+transfer, import, and CSV export controls are hidden or guarded. No transaction
+write, transfer, detail workflow, or export path is migrated. Before enabling
+the experiment, use a fresh backup, matching SQLite import, restarted API
+server, passing Transactions read parity diagnostic, `verify:sqlite`,
+`smoke:api`, and `npm run check:local-api-safety`. Roll back by turning
+`VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT` off or setting
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite.
+
 Selected-read budget ordering has also been normalized between Dexie and HTTP
 read-only paths. It uses due date ascending with ID ascending as the
 deterministic tie-breaker, matching the existing read-only HTTP budget endpoint
