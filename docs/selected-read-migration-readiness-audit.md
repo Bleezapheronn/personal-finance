@@ -35,6 +35,10 @@ adapters are read-only. No write methods or write endpoints exist.
 - No real workflow page uses HTTP as its data source by default.
 - Recipients management has one flag-gated read experiment; it remains
   read-only and disables write controls in `http-readonly` mode.
+- Local API Diagnostics includes a manual Recipients read experiment
+  diagnostic that compares Dexie and selected-read `http-readonly` counts,
+  normalized IDs, default display ordering, row normalization, and truncation
+  status without rendering recipient details.
 - No create, update, delete, import, restore, or repair HTTP paths exist.
 - No write no-ops exist; future HTTP write attempts must fail loudly.
 - Browser token exposure is accepted only for this local prototype, never for
@@ -96,6 +100,7 @@ Manual Vite/browser checks:
 - backend selection diagnostic
 - selected-read repository diagnostic
 - selected-read ordering diagnostic
+- Recipients read experiment diagnostic
 - Dexie-vs-HTTP parity diagnostic
 - target screen selected-read preview in both `dexie` and `http-readonly`
 
