@@ -55,6 +55,7 @@ import {
   previewRows,
   safePreviewErrorCode,
   sampledIds,
+  stringValue,
 } from "../utils/devPreview";
 import type { Recipient } from "../db";
 
@@ -87,6 +88,48 @@ interface SelectedReadRecipientsPreview {
 }
 
 const SELECTED_READ_PREVIEW_LIMIT = 20;
+const RECIPIENTS_READ_EXPERIMENT_FLAG =
+  "VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT";
+const RECIPIENTS_READ_EXPERIMENT_LIMIT = 500;
+
+const isRecipientsReadExperimentEnabled = (): boolean => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  return env[RECIPIENTS_READ_EXPERIMENT_FLAG]?.trim() === "true";
+};
+
+const dateValue = (value: unknown): Date => {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return new Date(0);
+};
+
+const selectedReadRowToRecipient = (row: { id?: unknown }): Recipient => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: numberValue(source.id),
+    name: stringValue(source.name) ?? "",
+    aliases: stringValue(source.aliases),
+    email: stringValue(source.email),
+    phone: stringValue(source.phone),
+    tillNumber: stringValue(source.tillNumber),
+    paybill: stringValue(source.paybill),
+    accountNumber: stringValue(source.accountNumber),
+    description: stringValue(source.description),
+    isActive: booleanValue(source.isActive) !== false,
+    createdAt: dateValue(source.createdAt),
+    updatedAt: dateValue(source.updatedAt),
+  };
+};
 
 const RecipientsManagement: React.FC = () => {
   const [recipients, setRecipients] = useState<Recipient[]>([]);
@@ -121,6 +164,13 @@ const RecipientsManagement: React.FC = () => {
     useState<SelectedReadRecipientsPreview | null>(null);
   const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
     useState(false);
+  const [recipientsReadExperimentCount, setRecipientsReadExperimentCount] =
+    useState<number | undefined>(undefined);
+
+  const selectedBackend = getRepositoryBackend();
+  const recipientsReadExperimentEnabled = isRecipientsReadExperimentEnabled();
+  const recipientsReadExperimentHttpReadonly =
+    recipientsReadExperimentEnabled && selectedBackend === "http-readonly";
 
   useEffect(() => {
     fetchRecipients();
@@ -132,7 +182,28 @@ const RecipientsManagement: React.FC = () => {
   const fetchRecipients = async () => {
     try {
       setLoading(true);
-      const all = await recipientRepository.listRecipients();
+      let all: Recipient[];
+      let selectedReadCount: number | undefined;
+
+      if (recipientsReadExperimentHttpReadonly) {
+        const repositories = getSelectedReadRepositories(selectedBackend);
+        const result = await repositories.recipients.list({
+          limit: RECIPIENTS_READ_EXPERIMENT_LIMIT,
+          offset: 0,
+        });
+        const rows = previewRows(result as DevPreviewListResult);
+
+        if (!rows) {
+          throw new Error("invalid_recipients_read_experiment_response");
+        }
+
+        all = rows.map(selectedReadRowToRecipient);
+        selectedReadCount = previewCount(result as DevPreviewListResult);
+      } else {
+        all = await recipientRepository.listRecipients();
+      }
+
+      setRecipientsReadExperimentCount(selectedReadCount);
 
       // Get transactions to count usage
       const transactions = await transactionRepository.listTransactions();
@@ -158,8 +229,9 @@ const RecipientsManagement: React.FC = () => {
       setRecipients(sorted);
 
       // NEW: Find duplicate pairs
-      const pairs = findAllDuplicatePairs(sorted);
-      setDuplicatePairs(pairs);
+      setDuplicatePairs(
+        recipientsReadExperimentHttpReadonly ? [] : findAllDuplicatePairs(sorted)
+      );
     } catch (err) {
       console.error("Error fetching recipients:", err);
       setToastMessage("Failed to load recipients");
@@ -173,6 +245,12 @@ const RecipientsManagement: React.FC = () => {
    * handleRecipientSaved - Called when recipient is added/updated via modal
    */
   const handleRecipientSaved = async () => {
+    if (recipientsReadExperimentHttpReadonly) {
+      setToastMessage("Writes are disabled in the recipients read experiment");
+      setShowToast(true);
+      return;
+    }
+
     setEditingRecipient(null);
     const isEdit = editingRecipient !== null;
     setToastMessage(
@@ -189,6 +267,12 @@ const RecipientsManagement: React.FC = () => {
    * Removed: old fuzzy duplicate detection that showed false positives
    */
   const handleEditRecipient = (recipient: Recipient) => {
+    if (recipientsReadExperimentHttpReadonly) {
+      setToastMessage("Switch back to Dexie to edit recipients");
+      setShowToast(true);
+      return;
+    }
+
     setEditingRecipient(recipient);
     setShowAddRecipientModal(true);
     // Removed: detectPotentialDuplicates() call that was showing false alerts
@@ -199,6 +283,13 @@ const RecipientsManagement: React.FC = () => {
    * handleDeactivateRecipient - Deactivates a recipient instead of deleting
    */
   const handleDeactivateRecipient = async (recipientId: number) => {
+    if (recipientsReadExperimentHttpReadonly) {
+      setToastMessage("Switch back to Dexie to edit recipients");
+      setShowToast(true);
+      setDeleteState({ type: "none" });
+      return;
+    }
+
     try {
       setLoading(true);
       await db.recipients.update(recipientId, { isActive: false });
@@ -219,6 +310,13 @@ const RecipientsManagement: React.FC = () => {
    * handleDeleteRecipient - Removes a recipient from the database
    */
   const handleDeleteRecipient = async (recipientId: number) => {
+    if (recipientsReadExperimentHttpReadonly) {
+      setToastMessage("Switch back to Dexie to delete recipients");
+      setShowToast(true);
+      setDeleteState({ type: "none" });
+      return;
+    }
+
     try {
       setLoading(true);
       await db.recipients.delete(recipientId);
@@ -239,6 +337,12 @@ const RecipientsManagement: React.FC = () => {
    * handleToggleRecipientActive - Toggles recipient active/inactive status
    */
   const handleToggleRecipientActive = async (recipient: Recipient) => {
+    if (recipientsReadExperimentHttpReadonly) {
+      setToastMessage("Switch back to Dexie to edit recipients");
+      setShowToast(true);
+      return;
+    }
+
     try {
       setLoading(true);
       const newStatus = recipient.isActive === false ? true : false;
@@ -320,6 +424,10 @@ const RecipientsManagement: React.FC = () => {
     accountNumber?: string,
     excludeId?: number
   ): Promise<Recipient | null> => {
+    if (recipientsReadExperimentHttpReadonly) {
+      return null;
+    }
+
     try {
       const allRecipients = await recipientRepository.listRecipients();
 
@@ -441,6 +549,12 @@ const RecipientsManagement: React.FC = () => {
    * If unused: confirm deletion
    */
   const initiateDeleteRecipient = async (recipient: Recipient) => {
+    if (recipientsReadExperimentHttpReadonly) {
+      setToastMessage("Switch back to Dexie to delete recipients");
+      setShowToast(true);
+      return;
+    }
+
     const transactionCount = recipientCounts.get(recipient.id!) || 0;
 
     if (transactionCount > 0) {
@@ -563,8 +677,54 @@ const RecipientsManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
+        {recipientsReadExperimentEnabled && (
+          <IonCard
+            style={{
+              marginBottom: "16px",
+              borderLeft: recipientsReadExperimentHttpReadonly
+                ? "4px solid var(--ion-color-warning)"
+                : "4px solid var(--ion-color-medium)",
+            }}
+          >
+            <IonCardContent>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "12px" }}
+              >
+                <IonIcon
+                  icon={warningOutline}
+                  style={{
+                    color: recipientsReadExperimentHttpReadonly
+                      ? "var(--ion-color-warning)"
+                      : "var(--ion-color-medium)",
+                    fontSize: "1.5rem",
+                  }}
+                />
+                <div>
+                  <p
+                    style={{
+                      margin: "0 0 6px 0",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {recipientsReadExperimentHttpReadonly
+                      ? "Recipients read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie to edit."
+                      : "Recipients read experiment flag is active with the Dexie backend. Existing Dexie write behavior remains available."}
+                  </p>
+                  <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
+                    Backend: {selectedBackend}
+                    {recipientsReadExperimentHttpReadonly &&
+                      recipientsReadExperimentCount !== undefined &&
+                      recipientsReadExperimentCount > recipients.length &&
+                      `; loaded first ${recipients.length} of ${recipientsReadExperimentCount} recipients for this experiment.`}
+                  </p>
+                </div>
+              </div>
+            </IonCardContent>
+          </IonCard>
+        )}
+
         {/* NEW: DUPLICATE NOTIFICATION BANNER */}
-        {duplicatePairs.length > 0 && (
+        {!recipientsReadExperimentHttpReadonly && duplicatePairs.length > 0 && (
           <IonCard
             style={{
               marginBottom: "16px",
@@ -691,7 +851,9 @@ const RecipientsManagement: React.FC = () => {
             {filteredRecipients.length === 0 ? (
               <p>
                 {recipients.length === 0
-                  ? "No recipients yet. Tap the + button to add one."
+                  ? recipientsReadExperimentHttpReadonly
+                    ? "No recipients loaded from the read-only experiment."
+                    : "No recipients yet. Tap the + button to add one."
                   : "No recipients match your search."}
               </p>
             ) : (
@@ -739,46 +901,50 @@ const RecipientsManagement: React.FC = () => {
                               </p>
                             )}
                           </IonCol>
-                          <IonCol size="auto">
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              onClick={() => handleEditRecipient(recipient)}
-                            >
-                              <IonIcon icon={createOutline} />
-                            </IonButton>
+                          {!recipientsReadExperimentHttpReadonly && (
+                            <IonCol size="auto">
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                onClick={() => handleEditRecipient(recipient)}
+                              >
+                                <IonIcon icon={createOutline} />
+                              </IonButton>
 
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              title={
-                                isInactive
-                                  ? "Activate Recipient"
-                                  : "Deactivate Recipient"
-                              }
-                              onClick={() =>
-                                handleToggleRecipientActive(recipient)
-                              }
-                              color={isInactive ? "medium" : "success"}
-                            >
-                              <IonIcon
-                                icon={
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                title={
                                   isInactive
-                                    ? closeCircleOutline
-                                    : checkmarkCircleOutline
+                                    ? "Activate Recipient"
+                                    : "Deactivate Recipient"
                                 }
-                              />
-                            </IonButton>
+                                onClick={() =>
+                                  handleToggleRecipientActive(recipient)
+                                }
+                                color={isInactive ? "medium" : "success"}
+                              >
+                                <IonIcon
+                                  icon={
+                                    isInactive
+                                      ? closeCircleOutline
+                                      : checkmarkCircleOutline
+                                  }
+                                />
+                              </IonButton>
 
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              color="danger"
-                              onClick={() => initiateDeleteRecipient(recipient)}
-                            >
-                              <IonIcon icon={trashOutline} />
-                            </IonButton>
-                          </IonCol>
+                              <IonButton
+                                fill="clear"
+                                size="small"
+                                color="danger"
+                                onClick={() =>
+                                  initiateDeleteRecipient(recipient)
+                                }
+                              >
+                                <IonIcon icon={trashOutline} />
+                              </IonButton>
+                            </IonCol>
+                          )}
                         </IonRow>
                       </IonGrid>
                     </IonItem>
@@ -884,47 +1050,53 @@ const RecipientsManagement: React.FC = () => {
         />
 
         {/* MODALS */}
-        <AddRecipientModal
-          isOpen={showAddRecipientModal}
-          onClose={() => {
-            setShowAddRecipientModal(false);
-            setEditingRecipient(null);
-          }}
-          onRecipientAdded={handleRecipientSaved}
-          editingRecipient={editingRecipient}
-          onDuplicateFound={(duplicate) => {
-            setDuplicateRecipient(duplicate);
-            setShowDuplicateAlert(true);
-          }}
-          checkForDuplicate={checkForDuplicateRecipient}
-        />
+        {!recipientsReadExperimentHttpReadonly && (
+          <AddRecipientModal
+            isOpen={showAddRecipientModal}
+            onClose={() => {
+              setShowAddRecipientModal(false);
+              setEditingRecipient(null);
+            }}
+            onRecipientAdded={handleRecipientSaved}
+            editingRecipient={editingRecipient}
+            onDuplicateFound={(duplicate) => {
+              setDuplicateRecipient(duplicate);
+              setShowDuplicateAlert(true);
+            }}
+            checkForDuplicate={checkForDuplicateRecipient}
+          />
+        )}
 
         {/* MERGE MODAL */}
-        <MergeRecipientsModal
-          isOpen={showMergeModal}
-          onClose={() => setShowMergeModal(false)}
-          duplicatePairs={duplicatePairs}
-          recipientCounts={recipientCounts}
-          onMergeComplete={() => {
-            setShowMergeModal(false);
-            setToastMessage("Recipients merged successfully!");
-            setShowToast(true);
-            fetchRecipients(); // Refresh to remove merged recipients
-          }}
-        />
+        {!recipientsReadExperimentHttpReadonly && (
+          <MergeRecipientsModal
+            isOpen={showMergeModal}
+            onClose={() => setShowMergeModal(false)}
+            duplicatePairs={duplicatePairs}
+            recipientCounts={recipientCounts}
+            onMergeComplete={() => {
+              setShowMergeModal(false);
+              setToastMessage("Recipients merged successfully!");
+              setShowToast(true);
+              fetchRecipients(); // Refresh to remove merged recipients
+            }}
+          />
+        )}
 
         {/* FAB BUTTON FOR ADDING RECIPIENTS */}
-        <IonFab vertical="bottom" horizontal="end" slot="fixed">
-          <IonFabButton
-            onClick={() => {
-              setEditingRecipient(null);
-              setShowAddRecipientModal(true);
-            }}
-            title="Add Recipient"
-          >
-            <IonIcon icon={add} />
-          </IonFabButton>
-        </IonFab>
+        {!recipientsReadExperimentHttpReadonly && (
+          <IonFab vertical="bottom" horizontal="end" slot="fixed">
+            <IonFabButton
+              onClick={() => {
+                setEditingRecipient(null);
+                setShowAddRecipientModal(true);
+              }}
+              title="Add Recipient"
+            >
+              <IonIcon icon={add} />
+            </IonFabButton>
+          </IonFab>
+        )}
 
         {/* TOAST NOTIFICATIONS */}
         <IonToast

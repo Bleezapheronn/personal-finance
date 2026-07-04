@@ -1,7 +1,8 @@
 # Selected-Read Migration Readiness Audit
 
-Status: prototype-ready for diagnostics only. No real workflow screen is
-switched to HTTP.
+Status: prototype-ready with diagnostics and one narrow, off-by-default
+Recipients read-path experiment. No real workflow screen is switched to HTTP
+unless an explicit per-screen experiment flag is enabled.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable and must be
 seeded from a full backup before comparison. The local API and HTTP repository
@@ -31,7 +32,9 @@ adapters are read-only. No write methods or write endpoints exist.
 ## Experimental Or Not Implemented
 
 - `http-readonly` is experimental and local-dev only.
-- No real workflow page uses HTTP as its data source.
+- No real workflow page uses HTTP as its data source by default.
+- Recipients management has one flag-gated read experiment; it remains
+  read-only and disables write controls in `http-readonly` mode.
 - No create, update, delete, import, restore, or repair HTTP paths exist.
 - No write no-ops exist; future HTTP write attempts must fail loudly.
 - Browser token exposure is accepted only for this local prototype, never for
@@ -164,6 +167,17 @@ Recommended first candidates:
 - Prefer low-risk, read-only, non-aggregate, non-lifecycle screens.
 - Prefer management list previews over workflow-heavy pages.
 - Diagnostics-only is an acceptable outcome if no screen is safe enough yet.
+
+Current narrow experiment:
+
+- Recipients management has a per-screen read experiment flag:
+  `VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT=true`.
+- Default behavior remains Dexie.
+- In `http-readonly` mode, the Recipients list may load through the selected
+  read facade, but create, edit, activate/deactivate, delete, and merge actions
+  remain disabled because writes have not migrated.
+- Rollback is switching the experiment flag off or setting the repository
+  backend back to `dexie`, then restarting Vite.
 
 ## First-Candidate Guidance
 

@@ -292,7 +292,8 @@ currently selected backend, but the real management lists, search,
 create/edit/delete actions, merge actions, activation actions, import/test-parse
 behavior, transaction loading/filtering/edit/delete/transfer/export behavior,
 Budget History grouping/filtering/completion/linking behavior, and reorder
-behavior continue to use the existing Dexie paths.
+behavior continue to use the existing Dexie paths unless a separate per-screen
+experiment flag explicitly says otherwise.
 
 The previews are structural-summary-only: backend/source, counts when available,
 loaded counts, sampled IDs, category id, category bucketId, category active
@@ -313,6 +314,31 @@ names, SMS template descriptions, regex/pattern strings, budget descriptions,
 amount values, transaction descriptions, transaction references, raw SMS
 examples, raw rows, token values, or SQLite paths. `http-readonly` remains
 experimental and Dexie remains authoritative.
+
+## Recipients Read Experiment
+
+`VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT=true` enables the first
+real-screen selected-read experiment for the Recipients management list. The
+flag is off by default and is separate from the redacted preview flag. Restart
+Vite after changing it.
+
+When the flag is off, Recipients management uses the existing Dexie read/write
+paths exactly as before. When the flag is on and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, the page remains on Dexie and
+keeps the normal write controls. When the flag is on and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`, the list is loaded
+through `selectedReadRepositories.recipients`; create, edit, activate,
+deactivate, delete, and merge controls are hidden/disabled because HTTP remains
+read-only.
+
+The `http-readonly` experiment preserves the visible Recipients list, local
+search, and local sorting as much as practical. The HTTP lookup endpoint is
+capped to a bounded page, and the page labels the result if the loaded
+recipient count is lower than the reported total. Before trusting the HTTP
+result, export a fresh backup, import it into disposable SQLite, restart the
+API against that database, and rerun the verification gates. Roll back by
+turning `VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT` off or setting
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite.
 
 ## Manual Parity Diagnostic
 
