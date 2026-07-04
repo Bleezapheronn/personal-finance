@@ -240,6 +240,18 @@ as `.env` files, local tokens, SQLite databases, generated backups, exports,
 logs, import summaries, and report JSON files without reading or printing file
 contents.
 
+Run `npm run check:local-api-safety` before selected-read or local API commits
+when you want the browser-independent safety bundle. It runs the selected-read
+import guard, runtime artifact guard, root build, and server build in sequence,
+stopping on the first failure. It does not require backup, SQLite, token, or
+browser configuration.
+
+`verify:sqlite` and `smoke:api` are still separate runtime checks. Run them
+with their required backup/sqlite/token arguments when importer, comparison,
+server, or API behavior changes. Browser diagnostics and preview checks also
+remain manual Vite checks when UI, selected-read behavior, or browser CORS
+behavior changes.
+
 The Categories preview is a separate dev-only read experiment on the same
 screen. It uses `selectedReadRepositories` to load categories and buckets through
 the currently selected backend, then renders only structural fields such as IDs,
