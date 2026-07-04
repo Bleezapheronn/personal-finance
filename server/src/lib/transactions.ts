@@ -29,6 +29,11 @@ const TRANSACTION_SELECT_SQL = `SELECT id, categoryId, paymentChannelId, account
   budgetId, occurrenceDate, budgetSnapshotId
 FROM transactions`;
 
+const TRANSACTION_ORDER_SQL = `ORDER BY date DESC,
+  CASE WHEN amount + COALESCE(transactionCost, 0) >= 0 THEN 0 ELSE 1 END ASC,
+  amount + COALESCE(transactionCost, 0) ASC,
+  id ASC`;
+
 const addNumberFilter = (
   clauses: string[],
   params: Record<string, string | number>,
@@ -93,7 +98,7 @@ export const listTransactions = (
 
   const rows = db
     .prepare(
-      `${TRANSACTION_SELECT_SQL}${whereSql} ORDER BY date DESC, id DESC LIMIT @limit OFFSET @offset`,
+      `${TRANSACTION_SELECT_SQL}${whereSql} ${TRANSACTION_ORDER_SQL} LIMIT @limit OFFSET @offset`,
     )
     .all({ ...params, limit: options.limit, offset: options.offset }) as Record<string, unknown>[];
 

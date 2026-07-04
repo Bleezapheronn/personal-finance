@@ -186,6 +186,17 @@ sources or write behavior. Transactions, budgets, and budget snapshots remain
 intentionally unnormalized in this pass and may still show ordering mismatches
 until their higher-risk ordering semantics are reviewed separately.
 
+Selected-read transaction ordering has also been normalized between Dexie and
+HTTP read-only paths. It follows the existing live Transactions page semantics:
+date descending, incoming combined totals before outgoing combined totals for
+the same date, combined total ascending within the same sign, and ID ascending
+as a deterministic tie-breaker. Sorting happens before selected-read
+limit/offset pagination, and transaction filters remain applied before sorting.
+The real Transactions page still uses its existing Dexie loading, filtering,
+edit/delete/transfer, and export behavior. Budgets and budget snapshots remain
+intentionally unnormalized until their ordering semantics are reviewed
+separately.
+
 The selected read preview is also manual and dev-only. It intentionally caps
 loaded preview rows to a tiny sample and does not load or display full tables.
 It requests a small page from each representative selected-read resource through

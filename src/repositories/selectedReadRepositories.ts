@@ -109,6 +109,120 @@ const compareByDisplayOrderThenId = <Row extends OrderedRow>(
   (left.displayOrder ?? 0) - (right.displayOrder ?? 0) ||
   compareIds(left, right);
 
+const transactionTime = (date: Date | string | undefined): number => {
+  if (date instanceof Date) {
+    return date.getTime();
+  }
+
+  if (typeof date === "string") {
+    return new Date(date).getTime();
+  }
+
+  return 0;
+};
+
+const transactionCombinedTotal = (transaction: Transaction): number =>
+  transaction.amount + (transaction.transactionCost ?? 0);
+
+const compareTransactionsByLivePageOrder = (
+  left: Transaction,
+  right: Transaction,
+): number => {
+  const dateDifference = transactionTime(right.date) - transactionTime(left.date);
+  if (dateDifference !== 0) {
+    return dateDifference;
+  }
+
+  const leftTotal = transactionCombinedTotal(left);
+  const rightTotal = transactionCombinedTotal(right);
+  const isLeftIncoming = leftTotal >= 0;
+  const isRightIncoming = rightTotal >= 0;
+
+  if (isLeftIncoming && !isRightIncoming) {
+    return -1;
+  }
+
+  if (!isLeftIncoming && isRightIncoming) {
+    return 1;
+  }
+
+  return leftTotal - rightTotal || compareIds(left, right);
+};
+
+const transactionMatchesFilters = (
+  transaction: Transaction,
+  options: transactionHttpRepository.TransactionListOptions | undefined,
+): boolean => {
+  if (options?.accountId !== undefined && transaction.accountId !== options.accountId) {
+    return false;
+  }
+
+  if (options?.categoryId !== undefined && transaction.categoryId !== options.categoryId) {
+    return false;
+  }
+
+  if (options?.recipientId !== undefined && transaction.recipientId !== options.recipientId) {
+    return false;
+  }
+
+  if (
+    options?.budgetSnapshotId !== undefined &&
+    transaction.budgetSnapshotId !== options.budgetSnapshotId
+  ) {
+    return false;
+  }
+
+  if (options?.isTransfer !== undefined) {
+    const isTransfer = transaction.isTransfer === true;
+    if (isTransfer !== options.isTransfer) {
+      return false;
+    }
+  }
+
+  const time = transactionTime(transaction.date);
+  if (
+    options?.dateFrom !== undefined &&
+    time < transactionTime(options.dateFrom)
+  ) {
+    return false;
+  }
+
+  if (options?.dateTo !== undefined && time > transactionTime(options.dateTo)) {
+    return false;
+  }
+
+  return true;
+};
+
+const applyTransactionFiltersAndPage = async (
+  options: transactionHttpRepository.TransactionListOptions | undefined,
+): Promise<Transaction[]> => {
+  const transactions = await db.transactions.toArray();
+  const sortedRows = transactions
+    .filter((transaction) => transactionMatchesFilters(transaction, options))
+    .sort(compareTransactionsByLivePageOrder);
+
+  if (typeof options?.limit !== "number") {
+    return sortedRows;
+  }
+
+  const offset = options.offset ?? 0;
+  return sortedRows.slice(offset, offset + options.limit);
+};
+
+const countSelectedReadTransactions = async (
+  options: transactionHttpRepository.TransactionCountOptions | undefined,
+): Promise<number> => {
+  if (!options || Object.keys(options).length === 0) {
+    return transactionRepository.getTransactionCount();
+  }
+
+  const transactions = await db.transactions.toArray();
+  return transactions.filter((transaction) =>
+    transactionMatchesFilters(transaction, options),
+  ).length;
+};
+
 const applySortedDexiePage = async <Row>(
   table: DexiePreviewTable<Row>,
   options: DexieListOptions | undefined,
@@ -187,9 +301,9 @@ export interface SelectedReadRepositories {
 const dexieReadRepositories: SelectedReadRepositories = {
   source: "dexie",
   transactions: {
-    list: (options) => applyDexiePage(db.transactions, options),
+    list: (options) => applyTransactionFiltersAndPage(options),
     getById: (id) => transactionRepository.getTransactionById(id),
-    count: () => transactionRepository.getTransactionCount(),
+    count: (options) => countSelectedReadTransactions(options),
   },
   accounts: {
     list: (options) =>
