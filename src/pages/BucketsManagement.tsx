@@ -42,6 +42,7 @@ import {
   closeCircleOutline,
   close,
   reorderThree,
+  warningOutline,
 } from "ionicons/icons";
 import { db, Bucket, Category } from "../db";
 import { AddCategoryModal } from "../components/AddCategoryModal";
@@ -58,6 +59,7 @@ import {
   previewRows,
   safePreviewErrorCode,
   sampledIds,
+  stringValue,
 } from "../utils/devPreview";
 
 /**
@@ -116,6 +118,61 @@ interface SelectedReadCategoriesPreview {
 }
 
 const SELECTED_READ_PREVIEW_LIMIT = 20;
+const BUCKETS_CATEGORIES_READ_EXPERIMENT_FLAG =
+  "VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT";
+const BUCKETS_CATEGORIES_READ_EXPERIMENT_LIMIT = 500;
+
+const isBucketsCategoriesReadExperimentEnabled = (): boolean => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  return env[BUCKETS_CATEGORIES_READ_EXPERIMENT_FLAG]?.trim() === "true";
+};
+
+const dateValue = (value: unknown): Date => {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return new Date(0);
+};
+
+const selectedReadRowToBucket = (row: { id?: unknown }): Bucket => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: numberValue(source.id),
+    name: stringValue(source.name),
+    description: stringValue(source.description),
+    minPercentage: numberValue(source.minPercentage) ?? 0,
+    maxPercentage: numberValue(source.maxPercentage) ?? 100,
+    minFixedAmount: numberValue(source.minFixedAmount),
+    isActive: booleanValue(source.isActive) !== false,
+    displayOrder: numberValue(source.displayOrder) ?? 0,
+    excludeFromReports: booleanValue(source.excludeFromReports) === true,
+    createdAt: dateValue(source.createdAt),
+    updatedAt: dateValue(source.updatedAt),
+  };
+};
+
+const selectedReadRowToCategory = (row: { id?: unknown }): Category => {
+  const source = row as Record<string, unknown>;
+
+  return {
+    id: numberValue(source.id),
+    name: stringValue(source.name),
+    bucketId: numberValue(source.bucketId) ?? 0,
+    description: stringValue(source.description),
+    isActive: booleanValue(source.isActive) !== false,
+    createdAt: dateValue(source.createdAt),
+    updatedAt: dateValue(source.updatedAt),
+  };
+};
 
 const BucketsManagement: React.FC = () => {
   // buckets state
@@ -154,6 +211,10 @@ const BucketsManagement: React.FC = () => {
     useState<SelectedReadCategoriesPreview | null>(null);
   const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
     useState(false);
+  const [bucketsReadExperimentCount, setBucketsReadExperimentCount] =
+    useState<number | undefined>(undefined);
+  const [categoriesReadExperimentCount, setCategoriesReadExperimentCount] =
+    useState<number | undefined>(undefined);
 
   // modal states
   const [showBucketModal, setShowBucketModal] = useState(false);
@@ -165,6 +226,18 @@ const BucketsManagement: React.FC = () => {
     undefined
   );
 
+  const selectedBackend = getRepositoryBackend();
+  const bucketsCategoriesReadExperimentEnabled =
+    isBucketsCategoriesReadExperimentEnabled();
+  const bucketsCategoriesReadExperimentHttpReadonly =
+    bucketsCategoriesReadExperimentEnabled &&
+    selectedBackend === "http-readonly";
+
+  const showReadExperimentWriteDisabledToast = () => {
+    setToastMessage("Switch back to Dexie to edit buckets and categories");
+    setShowToast(true);
+  };
+
   useEffect(() => {
     fetchBuckets();
     fetchCategories();
@@ -172,7 +245,28 @@ const BucketsManagement: React.FC = () => {
 
   const fetchBuckets = async () => {
     try {
-      const all = await categoryRepository.listBuckets();
+      let all: Bucket[];
+      let selectedReadCount: number | undefined;
+
+      if (bucketsCategoriesReadExperimentHttpReadonly) {
+        const repositories = getSelectedReadRepositories(selectedBackend);
+        const result = await repositories.buckets.list({
+          limit: BUCKETS_CATEGORIES_READ_EXPERIMENT_LIMIT,
+          offset: 0,
+        });
+        const rows = previewRows(result as DevPreviewListResult);
+
+        if (!rows) {
+          throw new Error("invalid_buckets_read_experiment_response");
+        }
+
+        all = rows.map(selectedReadRowToBucket);
+        selectedReadCount = previewCount(result as DevPreviewListResult);
+      } else {
+        all = await categoryRepository.listBuckets();
+      }
+
+      setBucketsReadExperimentCount(selectedReadCount);
       // Sort by displayOrder
       all.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
       setBuckets(all);
@@ -185,7 +279,34 @@ const BucketsManagement: React.FC = () => {
 
   const fetchCategories = async () => {
     try {
-      const all = await categoryRepository.listCategories();
+      let all: Category[];
+      let selectedReadCount: number | undefined;
+
+      if (bucketsCategoriesReadExperimentHttpReadonly) {
+        const repositories = getSelectedReadRepositories(selectedBackend);
+        const result = await repositories.categories.list({
+          limit: BUCKETS_CATEGORIES_READ_EXPERIMENT_LIMIT,
+          offset: 0,
+        });
+        const rows = previewRows(result as DevPreviewListResult);
+
+        if (!rows) {
+          throw new Error("invalid_categories_read_experiment_response");
+        }
+
+        all = rows
+          .map(selectedReadRowToCategory)
+          .sort(
+            (left, right) =>
+              (left.id ?? Number.MAX_SAFE_INTEGER) -
+              (right.id ?? Number.MAX_SAFE_INTEGER),
+          );
+        selectedReadCount = previewCount(result as DevPreviewListResult);
+      } else {
+        all = await categoryRepository.listCategories();
+      }
+
+      setCategoriesReadExperimentCount(selectedReadCount);
       setCategories(all);
     } catch (err) {
       console.error(err);
@@ -214,6 +335,11 @@ const BucketsManagement: React.FC = () => {
     v === undefined || (v >= 0 && v <= 100);
 
   const saveBucket = async () => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     if (!name.trim()) {
       setToastMessage("Bucket name is required");
       setShowToast(true);
@@ -291,6 +417,11 @@ const BucketsManagement: React.FC = () => {
   };
 
   const editBucket = (b: Bucket) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     setBucketId(b.id ?? null);
     setName(b.name ?? "");
     setDescription(b.description ?? "");
@@ -302,6 +433,11 @@ const BucketsManagement: React.FC = () => {
   };
 
   const toggleBucketActive = async (b: Bucket) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     if (b.id == null) return;
     try {
       const now = new Date();
@@ -323,6 +459,11 @@ const BucketsManagement: React.FC = () => {
    * toggleCategoryActive - Toggles category active/inactive status
    */
   const toggleCategoryActive = async (c: Category) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     if (c.id == null) return;
     try {
       const now = new Date();
@@ -341,6 +482,11 @@ const BucketsManagement: React.FC = () => {
   };
 
   const handleCategoryAdded = async (isEdit: boolean = false) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     setEditingCategory(undefined);
     setSelectedCategoryBucket(undefined);
     setToastMessage(
@@ -357,6 +503,12 @@ const BucketsManagement: React.FC = () => {
   };
 
   const deleteBucket = async (id?: number) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      setDeleteBucketState({ type: "none" });
+      return;
+    }
+
     if (!id) return;
     try {
       await db.transaction("rw", db.categories, db.buckets, async () => {
@@ -376,6 +528,12 @@ const BucketsManagement: React.FC = () => {
   };
 
   const deleteCategory = async (id?: number) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      setDeleteCategoryState({ type: "none" });
+      return;
+    }
+
     if (!id) return;
     try {
       await db.categories.delete(id);
@@ -480,6 +638,11 @@ const BucketsManagement: React.FC = () => {
   };
 
   const handleOpenBucketModal = () => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     resetForm();
     setShowBucketModal(true);
   };
@@ -490,6 +653,11 @@ const BucketsManagement: React.FC = () => {
   };
 
   const handleSaveBucket = async () => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     await saveBucket();
     // Remove the conditional check - let saveBucket handle it
   };
@@ -497,6 +665,12 @@ const BucketsManagement: React.FC = () => {
   const handleReorderBuckets = async (
     event: CustomEvent<ItemReorderEventDetail>
   ) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      event.detail.complete();
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     const { from, to } = event.detail;
 
     // Create a new array with reordered items
@@ -559,6 +733,11 @@ const BucketsManagement: React.FC = () => {
    * initiateBucketDelete - Check bucket usage and show appropriate alert
    */
   const initiateBucketDelete = async (bucket: Bucket) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     try {
       const isUsed = await checkBucketUsage(bucket.id!);
       const isDeactivated = bucket.isActive === false;
@@ -595,6 +774,11 @@ const BucketsManagement: React.FC = () => {
    * initiateCategoryDelete - Check category usage and show appropriate alert
    */
   const initiateCategoryDelete = async (category: Category) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      return;
+    }
+
     try {
       const isUsed = await checkCategoryUsage(category.id!);
       const isDeactivated = category.isActive === false;
@@ -631,6 +815,12 @@ const BucketsManagement: React.FC = () => {
    * handleDeactivateBucket - Deactivates a bucket instead of deleting
    */
   const handleDeactivateBucket = async (bucketId: number) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      setDeleteBucketState({ type: "none" });
+      return;
+    }
+
     try {
       const now = new Date();
       await db.buckets.update(bucketId, {
@@ -652,6 +842,12 @@ const BucketsManagement: React.FC = () => {
    * handleDeactivateCategory - Deactivates a category instead of deleting
    */
   const handleDeactivateCategory = async (categoryId: number) => {
+    if (bucketsCategoriesReadExperimentHttpReadonly) {
+      showReadExperimentWriteDisabledToast();
+      setDeleteCategoryState({ type: "none" });
+      return;
+    }
+
     try {
       const now = new Date();
       await db.categories.update(categoryId, {
@@ -683,11 +879,13 @@ const BucketsManagement: React.FC = () => {
 
       <IonContent className="ion-padding">
         {/* FAB button for adding buckets */}
-        <IonFab vertical="bottom" horizontal="end" slot="fixed">
-          <IonFabButton onClick={handleOpenBucketModal} title="Add Bucket">
-            <IonIcon icon={add} />
-          </IonFabButton>
-        </IonFab>
+        {!bucketsCategoriesReadExperimentHttpReadonly && (
+          <IonFab vertical="bottom" horizontal="end" slot="fixed">
+            <IonFabButton onClick={handleOpenBucketModal} title="Add Bucket">
+              <IonIcon icon={add} />
+            </IonFabButton>
+          </IonFab>
+        )}
 
         {showSelectedReadPreview && (
           <SelectedReadPreviewCard
@@ -784,10 +982,60 @@ const BucketsManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
+        {bucketsCategoriesReadExperimentEnabled && (
+          <IonCard
+            style={{
+              marginBottom: "16px",
+              borderLeft: bucketsCategoriesReadExperimentHttpReadonly
+                ? "4px solid var(--ion-color-warning)"
+                : "4px solid var(--ion-color-medium)",
+            }}
+          >
+            <IonCardContent>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "12px" }}
+              >
+                <IonIcon
+                  icon={warningOutline}
+                  style={{
+                    color: bucketsCategoriesReadExperimentHttpReadonly
+                      ? "var(--ion-color-warning)"
+                      : "var(--ion-color-medium)",
+                    fontSize: "1.5rem",
+                  }}
+                />
+                <div>
+                  <p
+                    style={{
+                      margin: "0 0 6px 0",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {bucketsCategoriesReadExperimentHttpReadonly
+                      ? "Buckets/Categories read experiment is active. List is loaded through selected-read `http-readonly`; writes and reorder actions are disabled. Switch back to Dexie to edit."
+                      : "Buckets/Categories read experiment flag is active with the Dexie backend. Existing Dexie write and reorder behavior remains available."}
+                  </p>
+                  <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
+                    Backend: {selectedBackend}
+                    {bucketsCategoriesReadExperimentHttpReadonly &&
+                      bucketsReadExperimentCount !== undefined &&
+                      bucketsReadExperimentCount > buckets.length &&
+                      `; loaded first ${buckets.length} of ${bucketsReadExperimentCount} buckets.`}
+                    {bucketsCategoriesReadExperimentHttpReadonly &&
+                      categoriesReadExperimentCount !== undefined &&
+                      categoriesReadExperimentCount > categories.length &&
+                      `; loaded first ${categories.length} of ${categoriesReadExperimentCount} categories.`}
+                  </p>
+                </div>
+              </div>
+            </IonCardContent>
+          </IonCard>
+        )}
+
         {/* Buckets list with categories nested as accordions */}
         <IonAccordionGroup>
           <IonReorderGroup
-            disabled={false}
+            disabled={bucketsCategoriesReadExperimentHttpReadonly}
             onIonItemReorder={handleReorderBuckets}
           >
             {buckets.map((b) => {
@@ -796,9 +1044,14 @@ const BucketsManagement: React.FC = () => {
               return (
                 <IonAccordion key={b.id} value={`bucket-${b.id}`}>
                   <IonItem slot="header">
-                    <IonReorder slot="start">
-                      <IonIcon icon={reorderThree} style={{ cursor: "grab" }} />
-                    </IonReorder>
+                    {!bucketsCategoriesReadExperimentHttpReadonly && (
+                      <IonReorder slot="start">
+                        <IonIcon
+                          icon={reorderThree}
+                          style={{ cursor: "grab" }}
+                        />
+                      </IonReorder>
+                    )}
 
                     <IonGrid
                       className="ion-no-padding"
@@ -829,80 +1082,82 @@ const BucketsManagement: React.FC = () => {
                         </IonCol>
 
                         {/* Buttons on the right */}
-                        <IonCol size="auto">
-                          <IonButton
-                            fill="clear"
-                            size="small"
-                            color="secondary"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              resetCategoryForm();
-                              setSelectedCategoryBucket(b.id);
-                              setShowCategoryModal(true);
-                            }}
-                            aria-label={`Add category to ${b.name}`}
-                            title="Add Category"
-                          >
-                            <IonIcon icon={add} />
-                          </IonButton>
+                        {!bucketsCategoriesReadExperimentHttpReadonly && (
+                          <IonCol size="auto">
+                            <IonButton
+                              fill="clear"
+                              size="small"
+                              color="secondary"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                resetCategoryForm();
+                                setSelectedCategoryBucket(b.id);
+                                setShowCategoryModal(true);
+                              }}
+                              aria-label={`Add category to ${b.name}`}
+                              title="Add Category"
+                            >
+                              <IonIcon icon={add} />
+                            </IonButton>
 
-                          <IonButton
-                            fill="clear"
-                            size="small"
-                            color="secondary"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              editBucket(b);
-                              setShowBucketModal(true);
-                            }}
-                            aria-label={`Edit ${b.name}`}
-                            title="Edit"
-                          >
-                            <IonIcon icon={createOutline} />
-                          </IonButton>
+                            <IonButton
+                              fill="clear"
+                              size="small"
+                              color="secondary"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                editBucket(b);
+                                setShowBucketModal(true);
+                              }}
+                              aria-label={`Edit ${b.name}`}
+                              title="Edit"
+                            >
+                              <IonIcon icon={createOutline} />
+                            </IonButton>
 
-                          <IonButton
-                            fill="clear"
-                            size="small"
-                            color={b.isActive ? "success" : "medium"}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleBucketActive(b);
-                            }}
-                            aria-label={
-                              b.isActive
-                                ? `Deactivate ${b.name}`
-                                : `Activate ${b.name}`
-                            }
-                            title={
-                              b.isActive
-                                ? "Active (click to deactivate)"
-                                : "Inactive (click to activate)"
-                            }
-                          >
-                            <IonIcon
-                              icon={
+                            <IonButton
+                              fill="clear"
+                              size="small"
+                              color={b.isActive ? "success" : "medium"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleBucketActive(b);
+                              }}
+                              aria-label={
                                 b.isActive
-                                  ? checkmarkCircleOutline
-                                  : closeCircleOutline
+                                  ? `Deactivate ${b.name}`
+                                  : `Activate ${b.name}`
                               }
-                            />
-                          </IonButton>
+                              title={
+                                b.isActive
+                                  ? "Active (click to deactivate)"
+                                  : "Inactive (click to activate)"
+                              }
+                            >
+                              <IonIcon
+                                icon={
+                                  b.isActive
+                                    ? checkmarkCircleOutline
+                                    : closeCircleOutline
+                                }
+                              />
+                            </IonButton>
 
-                          <IonButton
-                            fill="clear"
-                            size="small"
-                            color="danger"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              initiateBucketDelete(b);
-                            }}
-                            aria-label={`Delete ${b.name}`}
-                            title="Delete"
-                          >
-                            <IonIcon icon={trashOutline} />
-                          </IonButton>
-                        </IonCol>
+                            <IonButton
+                              fill="clear"
+                              size="small"
+                              color="danger"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                initiateBucketDelete(b);
+                              }}
+                              aria-label={`Delete ${b.name}`}
+                              title="Delete"
+                            >
+                              <IonIcon icon={trashOutline} />
+                            </IonButton>
+                          </IonCol>
+                        )}
                       </IonRow>
                     </IonGrid>
                   </IonItem>
@@ -931,53 +1186,57 @@ const BucketsManagement: React.FC = () => {
                                 )}
                               </IonLabel>
 
-                              <IonButton
-                                slot="end"
-                                color="secondary"
-                                fill="clear"
-                                onClick={() => {
-                                  setEditingCategory(c);
-                                  setShowCategoryModal(true);
-                                }}
-                                aria-label={`Edit category ${c.name}`}
-                                title="Edit"
-                              >
-                                <IonIcon icon={createOutline} />
-                              </IonButton>
-                              <IonButton
-                                slot="end"
-                                color={c.isActive ? "success" : "medium"}
-                                fill="clear"
-                                onClick={() => toggleCategoryActive(c)}
-                                aria-label={
-                                  c.isActive
-                                    ? `Deactivate ${c.name}`
-                                    : `Activate ${c.name}`
-                                }
-                                title={
-                                  c.isActive
-                                    ? "Active (click to deactivate)"
-                                    : "Inactive (click to activate)"
-                                }
-                              >
-                                <IonIcon
-                                  icon={
-                                    c.isActive
-                                      ? checkmarkCircleOutline
-                                      : closeCircleOutline
-                                  }
-                                />
-                              </IonButton>
-                              <IonButton
-                                slot="end"
-                                color="danger"
-                                fill="clear"
-                                onClick={() => initiateCategoryDelete(c)}
-                                aria-label={`Delete category ${c.name}`}
-                                title="Delete"
-                              >
-                                <IonIcon icon={trashOutline} />
-                              </IonButton>
+                              {!bucketsCategoriesReadExperimentHttpReadonly && (
+                                <>
+                                  <IonButton
+                                    slot="end"
+                                    color="secondary"
+                                    fill="clear"
+                                    onClick={() => {
+                                      setEditingCategory(c);
+                                      setShowCategoryModal(true);
+                                    }}
+                                    aria-label={`Edit category ${c.name}`}
+                                    title="Edit"
+                                  >
+                                    <IonIcon icon={createOutline} />
+                                  </IonButton>
+                                  <IonButton
+                                    slot="end"
+                                    color={c.isActive ? "success" : "medium"}
+                                    fill="clear"
+                                    onClick={() => toggleCategoryActive(c)}
+                                    aria-label={
+                                      c.isActive
+                                        ? `Deactivate ${c.name}`
+                                        : `Activate ${c.name}`
+                                    }
+                                    title={
+                                      c.isActive
+                                        ? "Active (click to deactivate)"
+                                        : "Inactive (click to activate)"
+                                    }
+                                  >
+                                    <IonIcon
+                                      icon={
+                                        c.isActive
+                                          ? checkmarkCircleOutline
+                                          : closeCircleOutline
+                                      }
+                                    />
+                                  </IonButton>
+                                  <IonButton
+                                    slot="end"
+                                    color="danger"
+                                    fill="clear"
+                                    onClick={() => initiateCategoryDelete(c)}
+                                    aria-label={`Delete category ${c.name}`}
+                                    title="Delete"
+                                  >
+                                    <IonIcon icon={trashOutline} />
+                                  </IonButton>
+                                </>
+                              )}
                             </IonItem>
                           );
                         })}
@@ -991,137 +1250,141 @@ const BucketsManagement: React.FC = () => {
         </IonAccordionGroup>
 
         {/* Bucket Modal */}
-        <IonModal
-          isOpen={showBucketModal}
-          onDidDismiss={handleCloseBucketModal}
-        >
-          <IonHeader>
-            <IonToolbar>
-              <IonButtons slot="end">
-                <IonButton onClick={handleCloseBucketModal}>
-                  <IonIcon icon={close} />
-                </IonButton>
-              </IonButtons>
-              <IonTitle>{bucketId ? "Edit Bucket" : "Add Bucket"}</IonTitle>
-            </IonToolbar>
-          </IonHeader>
-          <IonContent className="ion-padding">
-            <IonGrid>
-              <IonRow>
-                <IonCol>
-                  <IonInput
-                    label="Name"
-                    labelPlacement="stacked"
-                    fill="outline"
-                    value={name}
-                    onIonChange={(e) => setName(e.detail.value ?? "")}
-                    placeholder="e.g., Essentials"
-                  />
-                </IonCol>
-              </IonRow>
-
-              <IonRow>
-                <IonCol>
-                  <IonInput
-                    label="Description (optional)"
-                    labelPlacement="stacked"
-                    fill="outline"
-                    value={description}
-                    onIonChange={(e) => setDescription(e.detail.value ?? "")}
-                  />
-                </IonCol>
-              </IonRow>
-
-              <IonRow>
-                <IonCol size="6">
-                  <IonInput
-                    label="Min Percentage"
-                    labelPlacement="stacked"
-                    fill="outline"
-                    type="number"
-                    value={minPercentage ?? ""}
-                    onIonChange={(e) =>
-                      setMinPercentage(
-                        e.detail.value ? Number(e.detail.value) : undefined
-                      )
-                    }
-                    placeholder="0"
-                    min={0}
-                    max={100}
-                  />
-                </IonCol>
-                <IonCol size="6">
-                  <IonInput
-                    label="Max Percentage"
-                    labelPlacement="stacked"
-                    fill="outline"
-                    type="number"
-                    value={maxPercentage ?? ""}
-                    onIonChange={(e) =>
-                      setMaxPercentage(
-                        e.detail.value ? Number(e.detail.value) : undefined
-                      )
-                    }
-                    placeholder="100"
-                    min={0}
-                    max={100}
-                  />
-                </IonCol>
-              </IonRow>
-
-              <IonRow>
-                <IonCol sizeMd="6">
-                  <IonInput
-                    label="Min Fixed Amount (optional)"
-                    labelPlacement="stacked"
-                    fill="outline"
-                    type="number"
-                    value={minFixedAmount ?? ""}
-                    onIonChange={(e) =>
-                      setMinFixedAmount(
-                        e.detail.value ? Number(e.detail.value) : undefined
-                      )
-                    }
-                    placeholder="e.g., 20,000"
-                    min={0}
-                  />
-                </IonCol>
-                <IonCol size="6">
-                  <IonItem lines="none">
-                    <IonLabel>Exclude from Reports</IonLabel>
-                    <IonCheckbox
-                      checked={excludeFromReports}
-                      onIonChange={(e) =>
-                        setExcludeFromReports(Boolean(e.detail.checked))
-                      }
-                    />
-                  </IonItem>
-                </IonCol>
-              </IonRow>
-
-              {/* REMOVED: Active checkbox - buckets are toggled via the toggle button in the list */}
-              {/* This checkbox should not appear in either add or edit mode */}
-
-              <IonRow>
-                <IonCol>
-                  <IonButton expand="block" onClick={handleSaveBucket}>
-                    {bucketId ? "Update Bucket" : "Add Bucket"}
+        {!bucketsCategoriesReadExperimentHttpReadonly && (
+          <IonModal
+            isOpen={showBucketModal}
+            onDidDismiss={handleCloseBucketModal}
+          >
+            <IonHeader>
+              <IonToolbar>
+                <IonButtons slot="end">
+                  <IonButton onClick={handleCloseBucketModal}>
+                    <IonIcon icon={close} />
                   </IonButton>
-                </IonCol>
-              </IonRow>
-            </IonGrid>
-          </IonContent>
-        </IonModal>
+                </IonButtons>
+                <IonTitle>{bucketId ? "Edit Bucket" : "Add Bucket"}</IonTitle>
+              </IonToolbar>
+            </IonHeader>
+            <IonContent className="ion-padding">
+              <IonGrid>
+                <IonRow>
+                  <IonCol>
+                    <IonInput
+                      label="Name"
+                      labelPlacement="stacked"
+                      fill="outline"
+                      value={name}
+                      onIonChange={(e) => setName(e.detail.value ?? "")}
+                      placeholder="e.g., Essentials"
+                    />
+                  </IonCol>
+                </IonRow>
+
+                <IonRow>
+                  <IonCol>
+                    <IonInput
+                      label="Description (optional)"
+                      labelPlacement="stacked"
+                      fill="outline"
+                      value={description}
+                      onIonChange={(e) => setDescription(e.detail.value ?? "")}
+                    />
+                  </IonCol>
+                </IonRow>
+
+                <IonRow>
+                  <IonCol size="6">
+                    <IonInput
+                      label="Min Percentage"
+                      labelPlacement="stacked"
+                      fill="outline"
+                      type="number"
+                      value={minPercentage ?? ""}
+                      onIonChange={(e) =>
+                        setMinPercentage(
+                          e.detail.value ? Number(e.detail.value) : undefined
+                        )
+                      }
+                      placeholder="0"
+                      min={0}
+                      max={100}
+                    />
+                  </IonCol>
+                  <IonCol size="6">
+                    <IonInput
+                      label="Max Percentage"
+                      labelPlacement="stacked"
+                      fill="outline"
+                      type="number"
+                      value={maxPercentage ?? ""}
+                      onIonChange={(e) =>
+                        setMaxPercentage(
+                          e.detail.value ? Number(e.detail.value) : undefined
+                        )
+                      }
+                      placeholder="100"
+                      min={0}
+                      max={100}
+                    />
+                  </IonCol>
+                </IonRow>
+
+                <IonRow>
+                  <IonCol sizeMd="6">
+                    <IonInput
+                      label="Min Fixed Amount (optional)"
+                      labelPlacement="stacked"
+                      fill="outline"
+                      type="number"
+                      value={minFixedAmount ?? ""}
+                      onIonChange={(e) =>
+                        setMinFixedAmount(
+                          e.detail.value ? Number(e.detail.value) : undefined
+                        )
+                      }
+                      placeholder="e.g., 20,000"
+                      min={0}
+                    />
+                  </IonCol>
+                  <IonCol size="6">
+                    <IonItem lines="none">
+                      <IonLabel>Exclude from Reports</IonLabel>
+                      <IonCheckbox
+                        checked={excludeFromReports}
+                        onIonChange={(e) =>
+                          setExcludeFromReports(Boolean(e.detail.checked))
+                        }
+                      />
+                    </IonItem>
+                  </IonCol>
+                </IonRow>
+
+                {/* REMOVED: Active checkbox - buckets are toggled via the toggle button in the list */}
+                {/* This checkbox should not appear in either add or edit mode */}
+
+                <IonRow>
+                  <IonCol>
+                    <IonButton expand="block" onClick={handleSaveBucket}>
+                      {bucketId ? "Update Bucket" : "Add Bucket"}
+                    </IonButton>
+                  </IonCol>
+                </IonRow>
+              </IonGrid>
+            </IonContent>
+          </IonModal>
+        )}
 
         {/* Replace inline category form with AddCategoryModal component */}
-        <AddCategoryModal
-          isOpen={showCategoryModal}
-          onClose={handleCloseCategoryModal}
-          onCategoryAdded={() => handleCategoryAdded(!!editingCategory)}
-          buckets={buckets}
-          preSelectedBucketId={selectedCategoryBucket}
-          editingCategory={editingCategory}
-        />
+        {!bucketsCategoriesReadExperimentHttpReadonly && (
+          <AddCategoryModal
+            isOpen={showCategoryModal}
+            onClose={handleCloseCategoryModal}
+            onCategoryAdded={() => handleCategoryAdded(!!editingCategory)}
+            buckets={buckets}
+            preSelectedBucketId={selectedCategoryBucket}
+            editingCategory={editingCategory}
+          />
+        )}
 
         <IonToast
           isOpen={showToast}

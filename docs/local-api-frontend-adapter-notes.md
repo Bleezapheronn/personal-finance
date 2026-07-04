@@ -315,6 +315,32 @@ amount values, transaction descriptions, transaction references, raw SMS
 examples, raw rows, token values, or SQLite paths. `http-readonly` remains
 experimental and Dexie remains authoritative.
 
+## Buckets/Categories Read Experiment
+
+`VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT=true` enables a
+real-screen selected-read experiment for the Buckets/Categories management
+list. The flag is off by default and is separate from the redacted preview
+flag. Restart Vite after changing it.
+
+When the flag is off, Buckets/Categories management uses the existing Dexie
+read/write/reorder paths exactly as before. When the flag is on and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, the page remains on Dexie and
+keeps the normal write and reorder controls. When the flag is on and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`, buckets and
+categories are loaded through `selectedReadRepositories`; create, edit,
+activate/deactivate, delete, and bucket reorder controls are hidden/disabled
+because HTTP remains read-only.
+
+The `http-readonly` experiment preserves the visible Buckets/Categories list
+and bucket grouping as much as practical. Buckets remain sorted by display
+order. The HTTP lookup endpoints use bounded pages, and the page labels the
+result if the loaded bucket/category count is lower than the reported total.
+Before trusting HTTP results, export a fresh backup, import it into disposable
+SQLite, restart the API against that database, and rerun the verification
+gates. Roll back by turning
+`VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT` off or setting
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite.
+
 ## Recipients Read Experiment
 
 `VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT=true` enables the first
