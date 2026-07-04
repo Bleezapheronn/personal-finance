@@ -20,6 +20,7 @@ const approvedFiles = new Set(
     "src/repositories/adapterSelection.ts",
     "src/repositories/backendSelectionDiagnostics.ts",
     "src/repositories/index.ts",
+    "src/repositories/selectedReadOrderingDiagnostics.ts",
     "src/repositories/selectedReadRepositories.ts",
     "src/repositories/selectedReadRepositoryDiagnostics.ts",
   ].map((path) => path.replaceAll("/", sep)),

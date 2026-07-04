@@ -154,6 +154,7 @@ lets you manually run:
 
 - backend selection diagnostics
 - selected read repository diagnostics
+- selected-read ordering diagnostics
 - Dexie-vs-HTTP parity diagnostics
 - selected read preview
 - Categories preview
@@ -164,6 +165,14 @@ compared checks, failed checks, mismatch totals where available, safe error
 codes, and sampled IDs. The screen must not render raw finance rows, account
 names, recipient names, budget descriptions, transaction descriptions,
 transaction references, token values, or SQLite paths.
+
+The selected-read ordering diagnostic compares capped Dexie and HTTP read-only
+ID samples for transactions, budgets, budget snapshots, accounts, buckets,
+categories, recipients, and SMS import templates. It reports resource names,
+sampled IDs, exact ordering match status, and counts when available. Ordering
+differences are expected to be surfaced before any real screen migration because
+pagination, previews, and first-page UI behavior depend on stable ordering. This
+diagnostic does not normalize or fix ordering.
 
 The selected read preview is also manual and dev-only. It intentionally caps
 loaded preview rows to a tiny sample and does not load or display full tables.

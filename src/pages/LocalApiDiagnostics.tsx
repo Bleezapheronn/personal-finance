@@ -33,6 +33,10 @@ import {
 } from "../repositories/adapterSelection";
 import { runRepositoryBackendSelectionDiagnostics } from "../repositories/backendSelectionDiagnostics";
 import { runSelectedReadRepositoryDiagnostics } from "../repositories/selectedReadRepositoryDiagnostics";
+import {
+  runSelectedReadOrderingDiagnostics,
+  type SelectedReadOrderingCheck,
+} from "../repositories/selectedReadOrderingDiagnostics";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiParityDiagnostics";
 import {
@@ -124,6 +128,11 @@ interface ReportsPreviewSummary {
   netTotal?: number;
   limitation: string;
   errorCode?: string;
+}
+
+interface OrderingDiagnosticSummary {
+  sampleLimit: number;
+  checks: SelectedReadOrderingCheck[];
 }
 
 const getEnvValue = (key: string): string | undefined => {
@@ -458,6 +467,56 @@ const ReportsPreviewCard: React.FC<{
   </IonCard>
 );
 
+const OrderingResultCard: React.FC<{
+  summary: OrderingDiagnosticSummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>Selected Read Ordering Results</h3>
+      </IonText>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Sample limit</IonLabel>
+          <IonText slot="end">{summary.sampleLimit}</IonText>
+        </IonItem>
+        {summary.checks.map((check) => (
+          <IonItem key={check.resource}>
+            <IonLabel>
+              <h3>{check.resource}</h3>
+              <p>
+                matchesExactly={String(check.matchesExactly)} dexieCount=
+                {check.dexieCount ?? "-"} httpCount={check.httpCount ?? "-"}
+              </p>
+              <p>
+                dexieIds=
+                {check.dexieSampledIds?.length
+                  ? check.dexieSampledIds.join(", ")
+                  : "-"}
+              </p>
+              <p>
+                httpIds=
+                {check.httpSampledIds?.length
+                  ? check.httpSampledIds.join(", ")
+                  : "-"}
+              </p>
+              {check.code && <p>code={check.code}</p>}
+            </IonLabel>
+            <IonBadge
+              color={check.status === "pass" ? "success" : "warning"}
+              slot="end"
+            >
+              {check.status === "pass" ? "Match" : "Diff"}
+            </IonBadge>
+          </IonItem>
+        ))}
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
 const LocalApiDiagnostics: React.FC = () => {
   const enabled = isLocalApiDiagnosticsEnabled();
   const currentBackend = getRepositoryBackend();
@@ -471,6 +530,8 @@ const LocalApiDiagnostics: React.FC = () => {
     useState<CategoriesPreviewSummary | null>(null);
   const [reportsPreview, setReportsPreview] =
     useState<ReportsPreviewSummary | null>(null);
+  const [orderingSummary, setOrderingSummary] =
+    useState<OrderingDiagnosticSummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -485,6 +546,11 @@ const LocalApiDiagnostics: React.FC = () => {
     parity: {
       key: "parity",
       title: "Dexie vs HTTP Parity",
+      status: "idle",
+    },
+    ordering: {
+      key: "ordering",
+      title: "Selected Read Ordering",
       status: "idle",
     },
   });
@@ -856,6 +922,53 @@ const LocalApiDiagnostics: React.FC = () => {
     }
   };
 
+  const runOrderingDiagnostic = async (): Promise<void> => {
+    const key = "ordering";
+    setRunningKey(key);
+    updateSummary({ ...summaries[key], status: "running" });
+    setOrderingSummary(null);
+
+    try {
+      const result = await runSelectedReadOrderingDiagnostics();
+      setOrderingSummary({
+        sampleLimit: result.sampleLimit,
+        checks: result.checks,
+      });
+      updateSummary({
+        key,
+        title: "Selected Read Ordering",
+        status: result.ok ? "pass" : "fail",
+        ok: result.ok,
+        comparedChecks: result.comparedChecks,
+        failedChecks: result.failedChecks,
+        sampledIds: [
+          ...new Set(
+            result.checks.flatMap((check) => [
+              ...(check.dexieSampledIds ?? []),
+              ...(check.httpSampledIds ?? []),
+            ]),
+          ),
+        ]
+          .sort((left, right) => left - right)
+          .slice(0, 12),
+        codes: uniqueCodes(
+          result.checks.map((check) => ({
+            code: check.code,
+          })),
+        ),
+      });
+    } catch (error) {
+      updateSummary({
+        key,
+        title: "Selected Read Ordering",
+        status: "fail",
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setRunningKey(null);
+    }
+  };
+
   const isRunning = runningKey !== null;
 
   return (
@@ -991,11 +1104,28 @@ const LocalApiDiagnostics: React.FC = () => {
                       Run
                     </IonButton>
                   </IonItem>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>Selected-read ordering diagnostic</IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() => void runOrderingDiagnostic()}
+                      disabled={isRunning}
+                    >
+                      Run
+                    </IonButton>
+                  </IonItem>
                 </IonList>
                 <IonText color="medium">
                   <p style={{ fontSize: "0.85rem" }}>
                     Diagnostics run only when selected. Results below are
-                    summary-only and omit raw finance rows.
+                    summary-only and omit raw finance rows. The ordering
+                    diagnostic compares sampled IDs only, not full row parity.
                   </p>
                 </IonText>
               </IonCardContent>
@@ -1004,6 +1134,10 @@ const LocalApiDiagnostics: React.FC = () => {
             {Object.values(summaries).map((summary) => (
               <ResultCard key={summary.key} summary={summary} />
             ))}
+
+            {orderingSummary && (
+              <OrderingResultCard summary={orderingSummary} />
+            )}
 
             <IonCard>
               <IonCardHeader>
