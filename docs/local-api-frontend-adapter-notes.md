@@ -4,6 +4,9 @@ This is prototype scaffolding only. The live Ionic app still uses Dexie /
 IndexedDB through the existing repositories, and IndexedDB remains the
 authoritative data store.
 
+Migration readiness gates are summarized in
+[selected-read-migration-readiness-audit.md](selected-read-migration-readiness-audit.md).
+
 The HTTP adapters under `src/repositories/http/` are not imported by existing
 pages or by `src/repositories/index.ts`. They are intentionally kept behind
 explicit imports so they cannot change app behavior by accident.
