@@ -38,6 +38,11 @@ adapters are read-only. No write methods or write endpoints exist.
 - Buckets/Categories management has one flag-gated read experiment; it remains
   read-only and disables create, edit, activate/deactivate, delete, and bucket
   reorder controls in `http-readonly` mode.
+- Local API Diagnostics includes a manual Buckets/Categories read experiment
+  diagnostic that compares Dexie and selected-read `http-readonly` counts,
+  normalized IDs, bucket display ordering, category grouping, active-state
+  counts, row normalization, and truncation status without rendering names,
+  descriptions, or raw rows.
 - Local API Diagnostics includes a manual Recipients read experiment
   diagnostic that compares Dexie and selected-read `http-readonly` counts,
   normalized IDs, default display ordering, row normalization, and truncation
@@ -103,6 +108,7 @@ Manual Vite/browser checks:
 - backend selection diagnostic
 - selected-read repository diagnostic
 - selected-read ordering diagnostic
+- Buckets/Categories read experiment diagnostic
 - Recipients read experiment diagnostic
 - Dexie-vs-HTTP parity diagnostic
 - target screen selected-read preview in both `dexie` and `http-readonly`

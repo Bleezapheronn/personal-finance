@@ -41,6 +41,10 @@ import {
   runRecipientsReadExperimentDiagnostics,
   type RecipientsReadExperimentDiagnosticResult,
 } from "../repositories/recipientsReadExperimentDiagnostics";
+import {
+  runBucketsCategoriesReadExperimentDiagnostics,
+  type BucketsCategoriesReadExperimentDiagnosticResult,
+} from "../repositories/bucketsCategoriesReadExperimentDiagnostics";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiParityDiagnostics";
 import {
@@ -142,6 +146,8 @@ interface OrderingDiagnosticSummary {
 
 type RecipientsReadExperimentSummary =
   RecipientsReadExperimentDiagnosticResult;
+type BucketsCategoriesReadExperimentSummary =
+  BucketsCategoriesReadExperimentDiagnosticResult;
 
 const getEnvValue = (key: string): string | undefined => {
   const env = import.meta.env as Record<string, string | undefined>;
@@ -619,6 +625,147 @@ const RecipientsReadExperimentResultCard: React.FC<{
   </IonCard>
 );
 
+const BucketsCategoriesReadExperimentResultCard: React.FC<{
+  summary: BucketsCategoriesReadExperimentSummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>Buckets/Categories Read Experiment Results</h3>
+      </IonText>
+      <IonBadge color={summary.ok ? "success" : "danger"}>
+        {summary.ok ? "Pass" : "Fail"}
+      </IonBadge>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Limit</IonLabel>
+          <IonText slot="end">{summary.limit}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Compared checks</IonLabel>
+          <IonText slot="end">{summary.comparedChecks}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Failed checks</IonLabel>
+          <IonText slot="end">{summary.failedChecks}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Bucket counts</h3>
+            <p>
+              dexieDerived={summary.dexieBucketDerivedCount} dexieLoaded=
+              {summary.dexieBucketLoadedCount} httpReported=
+              {summary.httpBucketReportedCount ?? "unavailable"} httpLoaded=
+              {summary.httpBucketLoadedCount}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Category counts</h3>
+            <p>
+              dexieDerived={summary.dexieCategoryDerivedCount} dexieLoaded=
+              {summary.dexieCategoryLoadedCount} httpReported=
+              {summary.httpCategoryReportedCount ?? "unavailable"} httpLoaded=
+              {summary.httpCategoryLoadedCount}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Match flags</h3>
+            <p>
+              bucketIdsMatch={String(summary.bucketIdsMatch)} categoryIdsMatch=
+              {String(summary.categoryIdsMatch)}
+            </p>
+            <p>
+              bucketOrderMatch={String(summary.bucketOrderMatches)}{" "}
+              categoryOrderMatch={String(summary.categoryOrderMatches)}
+            </p>
+            <p>
+              groupingMatch={String(summary.categoryGroupingMatches)}{" "}
+              countsByBucketMatch=
+              {String(summary.categoryCountsByBucketMatch)}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Normalization and caps</h3>
+            <p>
+              httpBucketsNormalized=
+              {String(summary.allHttpBucketsNormalized)}{" "}
+              httpCategoriesNormalized=
+              {String(summary.allHttpCategoriesNormalized)}
+            </p>
+            <p>
+              httpBucketsTruncated={String(summary.httpBucketsTruncated)}{" "}
+              httpCategoriesTruncated=
+              {String(summary.httpCategoriesTruncated)}
+            </p>
+            <p>
+              bucketActiveCountsMatch=
+              {String(summary.bucketActiveStateCountsMatch)}{" "}
+              categoryActiveCountsMatch=
+              {String(summary.categoryActiveStateCountsMatch)}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Sampled bucket IDs</h3>
+            <p>
+              dexieIds=
+              {summary.sampledDexieBucketIds.length
+                ? summary.sampledDexieBucketIds.join(", ")
+                : "-"}
+            </p>
+            <p>
+              httpIds=
+              {summary.sampledHttpBucketIds.length
+                ? summary.sampledHttpBucketIds.join(", ")
+                : "-"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Sampled category IDs</h3>
+            <p>
+              dexieIds=
+              {summary.sampledDexieCategoryIds.length
+                ? summary.sampledDexieCategoryIds.join(", ")
+                : "-"}
+            </p>
+            <p>
+              httpIds=
+              {summary.sampledHttpCategoryIds.length
+                ? summary.sampledHttpCategoryIds.join(", ")
+                : "-"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        {summary.checks.map((check) => (
+          <IonItem key={check.name}>
+            <IonLabel>
+              <h3>{check.name}</h3>
+              {check.code && <p>code={check.code}</p>}
+            </IonLabel>
+            <IonBadge
+              color={check.status === "pass" ? "success" : "warning"}
+              slot="end"
+            >
+              {check.status === "pass" ? "Pass" : "Fail"}
+            </IonBadge>
+          </IonItem>
+        ))}
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
 const LocalApiDiagnostics: React.FC = () => {
   const enabled = isLocalApiDiagnosticsEnabled();
   const currentBackend = getRepositoryBackend();
@@ -636,6 +783,10 @@ const LocalApiDiagnostics: React.FC = () => {
     useState<OrderingDiagnosticSummary | null>(null);
   const [recipientsReadExperimentSummary, setRecipientsReadExperimentSummary] =
     useState<RecipientsReadExperimentSummary | null>(null);
+  const [
+    bucketsCategoriesReadExperimentSummary,
+    setBucketsCategoriesReadExperimentSummary,
+  ] = useState<BucketsCategoriesReadExperimentSummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -660,6 +811,11 @@ const LocalApiDiagnostics: React.FC = () => {
     recipientsReadExperiment: {
       key: "recipientsReadExperiment",
       title: "Recipients Read Experiment",
+      status: "idle",
+    },
+    bucketsCategoriesReadExperiment: {
+      key: "bucketsCategoriesReadExperiment",
+      title: "Buckets/Categories Read Experiment",
       status: "idle",
     },
   });
@@ -1118,6 +1274,49 @@ const LocalApiDiagnostics: React.FC = () => {
     }
   };
 
+  const runBucketsCategoriesReadExperimentDiagnostic =
+    async (): Promise<void> => {
+      const key = "bucketsCategoriesReadExperiment";
+      setRunningKey(key);
+      updateSummary({ ...summaries[key], status: "running" });
+      setBucketsCategoriesReadExperimentSummary(null);
+
+      try {
+        const result = await runBucketsCategoriesReadExperimentDiagnostics();
+        setBucketsCategoriesReadExperimentSummary(result);
+        updateSummary({
+          key,
+          title: "Buckets/Categories Read Experiment",
+          status: result.ok ? "pass" : "fail",
+          ok: result.ok,
+          comparedChecks: result.comparedChecks,
+          failedChecks: result.failedChecks,
+          sampledIds: [
+            ...new Set([
+              ...result.sampledDexieBucketIds,
+              ...result.sampledHttpBucketIds,
+              ...result.sampledDexieCategoryIds,
+              ...result.sampledHttpCategoryIds,
+            ]),
+          ].slice(0, 12),
+          codes: uniqueCodes(
+            result.checks.map((check) => ({
+              code: check.code,
+            })),
+          ),
+        });
+      } catch (error) {
+        updateSummary({
+          key,
+          title: "Buckets/Categories Read Experiment",
+          status: "fail",
+          errorCode: safeErrorCode(error),
+        });
+      } finally {
+        setRunningKey(null);
+      }
+    };
+
   const isRunning = runningKey !== null;
 
   return (
@@ -1287,6 +1486,26 @@ const LocalApiDiagnostics: React.FC = () => {
                       Run
                     </IonButton>
                   </IonItem>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>
+                      Buckets/Categories read experiment diagnostic
+                    </IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() =>
+                        void runBucketsCategoriesReadExperimentDiagnostic()
+                      }
+                      disabled={isRunning}
+                    >
+                      Run
+                    </IonButton>
+                  </IonItem>
                 </IonList>
                 <IonText color="medium">
                   <p style={{ fontSize: "0.85rem" }}>
@@ -1295,6 +1514,9 @@ const LocalApiDiagnostics: React.FC = () => {
                     diagnostic compares sampled IDs only, not full row parity.
                     The Recipients experiment diagnostic compares counts,
                     normalized IDs, and display-pipeline ordering only.
+                    The Buckets/Categories experiment diagnostic compares
+                    counts, normalized IDs, grouping, active-state counts, and
+                    display-pipeline ordering only.
                   </p>
                 </IonText>
               </IonCardContent>
@@ -1311,6 +1533,12 @@ const LocalApiDiagnostics: React.FC = () => {
             {recipientsReadExperimentSummary && (
               <RecipientsReadExperimentResultCard
                 summary={recipientsReadExperimentSummary}
+              />
+            )}
+
+            {bucketsCategoriesReadExperimentSummary && (
+              <BucketsCategoriesReadExperimentResultCard
+                summary={bucketsCategoriesReadExperimentSummary}
               />
             )}
 

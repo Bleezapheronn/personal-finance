@@ -341,6 +341,17 @@ gates. Roll back by turning
 `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT` off or setting
 `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite.
 
+Local API Diagnostics includes a manual Buckets/Categories read experiment
+diagnostic. It compares the existing Dexie Buckets/Categories read path to the
+selected-read `http-readonly` path with the same bounded limit used by the
+experiment. The output is summary-only: bucket/category counts, normalized
+sampled IDs, grouping/count match flags, active-state count match flags,
+truncation status, and safe result codes. It does not render bucket names,
+category names, descriptions, raw rows, tokens, or SQLite paths. This
+diagnostic does not replace the normal gates: use a fresh backup, matching
+SQLite import, restarted API server, `verify:sqlite`, `smoke:api`, and
+`npm run check:local-api-safety` before trusting Dexie-vs-HTTP results.
+
 ## Recipients Read Experiment
 
 `VITE_PERSONAL_FINANCE_RECIPIENTS_READ_EXPERIMENT=true` enables the first
