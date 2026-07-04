@@ -13,8 +13,9 @@ export interface SelectedReadOrderingCheck {
   resource: string;
   status: "pass" | "fail";
   matchesExactly: boolean;
-  dexieSampledIds?: number[];
-  httpSampledIds?: number[];
+  comparisonUsesNormalizedIds: true;
+  dexieSampledIds?: string[];
+  httpSampledIds?: string[];
   dexieCount?: number;
   httpCount?: number;
   code?: string;
@@ -82,10 +83,22 @@ const countFromListResult = (result: ReadListResult): number | undefined =>
     ? undefined
     : result.count;
 
+export const normalizeOrderingId = (id: unknown): string | undefined => {
+  if (typeof id === "number" && Number.isFinite(id)) {
+    return String(id);
+  }
+
+  if (typeof id === "string" && id.trim().length > 0) {
+    return id.trim();
+  }
+
+  return undefined;
+};
+
 const sampledIdsFromResult = (
   result: ReadListResult,
   limit: number,
-): number[] | undefined => {
+): string[] | undefined => {
   const rows = rowsFromListResult(result);
   if (!rows) {
     return undefined;
@@ -93,11 +106,34 @@ const sampledIdsFromResult = (
 
   return rows
     .map((row) => row.id)
-    .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+    .map(normalizeOrderingId)
+    .filter((id): id is string => id !== undefined)
     .slice(0, limit);
 };
 
-const arraysMatch = (left: number[] = [], right: number[] = []): boolean =>
+export const normalizedOrderingIdsMatch = (
+  left: unknown[] = [],
+  right: unknown[] = [],
+): boolean => {
+  const normalizedLeft = left.map(normalizeOrderingId);
+  const normalizedRight = right.map(normalizeOrderingId);
+
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every(
+      (id, index) => id !== undefined && id === normalizedRight[index],
+    )
+  );
+};
+
+export const orderingDiagnosticSanityChecks = {
+  numericAndStringIdsMatch: normalizedOrderingIdsMatch(
+    [16, 17],
+    ["16", "17"],
+  ),
+};
+
+const arraysMatch = (left: string[] = [], right: string[] = []): boolean =>
   left.length === right.length && left.every((id, index) => id === right[index]);
 
 const compareResourceOrdering = async (
@@ -126,6 +162,7 @@ const compareResourceOrdering = async (
         resource,
         status: "fail",
         matchesExactly: false,
+        comparisonUsesNormalizedIds: true,
         dexieSampledIds,
         httpSampledIds,
         dexieCount: countFromListResult(dexieResult as ReadListResult),
@@ -140,6 +177,7 @@ const compareResourceOrdering = async (
       resource,
       status: matchesExactly ? "pass" : "fail",
       matchesExactly,
+      comparisonUsesNormalizedIds: true,
       dexieSampledIds,
       httpSampledIds,
       dexieCount: countFromListResult(dexieResult as ReadListResult),
@@ -151,6 +189,7 @@ const compareResourceOrdering = async (
       resource,
       status: "fail",
       matchesExactly: false,
+      comparisonUsesNormalizedIds: true,
       code: sanitizeErrorCode(error),
     };
   }

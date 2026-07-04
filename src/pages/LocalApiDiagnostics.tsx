@@ -65,7 +65,7 @@ interface DiagnosticSummary {
   comparedChecks?: number;
   failedChecks?: number;
   totalMismatches?: number;
-  sampledIds?: number[];
+  sampledIds?: Array<number | string>;
   codes?: string[];
   errorCode?: string;
 }
@@ -132,6 +132,7 @@ interface ReportsPreviewSummary {
 
 interface OrderingDiagnosticSummary {
   sampleLimit: number;
+  comparisonUsesNormalizedIds: boolean;
   checks: SelectedReadOrderingCheck[];
 }
 
@@ -482,13 +483,20 @@ const OrderingResultCard: React.FC<{
           <IonLabel>Sample limit</IonLabel>
           <IonText slot="end">{summary.sampleLimit}</IonText>
         </IonItem>
+        <IonItem>
+          <IonLabel>Normalized ID comparison</IonLabel>
+          <IonText slot="end">
+            {summary.comparisonUsesNormalizedIds ? "true" : "false"}
+          </IonText>
+        </IonItem>
         {summary.checks.map((check) => (
           <IonItem key={check.resource}>
             <IonLabel>
               <h3>{check.resource}</h3>
               <p>
-                matchesExactly={String(check.matchesExactly)} dexieCount=
-                {check.dexieCount ?? "-"} httpCount={check.httpCount ?? "-"}
+                normalizedOrderMatch={String(check.matchesExactly)} dexieCount=
+                {check.dexieCount ?? "unavailable"} httpCount=
+                {check.httpCount ?? "unavailable"}
               </p>
               <p>
                 dexieIds=
@@ -932,6 +940,9 @@ const LocalApiDiagnostics: React.FC = () => {
       const result = await runSelectedReadOrderingDiagnostics();
       setOrderingSummary({
         sampleLimit: result.sampleLimit,
+        comparisonUsesNormalizedIds: result.checks.every(
+          (check) => check.comparisonUsesNormalizedIds,
+        ),
         checks: result.checks,
       });
       updateSummary({
@@ -949,7 +960,7 @@ const LocalApiDiagnostics: React.FC = () => {
             ]),
           ),
         ]
-          .sort((left, right) => left - right)
+          .sort((left, right) => String(left).localeCompare(String(right)))
           .slice(0, 12),
         codes: uniqueCodes(
           result.checks.map((check) => ({

@@ -168,11 +168,14 @@ transaction references, token values, or SQLite paths.
 
 The selected-read ordering diagnostic compares capped Dexie and HTTP read-only
 ID samples for transactions, budgets, budget snapshots, accounts, buckets,
-categories, recipients, and SMS import templates. It reports resource names,
-sampled IDs, exact ordering match status, and counts when available. Ordering
-differences are expected to be surfaced before any real screen migration because
-pagination, previews, and first-page UI behavior depend on stable ordering. This
-diagnostic does not normalize or fix ordering.
+categories, recipients, and SMS import templates. It normalizes sampled IDs
+before comparing them, so numeric and string forms such as `16` and `"16"` are
+treated as the same ID. It reports resource names, sampled IDs, exact normalized
+ordering match status, and counts when available. Count availability is
+informational and is not itself an ordering mismatch. Ordering differences are
+expected to be surfaced before any real screen migration because pagination,
+previews, and first-page UI behavior depend on stable ordering. This diagnostic
+does not fix repository ordering.
 
 The selected read preview is also manual and dev-only. It intentionally caps
 loaded preview rows to a tiny sample and does not load or display full tables.
