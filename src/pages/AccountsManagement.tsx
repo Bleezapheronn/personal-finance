@@ -585,7 +585,9 @@ const AccountsManagement: React.FC = () => {
                 {accountsReadExperimentHttpReadonly && (
                   <p>
                     This is a list-only experiment. Transaction-derived account
-                    usage checks remain on the existing Dexie path.
+                    usage checks remain on the existing Dexie path. Account
+                    images/icons are omitted in this read experiment; switch
+                    back to Dexie for the full Accounts management display.
                   </p>
                 )}
                 {accountsReadExperimentHttpReadonly &&

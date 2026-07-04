@@ -51,6 +51,13 @@ adapters are read-only. No write methods or write endpoints exist.
   diagnostic that compares Dexie and selected-read `http-readonly` counts,
   normalized IDs, default display ordering, row normalization, and truncation
   status without rendering recipient details.
+- Local API Diagnostics includes a manual Accounts read experiment diagnostic
+  that compares Dexie and selected-read `http-readonly` counts, normalized IDs,
+  page display ordering, row normalization, active/credit counts, currency
+  distribution, image-presence counts, credit-limit-presence counts, and
+  truncation status without rendering account details. Account image/icon
+  mismatches are reported as a visible limitation/warning because the current
+  `http-readonly` prototype intentionally omits account image blobs.
 - No create, update, delete, import, restore, or repair HTTP paths exist.
 - No write no-ops exist; future HTTP write attempts must fail loudly.
 - Browser token exposure is accepted only for this local prototype, never for
@@ -114,6 +121,7 @@ Manual Vite/browser checks:
 - selected-read ordering diagnostic
 - Buckets/Categories read experiment diagnostic
 - Recipients read experiment diagnostic
+- Accounts read experiment diagnostic
 - Dexie-vs-HTTP parity diagnostic
 - target screen selected-read preview in both `dexie` and `http-readonly`
 
@@ -214,6 +222,9 @@ Current narrow experiments:
 - The Accounts experiment applies the existing Accounts screen display order
   after loading selected-read rows. This is a page-level display alignment and
   does not change the global selected-read ordering diagnostic baseline.
+- The Accounts experiment intentionally omits account images/icons in
+  `http-readonly` mode. Full visual parity requires a separate image/blob
+  handling plan if needed.
 - Rollback is switching the relevant experiment flag off or setting the repository
   backend back to `dexie`, then restarting Vite.
 
@@ -232,5 +243,7 @@ No writes should be added until a separate migration plan is approved.
 - Browser diagnostics depend on local Vite env vars and the local API server.
 - Aggregate and sample comparison reports can still contain sensitive local
   financial data and must remain outside the repo.
+- Accounts `http-readonly` visual parity is incomplete because account
+  images/icons are omitted.
 - Read parity is not migration approval; each real screen still needs
   screen-specific review, preview, fallback, and rollback handling.

@@ -45,6 +45,10 @@ import {
   runBucketsCategoriesReadExperimentDiagnostics,
   type BucketsCategoriesReadExperimentDiagnosticResult,
 } from "../repositories/bucketsCategoriesReadExperimentDiagnostics";
+import {
+  runAccountsReadExperimentDiagnostics,
+  type AccountsReadExperimentDiagnosticResult,
+} from "../repositories/accountsReadExperimentDiagnostics";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiParityDiagnostics";
 import {
@@ -148,6 +152,7 @@ type RecipientsReadExperimentSummary =
   RecipientsReadExperimentDiagnosticResult;
 type BucketsCategoriesReadExperimentSummary =
   BucketsCategoriesReadExperimentDiagnosticResult;
+type AccountsReadExperimentSummary = AccountsReadExperimentDiagnosticResult;
 
 const getEnvValue = (key: string): string | undefined => {
   const env = import.meta.env as Record<string, string | undefined>;
@@ -766,6 +771,145 @@ const BucketsCategoriesReadExperimentResultCard: React.FC<{
   </IonCard>
 );
 
+const AccountsReadExperimentResultCard: React.FC<{
+  summary: AccountsReadExperimentSummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>Accounts Read Experiment Results</h3>
+      </IonText>
+      <IonBadge
+        color={
+          summary.ok
+            ? summary.imagePresenceLimitation
+              ? "warning"
+              : "success"
+            : "danger"
+        }
+      >
+        {summary.ok
+          ? summary.imagePresenceLimitation
+            ? "Pass with warnings"
+            : "Pass"
+          : "Fail"}
+      </IonBadge>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Limit</IonLabel>
+          <IonText slot="end">{summary.limit}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie count</IonLabel>
+          <IonText slot="end">
+            {summary.dexieLoadedCount}/{summary.dexieDerivedCount}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP count</IonLabel>
+          <IonText slot="end">
+            {summary.httpLoadedCount}/{summary.httpReportedCount ?? "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP truncated</IonLabel>
+          <IonText slot="end">{String(summary.httpTruncated)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled Dexie IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledDexieIds.length
+              ? summary.sampledDexieIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled HTTP IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledHttpIds.length
+              ? summary.sampledHttpIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Loaded IDs match</IonLabel>
+          <IonText slot="end">{String(summary.loadedIdsMatch)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Display order matches</IonLabel>
+          <IonText slot="end">{String(summary.displayOrderMatches)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Active counts match</IonLabel>
+          <IonText slot="end">
+            {String(summary.activeStateCountsMatch)} (
+            {summary.dexieActiveCount}/{summary.httpActiveCount})
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Credit counts match</IonLabel>
+          <IonText slot="end">
+            {String(summary.creditStateCountsMatch)} (
+            {summary.dexieCreditCount}/{summary.httpCreditCount})
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Currency distribution matches</IonLabel>
+          <IonText slot="end">
+            {String(summary.currencyDistributionMatches)} (
+            {summary.dexieCurrencyKeyCount}/{summary.httpCurrencyKeyCount})
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Image-presence counts match</IonLabel>
+          <IonText slot="end">
+            {String(summary.imagePresenceCountsMatch)} (
+            {summary.dexieImagePresenceCount}/{summary.httpImagePresenceCount})
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Image limitation</IonLabel>
+          <IonText slot="end">
+            {String(summary.imagePresenceLimitation)}
+          </IonText>
+        </IonItem>
+        {summary.warningCodes.length > 0 && (
+          <IonItem>
+            <IonLabel>Warning codes</IonLabel>
+            <IonText slot="end">{summary.warningCodes.join(", ")}</IonText>
+          </IonItem>
+        )}
+        <IonItem>
+          <IonLabel>Credit-limit presence counts match</IonLabel>
+          <IonText slot="end">
+            {String(summary.creditLimitPresenceCountsMatch)} (
+            {summary.dexieCreditLimitPresenceCount}/
+            {summary.httpCreditLimitPresenceCount})
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Compared checks</IonLabel>
+          <IonText slot="end">{summary.comparedChecks}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Failed checks</IonLabel>
+          <IonText slot="end">{summary.failedChecks}</IonText>
+        </IonItem>
+        {summary.checks
+          .filter((check) => check.status === "fail")
+          .map((check) => (
+            <IonItem key={check.name}>
+              <IonLabel>{check.name}</IonLabel>
+              <IonText slot="end">{check.code ?? "failed"}</IonText>
+            </IonItem>
+          ))}
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
 const LocalApiDiagnostics: React.FC = () => {
   const enabled = isLocalApiDiagnosticsEnabled();
   const currentBackend = getRepositoryBackend();
@@ -787,6 +931,8 @@ const LocalApiDiagnostics: React.FC = () => {
     bucketsCategoriesReadExperimentSummary,
     setBucketsCategoriesReadExperimentSummary,
   ] = useState<BucketsCategoriesReadExperimentSummary | null>(null);
+  const [accountsReadExperimentSummary, setAccountsReadExperimentSummary] =
+    useState<AccountsReadExperimentSummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -1317,6 +1463,46 @@ const LocalApiDiagnostics: React.FC = () => {
       }
     };
 
+  const runAccountsReadExperimentDiagnostic = async (): Promise<void> => {
+    const key = "accountsReadExperiment";
+    setRunningKey(key);
+    updateSummary({ ...summaries[key], status: "running" });
+    setAccountsReadExperimentSummary(null);
+
+    try {
+      const result = await runAccountsReadExperimentDiagnostics();
+      setAccountsReadExperimentSummary(result);
+      updateSummary({
+        key,
+        title: "Accounts Read Experiment",
+        status: result.ok ? "pass" : "fail",
+        ok: result.ok,
+        comparedChecks: result.comparedChecks,
+        failedChecks: result.failedChecks,
+        sampledIds: [
+          ...new Set([...result.sampledDexieIds, ...result.sampledHttpIds]),
+        ].slice(0, 12),
+        codes: uniqueCodes(
+          [
+            ...result.checks.map((check) => ({
+              code: check.code,
+            })),
+            ...result.warningCodes.map((code) => ({ code })),
+          ],
+        ),
+      });
+    } catch (error) {
+      updateSummary({
+        key,
+        title: "Accounts Read Experiment",
+        status: "fail",
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setRunningKey(null);
+    }
+  };
+
   const isRunning = runningKey !== null;
 
   return (
@@ -1506,6 +1692,22 @@ const LocalApiDiagnostics: React.FC = () => {
                       Run
                     </IonButton>
                   </IonItem>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>Accounts read experiment diagnostic</IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() => void runAccountsReadExperimentDiagnostic()}
+                      disabled={isRunning}
+                    >
+                      Run
+                    </IonButton>
+                  </IonItem>
                 </IonList>
                 <IonText color="medium">
                   <p style={{ fontSize: "0.85rem" }}>
@@ -1517,6 +1719,10 @@ const LocalApiDiagnostics: React.FC = () => {
                     The Buckets/Categories experiment diagnostic compares
                     counts, normalized IDs, grouping, active-state counts, and
                     display-pipeline ordering only.
+                    The Accounts experiment diagnostic compares counts,
+                    normalized IDs, display-pipeline ordering, active/credit
+                    counts, currency distribution, image presence, and
+                    credit-limit presence only.
                   </p>
                 </IonText>
               </IonCardContent>
@@ -1539,6 +1745,12 @@ const LocalApiDiagnostics: React.FC = () => {
             {bucketsCategoriesReadExperimentSummary && (
               <BucketsCategoriesReadExperimentResultCard
                 summary={bucketsCategoriesReadExperimentSummary}
+              />
+            )}
+
+            {accountsReadExperimentSummary && (
+              <AccountsReadExperimentResultCard
+                summary={accountsReadExperimentSummary}
               />
             )}
 

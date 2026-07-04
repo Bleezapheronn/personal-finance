@@ -18,6 +18,7 @@ const approvedFiles = new Set(
     "src/pages/SmsImportTemplatesManagement.tsx",
     "src/pages/Transactions.tsx",
     "src/repositories/adapterSelection.ts",
+    "src/repositories/accountsReadExperimentDiagnostics.ts",
     "src/repositories/backendSelectionDiagnostics.ts",
     "src/repositories/bucketsCategoriesReadExperimentDiagnostics.ts",
     "src/repositories/index.ts",
