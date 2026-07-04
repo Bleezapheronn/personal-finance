@@ -114,6 +114,57 @@ Before any real screen can switch to `http-readonly`, all gates below must pass:
 - The change is behind an explicit flag and defaults to Dexie.
 - A rollback path exists and has been written down before the switch.
 
+## Manual Migration Candidate Checklist
+
+Evaluate one candidate screen at a time. Do not treat a passing global
+diagnostic as approval for a real screen switch.
+
+Candidate screen questions:
+
+- Is the screen read-only, management-summary, or workflow-critical?
+- Does the screen display sensitive values such as names, descriptions,
+  references, amounts, or account/recipient details?
+- Does it depend on writes, deletes, transfers, exports, imports, restore flows,
+  merge actions, activation toggles, or lifecycle helpers?
+- Does it depend on aggregate, report, chart, bucket/category breakdown, or
+  period-selection semantics?
+- Does it depend on budget snapshot generation, pruning, dedupe, repair,
+  coverage, completion, linking, or historical snapshot stability?
+- Does it already have a selected-read preview?
+- Has that preview passed in both `dexie` and `http-readonly` modes?
+- Is the result acceptable with HTTP DTO date strings, or does the screen need
+  an explicit conversion layer?
+- Is there a clear rollback path to Dexie-only behavior?
+
+Required baseline checks before evaluating the candidate:
+
+- Export a fresh full app backup.
+- Import that exact backup into a new disposable SQLite database.
+- Restart the API server against that disposable SQLite database.
+- Run `verify:sqlite` with the backup and SQLite arguments.
+- Run `smoke:api` with the token or token-file argument.
+- Run `npm run check:local-api-safety`.
+- Run selected-read diagnostics in Dexie mode.
+- Run selected-read diagnostics in `http-readonly` mode.
+- Confirm the selected-read ordering diagnostic shows all resources as `Match`.
+- Confirm stale SQLite is not being used as the comparison source.
+
+Approval rules:
+
+- Default behavior must remain Dexie.
+- Any real screen experiment must be behind an explicit flag.
+- The first migration should avoid Transactions, Reports, Budget, and Budget
+  History unless stronger screen-specific parity checks exist.
+- No write path migration is allowed without a separate written plan.
+- Do not infer production or local-network safety from the current browser-token
+  prototype. Browser token exposure is local-dev only.
+
+Recommended first candidates:
+
+- Prefer low-risk, read-only, non-aggregate, non-lifecycle screens.
+- Prefer management list previews over workflow-heavy pages.
+- Diagnostics-only is an acceptable outcome if no screen is safe enough yet.
+
 ## First-Candidate Guidance
 
 Prefer low-risk read-only or management-summary screens for the first real
