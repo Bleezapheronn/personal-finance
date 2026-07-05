@@ -7,11 +7,10 @@ budget snapshot lifecycle changes.
 
 The current management-read baseline is intentionally narrow. Recipients,
 Buckets/Categories, Accounts, and SMS Import Templates have off-by-default,
-flag-gated read experiments and diagnostics. Transactions also has a separate
-off-by-default, high-risk read experiment after a passing screen-specific
-parity diagnostic. Reports also has a separate off-by-default, high-risk read
-experiment after a passing aggregate parity diagnostic. These experiments do
-not make HTTP authoritative and do not approve write migration.
+flag-gated read experiments and diagnostics. Transactions, Reports, and Budget
+also have separate off-by-default, high-risk read experiments after passing
+screen-specific parity diagnostics. These experiments do not make HTTP
+authoritative and do not approve write or lifecycle migration.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
 remains read-only. No write methods or write endpoints exist.
@@ -263,6 +262,24 @@ transactions, and write actions.
 
 The experiment must be behind a Budget-specific flag. Rollback must restore the
 current Dexie read and lifecycle path by disabling the flag and restarting Vite.
+
+### Current Experiment
+
+`VITE_PERSONAL_FINANCE_BUDGET_READ_EXPERIMENT=true` enables a narrow Budget
+read experiment. When the flag is off, Budget uses the existing Dexie read and
+lifecycle path. When the flag is on with backend `dexie`, Budget still uses the
+existing Dexie path. In `http-readonly` mode, Budget inputs are loaded through
+the selected-read facade with bounded paginated reads for budgets, budget
+snapshots, transactions, categories, buckets, recipients, and accounts.
+
+This experiment remains local-dev, read-only, and capped. It bypasses snapshot
+lifecycle helpers and disables add, edit, delete, completion, transaction
+linking, import, export, and load-more lifecycle actions. Truncated
+selected-read inputs show an on-page warning and must not be treated as
+full-confidence Budget results. Passing the Budget read parity diagnostic does
+not authorize budget writes, transaction linking migration, snapshot
+generation, pruning, dedupe, repair, coverage, Budget History migration, or any
+change to Dexie as the authoritative store.
 
 ## Budget History
 

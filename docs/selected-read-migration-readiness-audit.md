@@ -2,8 +2,8 @@
 
 Status: prototype-ready with diagnostics and narrow, off-by-default read-path
 experiments for Recipients, Buckets/Categories, Accounts, SMS Import Templates,
-Transactions, and Reports. No real workflow screen is switched to HTTP unless an
-explicit per-screen experiment flag is enabled.
+Transactions, Reports, and Budget. No real workflow screen is switched to HTTP
+unless an explicit per-screen experiment flag is enabled.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable and must be
 seeded from a full backup before comparison. The local API and HTTP repository
@@ -56,6 +56,10 @@ or Budget History `http-readonly` experiment.
 - Reports has one high-risk flag-gated read experiment; it remains read-only
   and disables the monthly chart and bucket/category drilldowns in
   `http-readonly` mode.
+- Budget has one high-risk flag-gated read experiment; it remains read-only,
+  bypasses snapshot lifecycle helpers in `http-readonly` mode, and disables
+  add, edit, delete, completion, transaction linking, import, export, and
+  load-more lifecycle actions.
 - Local API Diagnostics includes a manual Buckets/Categories read experiment
   diagnostic that compares Dexie and selected-read `http-readonly` counts,
   normalized IDs, bucket display ordering, category grouping, active-state
@@ -170,8 +174,9 @@ fresh-backup verification gates. Before trusting a fresh diagnostic run, export
 a fresh backup, import that backup into matching disposable SQLite, and restart
 the API against that SQLite. Stale SQLite can cause false mismatches. Six
 real read experiments now exist: Recipients, Buckets/Categories, Accounts, SMS
-Import Templates, Transactions, and Reports. Do not expand to Budget or Budget
-History without a separate parity plan.
+Import Templates, Transactions, Reports, and Budget. Do not expand Budget
+beyond its read-only experiment or expand to Budget History without a separate
+parity plan.
 
 | Screen / area | Experiment flag | Default behavior | `http-readonly` behavior | Write behavior | Diagnostic status | Known limitations | Rollback |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -181,6 +186,7 @@ History without a separate parity plan.
 | SMS Import Templates | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT=true` | Existing Dexie read/write/import/test-parse behavior | List loads through selected-read | Writes, imports, and test-parse actions disabled in `http-readonly` | Passes | Regex/pattern values are not exposed in `http-readonly`; edit/test workflow requires Dexie | Turn flag off or set backend to `dexie`, then restart Vite |
 | Transactions | `VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT=true` | Existing Dexie Transactions behavior | List loads through selected-read with paginated reads | Detail navigation, add, edit, delete, duplicate, transfer, import, and CSV export disabled in `http-readonly` | Transactions read parity diagnostic passes with fresh matching SQLite | High-risk workflow screen; account/payment icons may show placeholders because images/icons are omitted from the read-only HTTP path; writes, exports, and transfers are not migrated; fresh backup/import/API restart required before trusting parity | Turn flag off or set backend to `dexie`, then restart Vite |
 | Reports | `VITE_PERSONAL_FINANCE_REPORTS_READ_EXPERIMENT=true` | Existing Dexie Reports behavior | Main period report inputs load through selected-read with paginated reads | Monthly chart and bucket/category drilldowns disabled in `http-readonly`; no export/write/server aggregate path migrated | Reports parity diagnostic passes with fresh matching SQLite | High-risk aggregate screen; chart and drilldown paths remain Dexie-only/disabled in `http-readonly`; capped transaction loads show a warning and are not full-confidence totals; fresh backup/import/API restart required before trusting parity | Turn flag off or set backend to `dexie`, then restart Vite |
+| Budget | `VITE_PERSONAL_FINANCE_BUDGET_READ_EXPERIMENT=true` | Existing Dexie Budget read and lifecycle behavior | Budget inputs load through selected-read with bounded paginated reads | Add, edit, delete, completion, transaction linking, import, export, and load-more lifecycle actions disabled in `http-readonly` | Budget read parity diagnostic passes with fresh matching SQLite | High-risk lifecycle-sensitive screen; snapshot lifecycle helpers are bypassed in `http-readonly`; capped selected-read inputs show a warning and are not full-confidence Budget results; writes, linking, and lifecycle migration are not approved | Turn flag off or set backend to `dexie`, then restart Vite |
 
 ## Migration Gates
 
@@ -243,8 +249,9 @@ Approval rules:
 
 - Default behavior must remain Dexie.
 - Any real screen experiment must be behind an explicit flag.
-- Future high-risk migrations should avoid Budget and Budget History unless
-  stronger screen-specific parity checks exist.
+- Future high-risk migrations should avoid expanding Budget beyond the current
+  read-only experiment or moving Budget History unless stronger
+  screen-specific parity checks exist.
 - No write path migration is allowed without a separate written plan.
 - Do not infer production or local-network safety from the current browser-token
   prototype. Browser token exposure is local-dev only.
@@ -322,16 +329,29 @@ Current narrow experiments:
   matching SQLite baseline and passing Reports parity diagnostic.
 - Truncated selected-read report inputs show a warning and must not be treated
   as full-confidence report totals.
+- Budget has a per-screen read experiment flag:
+  `VITE_PERSONAL_FINANCE_BUDGET_READ_EXPERIMENT=true`.
+- Default behavior remains Dexie.
+- In `http-readonly` mode, Budget inputs may load through the selected-read
+  facade with bounded paginated reads, but add, edit, delete, completion,
+  transaction linking, import, export, and load-more lifecycle actions remain
+  disabled because writes, linking, and lifecycle behavior have not migrated.
+- The Budget experiment is high-risk and should only be trusted after a fresh
+  matching SQLite baseline and passing Budget read parity diagnostic.
+- Snapshot lifecycle helpers are bypassed in `http-readonly`; generation,
+  pruning, dedupe, repair, and coverage remain Dexie-only.
+- Truncated selected-read Budget inputs show a warning and must not be treated
+  as full-confidence Budget results.
 - Rollback is switching the relevant experiment flag off or setting the repository
   backend back to `dexie`, then restarting Vite.
 
 ## First-Candidate Guidance
 
 Prefer low-risk read-only or management-summary screens for first migrations.
-Transactions and Reports now have high-risk read experiments only after
-additional screen-specific parity checks. Avoid Budget and Budget History as
-real HTTP-backed screens unless additional screen-specific parity checks are
-added and reviewed.
+Transactions, Reports, and Budget now have high-risk read experiments only
+after additional screen-specific parity checks. Avoid expanding Budget beyond
+its current read-only experiment or moving Budget History unless additional
+screen-specific parity checks are added and reviewed.
 
 No writes should be added until a separate migration plan is approved.
 

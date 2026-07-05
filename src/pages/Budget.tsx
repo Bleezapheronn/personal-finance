@@ -66,6 +66,11 @@ import {
 } from "../utils/budgetCsvExport";
 import { ensureBudgetSnapshotCoverage } from "../utils/budgetSnapshots";
 import { ImportModal } from "../components/ImportModal";
+import {
+  getRepositoryBackend,
+  type RepositoryBackend,
+} from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -81,6 +86,463 @@ interface BudgetOccurrence {
 
 const BUDGET_BATCH_DAYS = 30;
 const GOAL_CAROUSEL_EXTENDED_HORIZON_DAYS = 3650;
+const BUDGET_READ_EXPERIMENT_FLAG =
+  "VITE_PERSONAL_FINANCE_BUDGET_READ_EXPERIMENT";
+const SELECTED_READ_BUDGET_LIMIT = 500;
+const SELECTED_READ_BUDGET_SNAPSHOT_LIMIT = 5000;
+const SELECTED_READ_TRANSACTION_LIMIT = 5000;
+const SELECTED_READ_LOOKUP_LIMIT = 500;
+const SELECTED_READ_PAGE_SIZE = 200;
+
+type ListResult<Row> =
+  | Row[]
+  | {
+      count?: number;
+      rows?: Row[];
+    };
+
+interface SelectedReadLoadMeta {
+  backend: RepositoryBackend;
+  source: string;
+  budgetLoadedCount: number;
+  budgetReportedCount?: number;
+  budgetTruncated: boolean;
+  budgetSnapshotLoadedCount: number;
+  budgetSnapshotReportedCount?: number;
+  budgetSnapshotTruncated: boolean;
+  transactionLoadedCount: number;
+  transactionReportedCount?: number;
+  transactionTruncated: boolean;
+}
+
+const getEnvValue = (key: string): string | undefined => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  const value = env[key]?.trim();
+  return value ? value : undefined;
+};
+
+const isBudgetReadExperimentEnabled = (): boolean =>
+  getEnvValue(BUDGET_READ_EXPERIMENT_FLAG) === "true";
+
+const rowsFromListResult = <Row,>(result: ListResult<Row>): Row[] | undefined => {
+  if (Array.isArray(result)) {
+    return result;
+  }
+
+  return Array.isArray(result.rows) ? result.rows : undefined;
+};
+
+const countFromListResult = <Row,>(
+  result: ListResult<Row>,
+): number | undefined =>
+  Array.isArray(result) || typeof result.count !== "number"
+    ? undefined
+    : result.count;
+
+const loadPagedRows = async <Row,>(
+  list: (options: { limit: number; offset: number }) => Promise<unknown>,
+  maxRows: number,
+): Promise<{
+  rows: Row[];
+  reportedCount?: number;
+  truncated: boolean;
+}> => {
+  const rows: Row[] = [];
+  let reportedCount: number | undefined;
+  let lastPageFilled = false;
+
+  while (rows.length < maxRows) {
+    const limit = Math.min(SELECTED_READ_PAGE_SIZE, maxRows - rows.length);
+    const result = (await list({ limit, offset: rows.length })) as ListResult<Row>;
+    const pageRows = rowsFromListResult(result);
+
+    if (!pageRows) {
+      throw new Error("invalid_budget_read_experiment_page_response");
+    }
+
+    reportedCount ??= countFromListResult(result);
+    rows.push(...pageRows);
+    lastPageFilled = pageRows.length === limit;
+
+    if (pageRows.length === 0) {
+      lastPageFilled = false;
+      break;
+    }
+
+    if (reportedCount !== undefined && rows.length >= reportedCount) {
+      break;
+    }
+
+    if (pageRows.length < limit) {
+      break;
+    }
+  }
+
+  return {
+    rows,
+    reportedCount,
+    truncated:
+      reportedCount !== undefined
+        ? rows.length < reportedCount
+        : rows.length >= maxRows && lastPageFilled,
+  };
+};
+
+const numberValue = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const stringValue = (value: unknown): string | undefined =>
+  typeof value === "string" ? value : undefined;
+
+const booleanValue = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  return undefined;
+};
+
+const dateValue = (value: unknown): Date | undefined => {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+};
+
+const nullableNumberValue = (value: unknown): number | undefined => {
+  const number = numberValue(value);
+  return number === undefined ? undefined : number;
+};
+
+const normalizeFrequencyDetails = (
+  value: unknown,
+): Budget["frequencyDetails"] => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Budget["frequencyDetails"];
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Budget["frequencyDetails"];
+    return parsed && typeof parsed === "object" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const normalizeBudgetRow = (row: unknown): Budget | undefined => {
+  const source = row as Record<string, unknown>;
+  const categoryId = numberValue(source.categoryId);
+  const amount = numberValue(source.amount);
+  const frequency = stringValue(source.frequency) as Budget["frequency"] | undefined;
+  const dueDate = dateValue(source.dueDate);
+  const createdAt = dateValue(source.createdAt);
+  const updatedAt = dateValue(source.updatedAt);
+  const isGoal = booleanValue(source.isGoal);
+  const isActive = booleanValue(source.isActive);
+
+  if (
+    categoryId === undefined ||
+    amount === undefined ||
+    frequency === undefined ||
+    dueDate === undefined ||
+    createdAt === undefined ||
+    updatedAt === undefined ||
+    isGoal === undefined ||
+    isActive === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: numberValue(source.id),
+    description: stringValue(source.description) ?? "",
+    categoryId,
+    paymentChannelId: nullableNumberValue(source.paymentChannelId),
+    accountId: nullableNumberValue(source.accountId),
+    recipientId: nullableNumberValue(source.recipientId),
+    amount,
+    transactionCost: nullableNumberValue(source.transactionCost),
+    frequency,
+    frequencyDetails: normalizeFrequencyDetails(source.frequencyDetails),
+    isGoal,
+    isFlexible: booleanValue(source.isFlexible) ?? false,
+    goalPercentage: nullableNumberValue(source.goalPercentage),
+    goalDirection: stringValue(source.goalDirection) as
+      | Budget["goalDirection"]
+      | undefined,
+    isActive,
+    remainingCyclesTotal:
+      source.remainingCyclesTotal === null
+        ? null
+        : nullableNumberValue(source.remainingCyclesTotal),
+    dueDate,
+    createdAt,
+    updatedAt,
+  };
+};
+
+const normalizeBudgetSnapshotRow = (
+  row: unknown,
+): BudgetSnapshot | undefined => {
+  const source = row as Record<string, unknown>;
+  const budgetId = numberValue(source.budgetId);
+  const occurrenceDate = dateValue(source.occurrenceDate);
+  const dueDate = dateValue(source.dueDate);
+  const cycleIndex = numberValue(source.cycleIndex);
+  const categoryId = numberValue(source.categoryId);
+  const amount = numberValue(source.amount);
+  const frequency = stringValue(source.frequency) as Budget["frequency"] | undefined;
+  const isGoal = booleanValue(source.isGoal);
+  const isHistorical = booleanValue(source.isHistorical);
+  const sourceBudgetUpdatedAt = dateValue(source.sourceBudgetUpdatedAt);
+  const createdAt = dateValue(source.createdAt);
+  const updatedAt = dateValue(source.updatedAt);
+
+  if (
+    budgetId === undefined ||
+    occurrenceDate === undefined ||
+    dueDate === undefined ||
+    cycleIndex === undefined ||
+    categoryId === undefined ||
+    amount === undefined ||
+    frequency === undefined ||
+    isGoal === undefined ||
+    isHistorical === undefined ||
+    sourceBudgetUpdatedAt === undefined ||
+    createdAt === undefined ||
+    updatedAt === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: numberValue(source.id),
+    budgetId,
+    occurrenceDate,
+    dueDate,
+    cycleIndex,
+    description: stringValue(source.description) ?? "",
+    categoryId,
+    accountId: nullableNumberValue(source.accountId),
+    recipientId: nullableNumberValue(source.recipientId),
+    amount,
+    transactionCost: nullableNumberValue(source.transactionCost),
+    frequency,
+    frequencyDetails: normalizeFrequencyDetails(source.frequencyDetails),
+    isGoal,
+    isFlexible: booleanValue(source.isFlexible) ?? false,
+    goalPercentage: nullableNumberValue(source.goalPercentage),
+    goalDirection: stringValue(source.goalDirection) as
+      | Budget["goalDirection"]
+      | undefined,
+    remainingCyclesTotal:
+      source.remainingCyclesTotal === null
+        ? null
+        : nullableNumberValue(source.remainingCyclesTotal),
+    isHistorical,
+    sourceBudgetUpdatedAt,
+    createdAt,
+    updatedAt,
+  };
+};
+
+const normalizeTransactionRow = (row: unknown): Transaction | undefined => {
+  const source = row as Record<string, unknown>;
+  const categoryId = numberValue(source.categoryId);
+  const recipientId = numberValue(source.recipientId);
+  const date = dateValue(source.date);
+  const amount = numberValue(source.amount);
+
+  if (
+    categoryId === undefined ||
+    recipientId === undefined ||
+    date === undefined ||
+    amount === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: numberValue(source.id),
+    categoryId,
+    paymentChannelId: nullableNumberValue(source.paymentChannelId),
+    accountId: nullableNumberValue(source.accountId),
+    recipientId,
+    date,
+    amount,
+    originalAmount: nullableNumberValue(source.originalAmount),
+    originalCurrency: stringValue(source.originalCurrency),
+    exchangeRate: nullableNumberValue(source.exchangeRate),
+    transactionReference: stringValue(source.transactionReference),
+    transactionCost: nullableNumberValue(source.transactionCost),
+    description: stringValue(source.description),
+    transferPairId: nullableNumberValue(source.transferPairId),
+    isTransfer: booleanValue(source.isTransfer),
+    budgetId: nullableNumberValue(source.budgetId),
+    occurrenceDate: dateValue(source.occurrenceDate),
+    budgetSnapshotId: nullableNumberValue(source.budgetSnapshotId),
+  };
+};
+
+const normalizeCategoryRow = (row: unknown): Category | undefined => {
+  const source = row as Record<string, unknown>;
+  const bucketId = numberValue(source.bucketId);
+  const isActive = booleanValue(source.isActive);
+  const createdAt = dateValue(source.createdAt);
+  const updatedAt = dateValue(source.updatedAt);
+
+  if (
+    bucketId === undefined ||
+    isActive === undefined ||
+    createdAt === undefined ||
+    updatedAt === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: numberValue(source.id),
+    name: stringValue(source.name),
+    bucketId,
+    description: stringValue(source.description),
+    isActive,
+    createdAt,
+    updatedAt,
+  };
+};
+
+const normalizeBucketRow = (row: unknown): Bucket | undefined => {
+  const source = row as Record<string, unknown>;
+  const minPercentage = numberValue(source.minPercentage);
+  const maxPercentage = numberValue(source.maxPercentage);
+  const displayOrder = numberValue(source.displayOrder);
+  const isActive = booleanValue(source.isActive);
+  const excludeFromReports = booleanValue(source.excludeFromReports);
+  const createdAt = dateValue(source.createdAt);
+  const updatedAt = dateValue(source.updatedAt);
+
+  if (
+    minPercentage === undefined ||
+    maxPercentage === undefined ||
+    displayOrder === undefined ||
+    isActive === undefined ||
+    excludeFromReports === undefined ||
+    createdAt === undefined ||
+    updatedAt === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: numberValue(source.id),
+    name: stringValue(source.name),
+    description: stringValue(source.description),
+    minPercentage,
+    maxPercentage,
+    minFixedAmount: nullableNumberValue(source.minFixedAmount),
+    isActive,
+    displayOrder,
+    excludeFromReports,
+    createdAt,
+    updatedAt,
+  };
+};
+
+const normalizeRecipientRow = (row: unknown): Recipient | undefined => {
+  const source = row as Record<string, unknown>;
+  const name = stringValue(source.name);
+  const isActive = booleanValue(source.isActive);
+  const createdAt = dateValue(source.createdAt);
+  const updatedAt = dateValue(source.updatedAt);
+
+  if (
+    name === undefined ||
+    isActive === undefined ||
+    createdAt === undefined ||
+    updatedAt === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: numberValue(source.id),
+    name,
+    aliases: stringValue(source.aliases),
+    email: stringValue(source.email),
+    phone: stringValue(source.phone),
+    tillNumber: stringValue(source.tillNumber),
+    paybill: stringValue(source.paybill),
+    accountNumber: stringValue(source.accountNumber),
+    description: stringValue(source.description),
+    isActive,
+    createdAt,
+    updatedAt,
+  };
+};
+
+const normalizeAccountRow = (row: unknown): Account | undefined => {
+  const source = row as Record<string, unknown>;
+  const name = stringValue(source.name);
+  const isActive = booleanValue(source.isActive);
+  const createdAt = dateValue(source.createdAt);
+  const updatedAt = dateValue(source.updatedAt);
+
+  if (
+    name === undefined ||
+    isActive === undefined ||
+    createdAt === undefined ||
+    updatedAt === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: numberValue(source.id),
+    name,
+    description: stringValue(source.description),
+    currency: stringValue(source.currency),
+    imageBlob: null,
+    isActive,
+    isCredit: booleanValue(source.isCredit) ?? false,
+    creditLimit: nullableNumberValue(source.creditLimit),
+    createdAt,
+    updatedAt,
+  };
+};
+
+const normalizeRows = <Row,>(
+  rows: unknown[],
+  normalize: (row: unknown) => Row | undefined,
+  code: string,
+): Row[] => {
+  const normalized = rows
+    .map(normalize)
+    .filter((row): row is Row => row !== undefined);
+
+  if (normalized.length !== rows.length) {
+    throw new Error(code);
+  }
+
+  return normalized;
+};
 
 const normalizeToLocalDay = (value: Date | string): Date => {
   const date = new Date(value);
@@ -112,6 +574,10 @@ const getLinkedTransactionCountForSnapshot = (
 
 const BudgetPage: React.FC = () => {
   const history = useHistory();
+  const budgetReadExperimentEnabled = isBudgetReadExperimentEnabled();
+  const repositoryBackend = getRepositoryBackend();
+  const budgetHttpReadonlyExperimentActive =
+    budgetReadExperimentEnabled && repositoryBackend === "http-readonly";
 
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [budgetSnapshots, setBudgetSnapshots] = useState<BudgetSnapshot[]>([]);
@@ -127,6 +593,8 @@ const BudgetPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [selectedReadLoadMeta, setSelectedReadLoadMeta] =
+    useState<SelectedReadLoadMeta | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
@@ -175,7 +643,117 @@ const BudgetPage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setSelectedReadLoadMeta(null);
     try {
+      if (budgetHttpReadonlyExperimentActive) {
+        const repositories = getSelectedReadRepositories(repositoryBackend);
+        const [
+          budgetLoad,
+          snapshotLoad,
+          transactionLoad,
+          categoryLoad,
+          bucketLoad,
+          recipientLoad,
+          accountLoad,
+        ] = await Promise.all([
+          loadPagedRows<unknown>(
+            repositories.budgets.list,
+            SELECTED_READ_BUDGET_LIMIT,
+          ),
+          loadPagedRows<unknown>(
+            repositories.budgetSnapshots.list,
+            SELECTED_READ_BUDGET_SNAPSHOT_LIMIT,
+          ),
+          loadPagedRows<unknown>(
+            repositories.transactions.list,
+            SELECTED_READ_TRANSACTION_LIMIT,
+          ),
+          loadPagedRows<unknown>(
+            repositories.categories.list,
+            SELECTED_READ_LOOKUP_LIMIT,
+          ),
+          loadPagedRows<unknown>(
+            repositories.buckets.list,
+            SELECTED_READ_LOOKUP_LIMIT,
+          ),
+          loadPagedRows<unknown>(
+            repositories.recipients.list,
+            SELECTED_READ_LOOKUP_LIMIT,
+          ),
+          loadPagedRows<unknown>(
+            repositories.accounts.list,
+            SELECTED_READ_LOOKUP_LIMIT,
+          ),
+        ]);
+
+        setBudgets(
+          normalizeRows(
+            budgetLoad.rows,
+            normalizeBudgetRow,
+            "budget_read_experiment_budget_normalization_failed",
+          ),
+        );
+        setBudgetSnapshots(
+          normalizeRows(
+            snapshotLoad.rows,
+            normalizeBudgetSnapshotRow,
+            "budget_read_experiment_snapshot_normalization_failed",
+          ),
+        );
+        setTransactions(
+          normalizeRows(
+            transactionLoad.rows,
+            normalizeTransactionRow,
+            "budget_read_experiment_transaction_normalization_failed",
+          ),
+        );
+        setCategories(
+          normalizeRows(
+            categoryLoad.rows,
+            normalizeCategoryRow,
+            "budget_read_experiment_category_normalization_failed",
+          ),
+        );
+        setBuckets(
+          normalizeRows(
+            bucketLoad.rows,
+            normalizeBucketRow,
+            "budget_read_experiment_bucket_normalization_failed",
+          ),
+        );
+        setRecipients(
+          normalizeRows(
+            recipientLoad.rows,
+            normalizeRecipientRow,
+            "budget_read_experiment_recipient_normalization_failed",
+          ),
+        );
+        setAccounts(
+          normalizeRows(
+            accountLoad.rows,
+            normalizeAccountRow,
+            "budget_read_experiment_account_normalization_failed",
+          ),
+        );
+        setAccountImages(new Map());
+        setVisibleBudgetHorizonDays(BUDGET_BATCH_DAYS);
+        setSelectedReadLoadMeta({
+          backend: repositoryBackend,
+          source: repositories.source,
+          budgetLoadedCount: budgetLoad.rows.length,
+          budgetReportedCount: budgetLoad.reportedCount,
+          budgetTruncated: budgetLoad.truncated,
+          budgetSnapshotLoadedCount: snapshotLoad.rows.length,
+          budgetSnapshotReportedCount: snapshotLoad.reportedCount,
+          budgetSnapshotTruncated: snapshotLoad.truncated,
+          transactionLoadedCount: transactionLoad.rows.length,
+          transactionReportedCount: transactionLoad.reportedCount,
+          transactionTruncated: transactionLoad.truncated,
+        });
+        setError("");
+        return;
+      }
+
       // Run snapshot migration and pre-generate upcoming snapshots
       await migrateBudgetSnapshots();
 
@@ -682,6 +1260,13 @@ const BudgetPage: React.FC = () => {
   };
 
   const loadMoreBudgetOccurrences = async () => {
+    if (budgetHttpReadonlyExperimentActive) {
+      setError(
+        "Budget read experiment is read-only. Load more budget items is disabled.",
+      );
+      return;
+    }
+
     const nextHorizon = visibleBudgetHorizonDays + BUDGET_BATCH_DAYS;
 
     try {
@@ -914,6 +1499,11 @@ const BudgetPage: React.FC = () => {
 
   // Handle delete click - run preflight analysis
   const handleDeleteClick = (budgetId: number) => {
+    if (budgetHttpReadonlyExperimentActive) {
+      setError("Budget read experiment is read-only. Delete is disabled.");
+      return;
+    }
+
     const analysis = analyzeBudgetDeleteOptions(budgetId);
     setDeleteAnalysis(analysis);
     setBudgetToDelete(budgetId);
@@ -924,6 +1514,11 @@ const BudgetPage: React.FC = () => {
   const handleConfirmDelete = async (
     action: "delete" | "deleteUnlinked" | "deactivate",
   ) => {
+    if (budgetHttpReadonlyExperimentActive) {
+      setError("Budget read experiment is read-only. Delete is disabled.");
+      return;
+    }
+
     if (budgetToDelete === undefined || !deleteAnalysis) return;
 
     try {
@@ -961,6 +1556,13 @@ const BudgetPage: React.FC = () => {
 
   // Handle link past transactions
   const handleOpenLinkModal = (budgetOccurrence: BudgetOccurrence) => {
+    if (budgetHttpReadonlyExperimentActive) {
+      setError(
+        "Budget read experiment is read-only. Transaction linking is disabled.",
+      );
+      return;
+    }
+
     const budget = budgetOccurrence.budget;
 
     const matching = findMatchingTransactions(
@@ -986,6 +1588,13 @@ const BudgetPage: React.FC = () => {
     transactionIds: number[],
     occurrenceDate: Date,
   ) => {
+    if (budgetHttpReadonlyExperimentActive) {
+      setError(
+        "Budget read experiment is read-only. Transaction linking is disabled.",
+      );
+      return;
+    }
+
     if (budgetIdForLinking === undefined) return;
 
     try {
@@ -1511,6 +2120,10 @@ const BudgetPage: React.FC = () => {
   }, [loading, allGoals.length]);
 
   useEffect(() => {
+    if (budgetHttpReadonlyExperimentActive) {
+      return;
+    }
+
     if (!isDebugModeEnabled()) {
       return;
     }
@@ -1550,7 +2163,7 @@ const BudgetPage: React.FC = () => {
         isCompleted: goal.isCompleted,
       })),
     });
-  }, [allGoals, currentGoalIndex]);
+  }, [allGoals, budgetHttpReadonlyExperimentActive, currentGoalIndex]);
 
   const handleGoalPrevious = () => {
     if (allGoals.length <= 1) return;
@@ -1565,6 +2178,11 @@ const BudgetPage: React.FC = () => {
       prev === allGoals.length - 1 ? 0 : prev + 1,
     );
   };
+
+  const selectedReadInputsTruncated =
+    selectedReadLoadMeta?.budgetTruncated === true ||
+    selectedReadLoadMeta?.budgetSnapshotTruncated === true ||
+    selectedReadLoadMeta?.transactionTruncated === true;
 
   return (
     <IonPage>
@@ -1581,31 +2199,35 @@ const BudgetPage: React.FC = () => {
             >
               <IonIcon icon={timeOutline} />
             </IonButton>
-            <IonButton
-              onClick={async () => {
-                try {
-                  const csv = await exportBudgetsToCSV();
-                  const filename = `budgets-${
-                    new Date().toISOString().split("T")[0]
-                  }.csv`;
-                  downloadBudgetsCSV(csv, filename);
-                  setSuccessMsg("Budgets exported successfully!");
-                  setShowSuccessToast(true);
-                } catch (err) {
-                  console.error("Export failed:", err);
-                  setError("Failed to export budgets");
-                }
-              }}
-              title="Export Budgets to CSV"
-            >
-              <IonIcon icon={downloadOutline} />
-            </IonButton>
-            <IonButton
-              onClick={() => setShowImportModal(true)}
-              title="Import budgets from CSV"
-            >
-              <IonIcon icon={cloudUploadOutline} />
-            </IonButton>
+            {!budgetHttpReadonlyExperimentActive && (
+              <>
+                <IonButton
+                  onClick={async () => {
+                    try {
+                      const csv = await exportBudgetsToCSV();
+                      const filename = `budgets-${
+                        new Date().toISOString().split("T")[0]
+                      }.csv`;
+                      downloadBudgetsCSV(csv, filename);
+                      setSuccessMsg("Budgets exported successfully!");
+                      setShowSuccessToast(true);
+                    } catch (err) {
+                      console.error("Export failed:", err);
+                      setError("Failed to export budgets");
+                    }
+                  }}
+                  title="Export Budgets to CSV"
+                >
+                  <IonIcon icon={downloadOutline} />
+                </IonButton>
+                <IonButton
+                  onClick={() => setShowImportModal(true)}
+                  title="Import budgets from CSV"
+                >
+                  <IonIcon icon={cloudUploadOutline} />
+                </IonButton>
+              </>
+            )}
           </IonButtons>
         </IonToolbar>
       </IonHeader>
@@ -1698,6 +2320,45 @@ const BudgetPage: React.FC = () => {
 
         {!loading && (
           <>
+            {budgetReadExperimentEnabled && (
+              <IonCard color={budgetHttpReadonlyExperimentActive ? "warning" : undefined}>
+                <IonCardContent>
+                  <IonText>
+                    <h3>Budget read experiment is active</h3>
+                    <p>
+                      Backend: {repositoryBackend}.{" "}
+                      {budgetHttpReadonlyExperimentActive
+                        ? "Budget inputs are loaded through selected-read http-readonly; budget edits and snapshot lifecycle actions are disabled. Switch back to Dexie for normal Budget behavior."
+                        : "The experiment flag is on, but the selected backend is Dexie, so Budget uses the existing Dexie read and lifecycle path."}
+                    </p>
+                  </IonText>
+                </IonCardContent>
+              </IonCard>
+            )}
+
+            {budgetHttpReadonlyExperimentActive && selectedReadLoadMeta && (
+              <IonCard color={selectedReadInputsTruncated ? "danger" : "light"}>
+                <IonCardContent>
+                  <IonText>
+                    <p>
+                      Selected-read inputs: budgets{" "}
+                      {selectedReadLoadMeta.budgetLoadedCount}/
+                      {selectedReadLoadMeta.budgetReportedCount ?? "-"},
+                      snapshots{" "}
+                      {selectedReadLoadMeta.budgetSnapshotLoadedCount}/
+                      {selectedReadLoadMeta.budgetSnapshotReportedCount ?? "-"},
+                      transactions{" "}
+                      {selectedReadLoadMeta.transactionLoadedCount}/
+                      {selectedReadLoadMeta.transactionReportedCount ?? "-"}.
+                      {selectedReadInputsTruncated
+                        ? " Inputs are capped, so Budget results should not be treated as full-confidence."
+                        : " Inputs are not truncated."}
+                    </p>
+                  </IonText>
+                </IonCardContent>
+              </IonCard>
+            )}
+
             {/* Active Goals Section - Scrollable */}
             {allGoals.length > 0 && (
               <div style={{ marginBottom: "24px" }}>
@@ -1709,10 +2370,18 @@ const BudgetPage: React.FC = () => {
                   return (
                     <IonCard
                       onClick={() => {
+                        if (budgetHttpReadonlyExperimentActive) {
+                          return;
+                        }
                         setSelectedBudgetForCompletion(currentGoal);
                         setShowCompleteModal(true);
                       }}
-                      style={{ cursor: "pointer", margin: "0" }}
+                      style={{
+                        cursor: budgetHttpReadonlyExperimentActive
+                          ? "default"
+                          : "pointer",
+                        margin: "0",
+                      }}
                     >
                       <IonCardContent>
                         {/* Goal Navigation Header */}
@@ -1902,50 +2571,51 @@ const BudgetPage: React.FC = () => {
                                 </div>
                               </IonCol>
                             )}
-                            {/* Edit/Delete/Link buttons */}
-                            <IonCol
-                              style={{ paddingRight: 0, textAlign: "right" }}
-                            >
-                              <IonButton
-                                fill="clear"
-                                size="small"
-                                style={{ marginRight: "0" }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleOpenLinkModal(currentGoal);
-                                }}
-                                title="Link Transaction"
+                            {!budgetHttpReadonlyExperimentActive && (
+                              <IonCol
+                                style={{ paddingRight: 0, textAlign: "right" }}
                               >
-                                <IonIcon icon={linkOutline} slot="end" />
-                              </IonButton>
-                              <IonButton
-                                fill="clear"
-                                size="small"
-                                style={{ marginRight: "0" }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  history.push(
-                                    `/budget/edit/${currentGoal.budget.id}`,
-                                  );
-                                }}
-                                title="Edit Goal"
-                              >
-                                <IonIcon icon={createOutline} slot="end" />
-                              </IonButton>
-                              <IonButton
-                                fill="clear"
-                                size="small"
-                                color="danger"
-                                style={{ marginRight: "0" }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteClick(currentGoal.budget.id!);
-                                }}
-                                title="Delete Goal"
-                              >
-                                <IonIcon icon={trashOutline} slot="end" />
-                              </IonButton>
-                            </IonCol>
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  style={{ marginRight: "0" }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenLinkModal(currentGoal);
+                                  }}
+                                  title="Link Transaction"
+                                >
+                                  <IonIcon icon={linkOutline} slot="end" />
+                                </IonButton>
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  style={{ marginRight: "0" }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    history.push(
+                                      `/budget/edit/${currentGoal.budget.id}`,
+                                    );
+                                  }}
+                                  title="Edit Goal"
+                                >
+                                  <IonIcon icon={createOutline} slot="end" />
+                                </IonButton>
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  color="danger"
+                                  style={{ marginRight: "0" }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteClick(currentGoal.budget.id!);
+                                  }}
+                                  title="Delete Goal"
+                                >
+                                  <IonIcon icon={trashOutline} slot="end" />
+                                </IonButton>
+                              </IonCol>
+                            )}
                           </IonRow>
                         </IonGrid>
                       </IonCardContent>
@@ -1982,10 +2652,17 @@ const BudgetPage: React.FC = () => {
                         <IonItem
                           key={`${occ.budgetSnapshotId ?? "legacy"}-${occ.budgetId}-${occ.dueDate.getTime()}`}
                           onClick={() => {
+                            if (budgetHttpReadonlyExperimentActive) {
+                              return;
+                            }
                             setSelectedBudgetForCompletion(occ);
                             setShowCompleteModal(true);
                           }}
-                          style={{ cursor: "pointer" }}
+                          style={{
+                            cursor: budgetHttpReadonlyExperimentActive
+                              ? "default"
+                              : "pointer",
+                          }}
                         >
                           <IonGrid style={{ width: "100%" }}>
                             <IonRow>
@@ -2168,53 +2845,60 @@ const BudgetPage: React.FC = () => {
                                   style={{ marginTop: "4px" }}
                                 />
 
-                                {/* Edit/Delete/Link buttons below progress bar */}
-                                <IonRow className="item-actions">
-                                  <IonCol className="item-actions-container">
-                                    <IonButton
-                                      fill="clear"
-                                      size="small"
-                                      style={{ marginRight: "0" }}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleOpenLinkModal(occ);
-                                      }}
-                                      title="Link Transaction"
-                                    >
-                                      <IonIcon icon={linkOutline} slot="end" />
-                                    </IonButton>
-                                    <IonButton
-                                      fill="clear"
-                                      size="small"
-                                      style={{ marginRight: "0" }}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        history.push(
-                                          `/budget/edit/${occ.budget.id}`,
-                                        );
-                                      }}
-                                      title="Edit Budget Item"
-                                    >
-                                      <IonIcon
-                                        icon={createOutline}
-                                        slot="end"
-                                      />
-                                    </IonButton>
-                                    <IonButton
-                                      fill="clear"
-                                      size="small"
-                                      style={{ marginRight: "0" }}
-                                      color="danger"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleDeleteClick(occ.budget.id!);
-                                      }}
-                                      title="Delete Budget Item"
-                                    >
-                                      <IonIcon icon={trashOutline} slot="end" />
-                                    </IonButton>
-                                  </IonCol>
-                                </IonRow>
+                                {!budgetHttpReadonlyExperimentActive && (
+                                  <IonRow className="item-actions">
+                                    <IonCol className="item-actions-container">
+                                      <IonButton
+                                        fill="clear"
+                                        size="small"
+                                        style={{ marginRight: "0" }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenLinkModal(occ);
+                                        }}
+                                        title="Link Transaction"
+                                      >
+                                        <IonIcon
+                                          icon={linkOutline}
+                                          slot="end"
+                                        />
+                                      </IonButton>
+                                      <IonButton
+                                        fill="clear"
+                                        size="small"
+                                        style={{ marginRight: "0" }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          history.push(
+                                            `/budget/edit/${occ.budget.id}`,
+                                          );
+                                        }}
+                                        title="Edit Budget Item"
+                                      >
+                                        <IonIcon
+                                          icon={createOutline}
+                                          slot="end"
+                                        />
+                                      </IonButton>
+                                      <IonButton
+                                        fill="clear"
+                                        size="small"
+                                        style={{ marginRight: "0" }}
+                                        color="danger"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteClick(occ.budget.id!);
+                                        }}
+                                        title="Delete Budget Item"
+                                      >
+                                        <IonIcon
+                                          icon={trashOutline}
+                                          slot="end"
+                                        />
+                                      </IonButton>
+                                    </IonCol>
+                                  </IonRow>
+                                )}
                               </IonCol>
                             </IonRow>
                           </IonGrid>
@@ -2225,7 +2909,14 @@ const BudgetPage: React.FC = () => {
                 ))}
 
                 <div style={{ padding: "16px 0 32px" }}>
-                  {hasMoreBudgetOccurrences ? (
+                  {budgetHttpReadonlyExperimentActive ? (
+                    <IonText color="medium">
+                      <p style={{ textAlign: "center", fontSize: "0.85rem" }}>
+                        Load more budget items is disabled in the read-only
+                        Budget experiment.
+                      </p>
+                    </IonText>
+                  ) : hasMoreBudgetOccurrences ? (
                     <IonButton
                       expand="block"
                       fill="outline"
@@ -2253,18 +2944,19 @@ const BudgetPage: React.FC = () => {
         )}
       </IonContent>
 
-      {/* FAB BUTTON FOR ADDING BUDGETS */}
-      <IonFab vertical="bottom" horizontal="end" slot="fixed">
-        <IonFabButton
-          onClick={() => history.push("/budget/add")}
-          title="Add Budget"
-        >
-          <IonIcon icon={addOutline} />
-        </IonFabButton>
-      </IonFab>
+      {!budgetHttpReadonlyExperimentActive && (
+        <IonFab vertical="bottom" horizontal="end" slot="fixed">
+          <IonFabButton
+            onClick={() => history.push("/budget/add")}
+            title="Add Budget"
+          >
+            <IonIcon icon={addOutline} />
+          </IonFabButton>
+        </IonFab>
+      )}
 
       {/* Complete Budget Modal */}
-      {selectedBudgetForCompletion && (
+      {!budgetHttpReadonlyExperimentActive && selectedBudgetForCompletion && (
         <CompleteBudgetModal
           isOpen={showCompleteModal}
           onClose={() => {
@@ -2281,32 +2973,36 @@ const BudgetPage: React.FC = () => {
       )}
 
       {/* Link Past Transactions Modal */}
-      <LinkPastTransactionsModal
-        isOpen={showLinkModal}
-        onClose={() => {
-          setShowLinkModal(false);
-          setBudgetIdForLinking(undefined);
-          setBudgetSnapshotIdForLinking(undefined);
-          setBudgetOccurrenceDateForLinking(undefined);
-          setMatchingTransactionsForLink([]);
-        }}
-        matchingTransactions={matchingTransactionsForLink}
-        onLinkTransactions={handleLinkTransactions}
-        categories={categories}
-        recipients={recipients}
-        occurrenceDate={budgetOccurrenceDateForLinking || new Date()}
-      />
+      {!budgetHttpReadonlyExperimentActive && (
+        <LinkPastTransactionsModal
+          isOpen={showLinkModal}
+          onClose={() => {
+            setShowLinkModal(false);
+            setBudgetIdForLinking(undefined);
+            setBudgetSnapshotIdForLinking(undefined);
+            setBudgetOccurrenceDateForLinking(undefined);
+            setMatchingTransactionsForLink([]);
+          }}
+          matchingTransactions={matchingTransactionsForLink}
+          onLinkTransactions={handleLinkTransactions}
+          categories={categories}
+          recipients={recipients}
+          occurrenceDate={budgetOccurrenceDateForLinking || new Date()}
+        />
+      )}
 
       {/* Import Modal */}
-      <ImportModal
-        isOpen={showImportModal}
-        onDidDismiss={() => setShowImportModal(false)}
-        onImportComplete={() => {
-          setShowImportModal(false);
-          // Reload budgets
-          window.location.reload();
-        }}
-      />
+      {!budgetHttpReadonlyExperimentActive && (
+        <ImportModal
+          isOpen={showImportModal}
+          onDidDismiss={() => setShowImportModal(false)}
+          onImportComplete={() => {
+            setShowImportModal(false);
+            // Reload budgets
+            window.location.reload();
+          }}
+        />
+      )}
     </IonPage>
   );
 };

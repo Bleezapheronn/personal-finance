@@ -11,6 +11,7 @@ const approvedFiles = new Set(
   [
     "src/api/localApiClient.ts",
     "src/pages/AccountsManagement.tsx",
+    "src/pages/Budget.tsx",
     "src/pages/BudgetHistory.tsx",
     "src/pages/BucketsManagement.tsx",
     "src/pages/LocalApiDiagnostics.tsx",

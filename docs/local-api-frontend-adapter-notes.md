@@ -69,8 +69,9 @@ The scaffold uses `fetch` and sends the token with the server's existing
 - budgets: budget and budget snapshot list/detail reads
 - budget snapshots for a budget
 
-No write calls are implemented, and no frontend route, page, or live repository
-is connected to the local API.
+No write calls are implemented. Normal app behavior still defaults to Dexie;
+local API use is limited to diagnostics and explicit flag-gated read
+experiments.
 
 The `http-readonly` backend has no write support. Future consumers must not
 silently no-op writes; write attempts in HTTP-readonly mode should fail loudly.
@@ -79,8 +80,9 @@ Dexie remains authoritative.
 ## Selected Read Facade
 
 `src/repositories/selectedReadRepositories.ts` exposes an opt-in read-only
-facade named `selectedReadRepositories`. It is not imported by existing pages and
-does not change live app behavior. With no backend environment variable, or with
+facade named `selectedReadRepositories`. It is imported only by approved
+diagnostic and explicit flag-gated experiment paths, and does not change default
+live app behavior. With no backend environment variable, or with
 an unknown value, it selects Dexie readers. With
 `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`, it can select the
 HTTP read-only adapters for manual experiments.
@@ -594,6 +596,33 @@ account names, regex/pattern strings, raw SMS examples, descriptions, or raw
 rows. It does not replace the normal gates: use a fresh backup, matching
 SQLite import, restarted API server, `verify:sqlite`, `smoke:api`, and
 `npm run check:local-api-safety` before trusting Dexie-vs-HTTP results.
+
+## Budget Read Experiment
+
+`VITE_PERSONAL_FINANCE_BUDGET_READ_EXPERIMENT=true` enables a narrow
+real-screen selected-read experiment for the Budget page. The flag is off by
+default. Restart Vite after changing it.
+
+When the flag is off, Budget uses the existing Dexie read and lifecycle path.
+When the flag is on and `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, the
+page remains on the existing Dexie path. When the flag is on and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`, Budget inputs load
+through `selectedReadRepositories` with bounded paginated reads for budgets,
+budget snapshots, transactions, and lookup tables.
+
+The `http-readonly` experiment is local-dev and read-only. It bypasses the
+Budget page's snapshot lifecycle helpers and disables budget add/edit/delete,
+completion, transaction linking, import, export, and load-more lifecycle
+actions. It also shows an on-page warning if selected-read inputs are capped,
+because capped inputs are not full-confidence Budget results. This experiment
+does not authorize budget writes, snapshot generation, pruning, dedupe, repair,
+coverage, or any change to Dexie as the authoritative store. Roll back by
+turning `VITE_PERSONAL_FINANCE_BUDGET_READ_EXPERIMENT` off or setting
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite.
+
+Before trusting HTTP results, use a fresh backup, matching SQLite import,
+restarted API server, passing Budget read parity diagnostic, `verify:sqlite`,
+`smoke:api`, and `npm run check:local-api-safety`.
 
 ## Manual Parity Diagnostic
 
