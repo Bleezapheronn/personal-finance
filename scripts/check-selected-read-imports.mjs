@@ -21,6 +21,7 @@ const approvedFiles = new Set(
     "src/repositories/adapterSelection.ts",
     "src/repositories/accountsReadExperimentDiagnostics.ts",
     "src/repositories/backendSelectionDiagnostics.ts",
+    "src/repositories/budgetReadParityDiagnostics.ts",
     "src/repositories/bucketsCategoriesReadExperimentDiagnostics.ts",
     "src/repositories/index.ts",
     "src/repositories/recipientsReadExperimentDiagnostics.ts",

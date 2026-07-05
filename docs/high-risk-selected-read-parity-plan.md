@@ -230,6 +230,21 @@ transactions, and write actions.
 
 - A Budget page-specific read diagnostic that compares display groups, ordering,
   IDs, and lifecycle-sensitive derived flags.
+- The initial manual Budget read parity diagnostic in Local API Diagnostics may
+  be used as an early gate for budget count, sampled ID membership, selected-read
+  display order, active/inactive counts, frequency distribution,
+  `goalDirection` distribution, `isFlexible` distribution, reference-ID
+  distributions, amount sign distribution, due-date day-key distribution,
+  target/amount field presence, current/recurring classification, and
+  snapshot-to-budget linkage counts. Budget-row parity and snapshot-linkage
+  parity are reported separately. Snapshot linkage uses paginated selected-read
+  budget snapshot reads, with a larger diagnostic cap than the budget-row cap,
+  and reports truncation as `budget_snapshot_linkage_truncated` instead of
+  treating a capped sample as parity evidence. It is summary-only and does not
+  expose budget descriptions, amount values, target values,
+  account/category/recipient names, raw budget rows, raw snapshot rows, token
+  values, or SQLite paths. It does not call budget snapshot lifecycle helpers.
+  Passing it is not approval to switch the real Budget page by itself.
 - A goal semantics diagnostic covering `goalDirection`, amount signs, and
   target display.
 - A linked-transaction diagnostic that confirms displayed paid/progress values

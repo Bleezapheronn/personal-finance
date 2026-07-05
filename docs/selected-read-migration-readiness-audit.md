@@ -83,6 +83,14 @@ or Budget History `http-readonly` experiment.
   `totalIncome`, `totalExpense`, `netTotal`, and contributing transaction
   counts without rendering raw transaction rows, descriptions, references,
   names, individual amount values, tokens, or SQLite paths.
+- Local API Diagnostics includes a manual Budget read parity diagnostic that
+  compares selected-read Dexie and `http-readonly` budget counts, sampled IDs,
+  display order, safe field mismatch counts, distributions, and snapshot
+  budget-id linkage counts without rendering budget descriptions, amount
+  values, target values, raw rows, names, tokens, or SQLite paths. It reports
+  budget-row parity separately from snapshot-linkage parity, and paginates
+  snapshot linkage reads up to the diagnostic cap before comparing linkage
+  distribution. It does not call budget snapshot lifecycle helpers.
 - No create, update, delete, import, restore, or repair HTTP paths exist.
 - No write no-ops exist; future HTTP write attempts must fail loudly.
 - Browser token exposure is accepted only for this local prototype, never for
@@ -150,6 +158,7 @@ Manual Vite/browser checks:
 - SMS Templates read experiment diagnostic
 - Transactions read parity diagnostic
 - Reports parity diagnostic
+- Budget read parity diagnostic
 - Dexie-vs-HTTP parity diagnostic
 - target screen selected-read preview in both `dexie` and `http-readonly`
 

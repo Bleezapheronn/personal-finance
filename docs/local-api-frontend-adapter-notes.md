@@ -233,6 +233,31 @@ names, individual amount values, tokens, or SQLite paths. This diagnostic must
 pass against a fresh matching SQLite baseline before trusting the Reports read
 experiment.
 
+Local API Diagnostics also includes a manual Budget read parity diagnostic. It
+compares selected-read Dexie budget reads with selected-read `http-readonly`
+budget reads using bounded paginated reads. Budget-row parity and optional
+snapshot-linkage parity are reported separately. Snapshot linkage reads page
+through selected-read budget snapshots with the same safe page size and a
+larger diagnostic cap, currently 5,000 rows, so linkage distribution is not
+judged from the first 500 rows. If snapshots are still capped, the diagnostic
+reports `budget_snapshot_linkage_truncated`; if snapshot counts differ, it
+reports `budget_snapshot_baseline_count_mismatch`; if fully loaded linkage
+distribution differs, it reports
+`budget_snapshot_linkage_distribution_mismatch`. Output is summary-only: budget
+loaded/reported counts, page size, truncation flags, sampled budget IDs, loaded
+ID match, display-order match, safe field mismatch counts by field name,
+distribution match flags, distribution mismatch counts, snapshot loaded/reported
+counts, snapshot page counts, snapshot truncation flags, snapshot budget-id
+linkage match flag, safe result codes, and the fresh backup/import reminder. It
+does not render budget descriptions, amount values, target values,
+account/category/recipient names, raw budget rows, raw snapshot rows, token
+values, or SQLite paths. It does not call budget snapshot generation, pruning,
+dedupe, repair, coverage, creation, or update helpers. This diagnostic is an
+early gate only and does not authorize a real Budget screen switch by itself.
+Trust results only after exporting a fresh backup, importing it into matching
+disposable SQLite, restarting the API, and rerunning `verify:sqlite`,
+`smoke:api`, and `npm run check:local-api-safety`.
+
 ## Reports Read Experiment
 
 `VITE_PERSONAL_FINANCE_REPORTS_READ_EXPERIMENT=true` enables a narrow
