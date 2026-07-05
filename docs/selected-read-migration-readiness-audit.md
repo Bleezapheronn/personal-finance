@@ -95,6 +95,13 @@ or Budget History `http-readonly` experiment.
   budget-row parity separately from snapshot-linkage parity, and paginates
   snapshot linkage reads up to the diagnostic cap before comparing linkage
   distribution. It does not call budget snapshot lifecycle helpers.
+- Local API Diagnostics includes a manual Budget History read parity diagnostic
+  that compares selected-read Dexie and `http-readonly` budget snapshot,
+  transaction, and budget inputs for Budget History occurrence derivation,
+  display order, deduped occurrence keys, linkage distributions, completion
+  status, and rounded derived-value mismatch counts without rendering budget
+  descriptions, amount values, target values, raw rows, names, tokens, or
+  SQLite paths. It does not call budget snapshot lifecycle helpers.
 - No create, update, delete, import, restore, or repair HTTP paths exist.
 - No write no-ops exist; future HTTP write attempts must fail loudly.
 - Browser token exposure is accepted only for this local prototype, never for
@@ -163,6 +170,7 @@ Manual Vite/browser checks:
 - Transactions read parity diagnostic
 - Reports parity diagnostic
 - Budget read parity diagnostic
+- Budget History read parity diagnostic
 - Dexie-vs-HTTP parity diagnostic
 - target screen selected-read preview in both `dexie` and `http-readonly`
 

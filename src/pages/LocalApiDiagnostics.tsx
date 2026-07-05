@@ -65,6 +65,10 @@ import {
   runBudgetReadParityDiagnostics,
   type BudgetReadParityDiagnosticResult,
 } from "../repositories/budgetReadParityDiagnostics";
+import {
+  runBudgetHistoryReadParityDiagnostics,
+  type BudgetHistoryReadParityDiagnosticResult,
+} from "../repositories/budgetHistoryReadParityDiagnostics";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiParityDiagnostics";
 import {
@@ -175,6 +179,7 @@ type SmsTemplatesReadExperimentSummary =
 type TransactionsReadParitySummary = TransactionsReadParityDiagnosticResult;
 type ReportsParitySummary = ReportsParityDiagnosticResult;
 type BudgetReadParitySummary = BudgetReadParityDiagnosticResult;
+type BudgetHistoryReadParitySummary = BudgetHistoryReadParityDiagnosticResult;
 
 const getEnvValue = (key: string): string | undefined => {
   const env = import.meta.env as Record<string, string | undefined>;
@@ -1599,6 +1604,237 @@ const BudgetReadParityResultCard: React.FC<{
   </IonCard>
 );
 
+const BudgetHistoryReadParityResultCard: React.FC<{
+  summary: BudgetHistoryReadParitySummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>Budget History Read Parity Results</h3>
+      </IonText>
+      <IonBadge color={summary.ok ? "success" : "danger"}>
+        {summary.ok ? "Pass" : "Fail"}
+      </IonBadge>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Limits</IonLabel>
+          <IonText slot="end">
+            snapshots={summary.snapshotLimit} transactions=
+            {summary.transactionLimit} budgets={summary.budgetLimit}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Page size</IonLabel>
+          <IonText slot="end">{summary.pageSize}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie snapshots loaded/reported</IonLabel>
+          <IonText slot="end">
+            {summary.dexieSnapshotLoadedCount}/
+            {summary.dexieSnapshotReportedCount ?? "-"} over{" "}
+            {summary.dexieSnapshotPagesLoaded} pages
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP snapshots loaded/reported</IonLabel>
+          <IonText slot="end">
+            {summary.httpSnapshotLoadedCount}/
+            {summary.httpSnapshotReportedCount ?? "-"} over{" "}
+            {summary.httpSnapshotPagesLoaded} pages
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Snapshot truncation</IonLabel>
+          <IonText slot="end">
+            dexie={String(summary.dexieSnapshotTruncated)} http=
+            {String(summary.httpSnapshotTruncated)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie transactions loaded/reported</IonLabel>
+          <IonText slot="end">
+            {summary.dexieTransactionLoadedCount}/
+            {summary.dexieTransactionReportedCount ?? "-"} over{" "}
+            {summary.dexieTransactionPagesLoaded} pages
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP transactions loaded/reported</IonLabel>
+          <IonText slot="end">
+            {summary.httpTransactionLoadedCount}/
+            {summary.httpTransactionReportedCount ?? "-"} over{" "}
+            {summary.httpTransactionPagesLoaded} pages
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Transaction truncation</IonLabel>
+          <IonText slot="end">
+            dexie={String(summary.dexieTransactionTruncated)} http=
+            {String(summary.httpTransactionTruncated)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie budgets loaded/reported</IonLabel>
+          <IonText slot="end">
+            {summary.dexieBudgetLoadedCount}/
+            {summary.dexieBudgetReportedCount ?? "-"} over{" "}
+            {summary.dexieBudgetPagesLoaded} pages
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP budgets loaded/reported</IonLabel>
+          <IonText slot="end">
+            {summary.httpBudgetLoadedCount}/
+            {summary.httpBudgetReportedCount ?? "-"} over{" "}
+            {summary.httpBudgetPagesLoaded} pages
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Budget truncation</IonLabel>
+          <IonText slot="end">
+            dexie={String(summary.dexieBudgetTruncated)} http=
+            {String(summary.httpBudgetTruncated)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Baseline counts match</IonLabel>
+          <IonText slot="end">{String(summary.baselineCountsMatch)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Parity limited by baseline mismatch</IonLabel>
+          <IonText slot="end">
+            {String(summary.parityLimitedByBaselineMismatch)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Rows normalized</IonLabel>
+          <IonText slot="end">
+            dexie={String(summary.allDexieRowsNormalized)} http=
+            {String(summary.allHttpRowsNormalized)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled Dexie snapshot IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledDexieSnapshotIds.length
+              ? summary.sampledDexieSnapshotIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled HTTP snapshot IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledHttpSnapshotIds.length
+              ? summary.sampledHttpSnapshotIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Match flags</h3>
+            <p>
+              snapshotIds={String(summary.snapshotIdsMatch)} snapshotOrder=
+              {String(summary.snapshotDisplayOrderMatches)} occurrenceKeys=
+              {String(summary.occurrenceKeysMatch)}
+            </p>
+            <p>
+              occurrenceOrder=
+              {String(summary.occurrenceDisplayOrderMatches)} occurrenceCounts=
+              {String(summary.occurrenceCountsMatch)}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Safe field mismatch counts</h3>
+            <p>
+              {Object.keys(summary.fieldMismatchCounts).length
+                ? Object.entries(summary.fieldMismatchCounts)
+                    .map(([field, count]) => `${field}=${count}`)
+                    .join(", ")
+                : "none"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Distribution match flags</h3>
+            <p>
+              {Object.entries(summary.distributionMatches)
+                .map(([field, matches]) => `${field}=${String(matches)}`)
+                .join(", ")}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Distribution mismatch counts</h3>
+            <p>
+              {Object.entries(summary.distributionMismatchCounts)
+                .map(([field, count]) => `${field}=${count}`)
+                .join(", ")}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Transaction linkage mismatch count</IonLabel>
+          <IonText slot="end">
+            {summary.transactionLinkageMismatchCount}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Amount-paid mismatch count</IonLabel>
+          <IonText slot="end">{summary.amountPaidMismatchCount}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Effective-target mismatch count</IonLabel>
+          <IonText slot="end">{summary.effectiveTargetMismatchCount}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Completion mismatch count</IonLabel>
+          <IonText slot="end">{summary.completionMismatchCount}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Baseline note</h3>
+            <p>{summary.baselineNote}</p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Lifecycle note</h3>
+            <p>{summary.lifecycleNote}</p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Compared checks</IonLabel>
+          <IonText slot="end">{summary.comparedChecks}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Failed checks</IonLabel>
+          <IonText slot="end">{summary.failedChecks}</IonText>
+        </IonItem>
+        {summary.checks.map((check) => (
+          <IonItem key={check.name}>
+            <IonLabel>
+              <h3>{check.name}</h3>
+              {check.code && <p>code={check.code}</p>}
+            </IonLabel>
+            <IonBadge
+              color={check.status === "pass" ? "success" : "danger"}
+              slot="end"
+            >
+              {check.status === "pass" ? "Pass" : "Fail"}
+            </IonBadge>
+          </IonItem>
+        ))}
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
 const LocalApiDiagnostics: React.FC = () => {
   const enabled = isLocalApiDiagnosticsEnabled();
   const currentBackend = getRepositoryBackend();
@@ -1634,6 +1870,8 @@ const LocalApiDiagnostics: React.FC = () => {
     useState<ReportsParitySummary | null>(null);
   const [budgetReadParitySummary, setBudgetReadParitySummary] =
     useState<BudgetReadParitySummary | null>(null);
+  const [budgetHistoryReadParitySummary, setBudgetHistoryReadParitySummary] =
+    useState<BudgetHistoryReadParitySummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -1683,6 +1921,11 @@ const LocalApiDiagnostics: React.FC = () => {
     budgetReadParity: {
       key: "budgetReadParity",
       title: "Budget Read Parity",
+      status: "idle",
+    },
+    budgetHistoryReadParity: {
+      key: "budgetHistoryReadParity",
+      title: "Budget History Read Parity",
       status: "idle",
     },
   });
@@ -2389,6 +2632,59 @@ const LocalApiDiagnostics: React.FC = () => {
     }
   };
 
+  const runBudgetHistoryReadParityDiagnostic = async (): Promise<void> => {
+    const key = "budgetHistoryReadParity";
+    setRunningKey(key);
+    updateSummary({ ...summaries[key], status: "running" });
+    setBudgetHistoryReadParitySummary(null);
+
+    try {
+      const result = await runBudgetHistoryReadParityDiagnostics();
+      setBudgetHistoryReadParitySummary(result);
+      updateSummary({
+        key,
+        title: "Budget History Read Parity",
+        status: result.ok ? "pass" : "fail",
+        ok: result.ok,
+        comparedChecks: result.comparedChecks,
+        failedChecks: result.failedChecks,
+        totalMismatches:
+          Object.values(result.fieldMismatchCounts).reduce(
+            (total, count) => total + count,
+            0,
+          ) +
+          Object.values(result.distributionMismatchCounts).reduce(
+            (total, count) => total + count,
+            0,
+          ) +
+          result.transactionLinkageMismatchCount +
+          result.amountPaidMismatchCount +
+          result.effectiveTargetMismatchCount +
+          result.completionMismatchCount,
+        sampledIds: [
+          ...new Set([
+            ...result.sampledDexieSnapshotIds,
+            ...result.sampledHttpSnapshotIds,
+          ]),
+        ].slice(0, 12),
+        codes: uniqueCodes(
+          result.checks.map((check) => ({
+            code: check.code,
+          })),
+        ),
+      });
+    } catch (error) {
+      updateSummary({
+        key,
+        title: "Budget History Read Parity",
+        status: "fail",
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setRunningKey(null);
+    }
+  };
+
   const isRunning = runningKey !== null;
 
   return (
@@ -2660,6 +2956,24 @@ const LocalApiDiagnostics: React.FC = () => {
                       Run
                     </IonButton>
                   </IonItem>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>Budget History read parity diagnostic</IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() =>
+                        void runBudgetHistoryReadParityDiagnostic()
+                      }
+                      disabled={isRunning}
+                    >
+                      Run
+                    </IonButton>
+                  </IonItem>
                 </IonList>
                 <IonText color="medium">
                   <p style={{ fontSize: "0.85rem" }}>
@@ -2687,7 +3001,11 @@ const LocalApiDiagnostics: React.FC = () => {
                     read parity diagnostic compares budget counts, sampled IDs,
                     display order, safe field mismatch counts, distributions,
                     and snapshot budget-id linkage counts only; it does not call
-                    snapshot lifecycle helpers.
+                    snapshot lifecycle helpers. The Budget History read parity
+                    diagnostic compares budget snapshot, transaction, budget,
+                    occurrence, linkage, completion, and rounded derived-value
+                    parity counts only; it does not call snapshot lifecycle
+                    helpers.
                   </p>
                 </IonText>
               </IonCardContent>
@@ -2737,6 +3055,12 @@ const LocalApiDiagnostics: React.FC = () => {
 
             {budgetReadParitySummary && (
               <BudgetReadParityResultCard summary={budgetReadParitySummary} />
+            )}
+
+            {budgetHistoryReadParitySummary && (
+              <BudgetHistoryReadParityResultCard
+                summary={budgetHistoryReadParitySummary}
+              />
             )}
 
             <IonCard>

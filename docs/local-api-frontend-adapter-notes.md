@@ -260,6 +260,25 @@ Trust results only after exporting a fresh backup, importing it into matching
 disposable SQLite, restarting the API, and rerunning `verify:sqlite`,
 `smoke:api`, and `npm run check:local-api-safety`.
 
+Local API Diagnostics also includes a manual Budget History read parity
+diagnostic. It compares selected-read Dexie Budget History inputs with
+selected-read `http-readonly` inputs using bounded paginated reads: budget
+snapshots up to 5,000 rows, transactions up to 5,000 rows, and budgets up to
+500 rows. It reproduces the Budget History read derivation for past snapshot
+occurrences, deduped occurrence keys, linked transaction counts, rounded
+`amountPaid`/effective-target parity, completion status, display order, and
+safe distributions. Output is summary-only: loaded/reported counts, page
+counts, truncation flags, sampled snapshot IDs, match flags, mismatch counts by
+field/distribution name, safe result codes, and the fresh backup/import
+reminder. It does not render budget descriptions, names, amount values, target
+values, transaction details, raw rows, tokens, or SQLite paths. It does not
+call budget snapshot generation, pruning, dedupe, repair, coverage, creation,
+or update helpers. This diagnostic is an early gate only and does not authorize
+a real Budget History screen switch by itself. Trust results only after
+exporting a fresh backup, importing it into matching disposable SQLite,
+restarting the API, and rerunning `verify:sqlite`, `smoke:api`, and
+`npm run check:local-api-safety`.
+
 ## Reports Read Experiment
 
 `VITE_PERSONAL_FINANCE_REPORTS_READ_EXPERIMENT=true` enables a narrow

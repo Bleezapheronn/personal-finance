@@ -316,6 +316,19 @@ enough for a real screen switch.
 - A Budget History page-specific parity diagnostic that compares displayed
   occurrence summaries, filters, completion flags, and linked transaction
   summaries.
+- The initial manual Budget History read parity diagnostic in Local API
+  Diagnostics may be used as an early gate for budget snapshot count and ID
+  membership parity, default display ordering, deduped occurrence keys,
+  snapshot budgetId/due-date/goalDirection/isFlexible distributions, linked
+  budget presence, transaction budgetSnapshotId linkage, rounded `amountPaid`
+  and effective-target mismatch counts, and completion mismatch counts. It uses
+  bounded paginated selected-read inputs and reports truncation instead of
+  claiming full parity from capped data. It is summary-only and does not expose
+  budget descriptions, names, amount values, target values, transaction details,
+  raw snapshot rows, raw transaction rows, token values, or SQLite paths. It
+  does not call budget snapshot generation, pruning, dedupe, repair, coverage,
+  creation, or update helpers. Passing it is not approval to switch the real
+  Budget History page by itself.
 - A transaction-linked amount diagnostic for `amountPaid` and effective target.
 - A historical stability check confirming no read experiment mutates snapshot
   rows.
