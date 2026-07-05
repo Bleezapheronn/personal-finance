@@ -61,6 +61,10 @@ import {
   runReportsParityDiagnostics,
   type ReportsParityDiagnosticResult,
 } from "../repositories/reportsParityDiagnostics";
+import {
+  runBudgetReadParityDiagnostics,
+  type BudgetReadParityDiagnosticResult,
+} from "../repositories/budgetReadParityDiagnostics";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { runLocalApiReadParityDiagnostics } from "../repositories/http/localApiParityDiagnostics";
 import {
@@ -170,6 +174,7 @@ type SmsTemplatesReadExperimentSummary =
   SmsTemplatesReadExperimentDiagnosticResult;
 type TransactionsReadParitySummary = TransactionsReadParityDiagnosticResult;
 type ReportsParitySummary = ReportsParityDiagnosticResult;
+type BudgetReadParitySummary = BudgetReadParityDiagnosticResult;
 
 const getEnvValue = (key: string): string | undefined => {
   const env = import.meta.env as Record<string, string | undefined>;
@@ -1341,6 +1346,259 @@ const ReportsParityResultCard: React.FC<{
   </IonCard>
 );
 
+const BudgetReadParityResultCard: React.FC<{
+  summary: BudgetReadParitySummary;
+}> = ({ summary }) => (
+  <IonCard>
+    <IonCardHeader>
+      <IonText>
+        <h3>Budget Read Parity Results</h3>
+      </IonText>
+      <IonBadge color={summary.ok ? "success" : "danger"}>
+        {summary.ok ? "Pass" : "Fail"}
+      </IonBadge>
+    </IonCardHeader>
+    <IonCardContent>
+      <IonList>
+        <IonItem>
+          <IonLabel>Limit</IonLabel>
+          <IonText slot="end">{summary.limit}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Page size</IonLabel>
+          <IonText slot="end">{summary.pageSize}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie budgets loaded</IonLabel>
+          <IonText slot="end">{summary.dexieLoadedCount}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie budget pages loaded</IonLabel>
+          <IonText slot="end">{summary.dexiePagesLoaded}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie budgets truncated</IonLabel>
+          <IonText slot="end">{String(summary.dexieTruncated)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP budgets loaded/reported</IonLabel>
+          <IonText slot="end">
+            {summary.httpLoadedCount}/{summary.httpReportedCount ?? "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP budget pages loaded</IonLabel>
+          <IonText slot="end">{summary.httpPagesLoaded}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP budgets truncated</IonLabel>
+          <IonText slot="end">{String(summary.httpTruncated)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Baseline counts match</IonLabel>
+          <IonText slot="end">{String(summary.baselineCountsMatch)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Parity limited by baseline mismatch</IonLabel>
+          <IonText slot="end">
+            {String(summary.parityLimitedByBaselineMismatch)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Budget row parity OK</IonLabel>
+          <IonText slot="end">{String(summary.budgetRowsParityOk)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Snapshot linkage parity OK</IonLabel>
+          <IonText slot="end">
+            {String(summary.snapshotLinkageParityOk)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Rows normalized</IonLabel>
+          <IonText slot="end">
+            dexie={String(summary.allDexieBudgetsNormalized)} http=
+            {String(summary.allHttpBudgetsNormalized)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled Dexie budget IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledDexieIds.length
+              ? summary.sampledDexieIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Sampled HTTP budget IDs</IonLabel>
+          <IonText slot="end">
+            {summary.sampledHttpIds.length
+              ? summary.sampledHttpIds.join(", ")
+              : "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Loaded IDs match</IonLabel>
+          <IonText slot="end">{String(summary.loadedIdsMatch)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Display order matches</IonLabel>
+          <IonText slot="end">{String(summary.displayOrderMatches)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Safe field mismatch counts</h3>
+            <p>
+              {Object.keys(summary.fieldMismatchCounts).length
+                ? Object.entries(summary.fieldMismatchCounts)
+                    .map(([field, count]) => `${field}=${count}`)
+                    .join(", ")
+                : "none"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Distribution match flags</h3>
+            <p>
+              {Object.entries(summary.distributionMatches)
+                .map(([field, matches]) => `${field}=${String(matches)}`)
+                .join(", ")}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Distribution mismatch counts</h3>
+            <p>
+              {Object.entries(summary.distributionMismatchCounts)
+                .map(([field, count]) => `${field}=${count}`)
+                .join(", ")}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Snapshot linkage included</IonLabel>
+          <IonText slot="end">{String(summary.snapshotLinkageIncluded)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Snapshot linkage truncated</IonLabel>
+          <IonText slot="end">
+            {String(summary.snapshotLinkageTruncated)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Snapshot counts match</IonLabel>
+          <IonText slot="end">{String(summary.snapshotCountsMatch)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie snapshot links loaded</IonLabel>
+          <IonText slot="end">
+            {summary.dexieSnapshotLoadedCount}/
+            {summary.dexieSnapshotReportedCount ?? "-"} over{" "}
+            {summary.dexieSnapshotPagesLoaded} pages
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie snapshot derived count</IonLabel>
+          <IonText slot="end">{summary.dexieSnapshotDerivedCount}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Dexie snapshot links truncated</IonLabel>
+          <IonText slot="end">
+            {String(summary.dexieSnapshotTruncated)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP snapshot links loaded/reported</IonLabel>
+          <IonText slot="end">
+            {summary.httpSnapshotLoadedCount}/
+            {summary.httpSnapshotReportedCount ?? "-"}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP snapshot links pages loaded</IonLabel>
+          <IonText slot="end">{summary.httpSnapshotPagesLoaded}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>HTTP snapshot links truncated</IonLabel>
+          <IonText slot="end">{String(summary.httpSnapshotTruncated)}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Snapshot budget-id linkage distribution matches</IonLabel>
+          <IonText slot="end">
+            {String(summary.snapshotBudgetIdDistributionMatches)}
+          </IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Snapshot budget-id linkage diff summary</h3>
+            <p>
+              differingKeys=
+              {summary.snapshotBudgetIdDistributionDiff.differingKeyCount},
+              missingOnlyOnDexie=
+              {
+                summary.snapshotBudgetIdDistributionDiff
+                  .missingOnlyOnDexieKeyCount
+              }
+              , missingOnlyOnHTTP=
+              {
+                summary.snapshotBudgetIdDistributionDiff
+                  .missingOnlyOnHttpKeyCount
+              }
+              , countDifferent=
+              {summary.snapshotBudgetIdDistributionDiff.countDifferentKeyCount}
+            </p>
+            <p>
+              sampled differing budget IDs:{" "}
+              {summary.snapshotBudgetIdDistributionDiff.sampledDifferingBudgetIds
+                .length
+                ? summary.snapshotBudgetIdDistributionDiff.sampledDifferingBudgetIds.join(
+                    ", ",
+                  )
+                : "none"}
+            </p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Baseline note</h3>
+            <p>{summary.baselineNote}</p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>
+            <h3>Lifecycle note</h3>
+            <p>{summary.lifecycleNote}</p>
+          </IonLabel>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Compared checks</IonLabel>
+          <IonText slot="end">{summary.comparedChecks}</IonText>
+        </IonItem>
+        <IonItem>
+          <IonLabel>Failed checks</IonLabel>
+          <IonText slot="end">{summary.failedChecks}</IonText>
+        </IonItem>
+        {summary.checks.map((check) => (
+          <IonItem key={check.name}>
+            <IonLabel>
+              <h3>{check.name}</h3>
+              {check.code && <p>code={check.code}</p>}
+            </IonLabel>
+            <IonBadge
+              color={check.status === "pass" ? "success" : "danger"}
+              slot="end"
+            >
+              {check.status === "pass" ? "Pass" : "Fail"}
+            </IonBadge>
+          </IonItem>
+        ))}
+      </IonList>
+    </IonCardContent>
+  </IonCard>
+);
+
 const LocalApiDiagnostics: React.FC = () => {
   const enabled = isLocalApiDiagnosticsEnabled();
   const currentBackend = getRepositoryBackend();
@@ -1374,6 +1632,8 @@ const LocalApiDiagnostics: React.FC = () => {
   ] = useState<TransactionsReadParitySummary | null>(null);
   const [reportsParitySummary, setReportsParitySummary] =
     useState<ReportsParitySummary | null>(null);
+  const [budgetReadParitySummary, setBudgetReadParitySummary] =
+    useState<BudgetReadParitySummary | null>(null);
   const [summaries, setSummaries] = useState<Record<string, DiagnosticSummary>>({
     backend: {
       key: "backend",
@@ -1418,6 +1678,11 @@ const LocalApiDiagnostics: React.FC = () => {
     reportsParity: {
       key: "reportsParity",
       title: "Reports Parity",
+      status: "idle",
+    },
+    budgetReadParity: {
+      key: "budgetReadParity",
+      title: "Budget Read Parity",
       status: "idle",
     },
   });
@@ -2076,6 +2341,54 @@ const LocalApiDiagnostics: React.FC = () => {
     }
   };
 
+  const runBudgetReadParityDiagnostic = async (): Promise<void> => {
+    const key = "budgetReadParity";
+    setRunningKey(key);
+    updateSummary({ ...summaries[key], status: "running" });
+    setBudgetReadParitySummary(null);
+
+    try {
+      const result = await runBudgetReadParityDiagnostics();
+      setBudgetReadParitySummary(result);
+      updateSummary({
+        key,
+        title: "Budget Read Parity",
+        status: result.ok ? "pass" : "fail",
+        ok: result.ok,
+        comparedChecks: result.comparedChecks,
+        failedChecks: result.failedChecks,
+        totalMismatches:
+          Object.values(result.fieldMismatchCounts).reduce(
+            (total, count) => total + count,
+            0,
+          ) +
+          Object.values(result.distributionMismatchCounts).reduce(
+            (total, count) => total + count,
+            0,
+          ) +
+          (result.budgetRowsParityOk ? 0 : 1) +
+          (result.snapshotLinkageParityOk ? 0 : 1),
+        sampledIds: [
+          ...new Set([...result.sampledDexieIds, ...result.sampledHttpIds]),
+        ].slice(0, 12),
+        codes: uniqueCodes(
+          result.checks.map((check) => ({
+            code: check.code,
+          })),
+        ),
+      });
+    } catch (error) {
+      updateSummary({
+        key,
+        title: "Budget Read Parity",
+        status: "fail",
+        errorCode: safeErrorCode(error),
+      });
+    } finally {
+      setRunningKey(null);
+    }
+  };
+
   const isRunning = runningKey !== null;
 
   return (
@@ -2331,6 +2644,22 @@ const LocalApiDiagnostics: React.FC = () => {
                       Run
                     </IonButton>
                   </IonItem>
+                  <IonItem>
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={playCircleOutline}
+                      slot="start"
+                    />
+                    <IonLabel>Budget read parity diagnostic</IonLabel>
+                    <IonButton
+                      slot="end"
+                      size="small"
+                      onClick={() => void runBudgetReadParityDiagnostic()}
+                      disabled={isRunning}
+                    >
+                      Run
+                    </IonButton>
+                  </IonItem>
                 </IonList>
                 <IonText color="medium">
                   <p style={{ fontSize: "0.85rem" }}>
@@ -2354,7 +2683,11 @@ const LocalApiDiagnostics: React.FC = () => {
                     counts, transaction-cost presence/sign counts, transfer
                     linkage counts, and budget-snapshot link counts only. The
                     Reports parity diagnostic compares monthly, quarterly, and
-                    yearly aggregate totals and period keys only.
+                    yearly aggregate totals and period keys only. The Budget
+                    read parity diagnostic compares budget counts, sampled IDs,
+                    display order, safe field mismatch counts, distributions,
+                    and snapshot budget-id linkage counts only; it does not call
+                    snapshot lifecycle helpers.
                   </p>
                 </IonText>
               </IonCardContent>
@@ -2400,6 +2733,10 @@ const LocalApiDiagnostics: React.FC = () => {
 
             {reportsParitySummary && (
               <ReportsParityResultCard summary={reportsParitySummary} />
+            )}
+
+            {budgetReadParitySummary && (
+              <BudgetReadParityResultCard summary={budgetReadParitySummary} />
             )}
 
             <IonCard>
