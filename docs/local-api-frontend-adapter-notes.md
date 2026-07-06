@@ -643,6 +643,37 @@ Before trusting HTTP results, use a fresh backup, matching SQLite import,
 restarted API server, passing Budget read parity diagnostic, `verify:sqlite`,
 `smoke:api`, and `npm run check:local-api-safety`.
 
+## Budget History Read Experiment
+
+`VITE_PERSONAL_FINANCE_BUDGET_HISTORY_READ_EXPERIMENT=true` enables a narrow
+real-screen selected-read experiment for Budget History. The flag is off by
+default. Restart Vite after changing it.
+
+When the flag is off, Budget History uses the existing Dexie read and
+lifecycle path. When the flag is on and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, the page remains on the
+existing Dexie path. When the flag is on and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`, Budget History inputs
+load through `selectedReadRepositories` with bounded paginated reads for budget
+snapshots, transactions, budgets, and lookup tables. Current caps are 5,000
+budget snapshots, 5,000 transactions, and 500 budgets. If selected-read inputs
+are capped, the page shows a warning because capped inputs are not
+full-confidence Budget History results.
+
+The `http-readonly` experiment is local-dev and read-only. It bypasses
+`migrateBudgetSnapshots` and snapshot lifecycle helpers, and disables snapshot
+edit/delete, budget activate/deactivate/delete, completion, and transaction
+linking actions. It does not authorize historical snapshot mutation, snapshot
+generation, pruning, dedupe, repair, coverage, creation, update behavior,
+transaction linking migration, or any change to Dexie as the authoritative
+store. Roll back by turning
+`VITE_PERSONAL_FINANCE_BUDGET_HISTORY_READ_EXPERIMENT` off or setting
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, then restarting Vite.
+
+Before trusting HTTP results, use a fresh backup, matching SQLite import,
+restarted API server, passing Budget History read parity diagnostic,
+`verify:sqlite`, `smoke:api`, and `npm run check:local-api-safety`.
+
 ## Manual Parity Diagnostic
 
 `src/repositories/http/localApiParityDiagnostics.ts` contains a manual

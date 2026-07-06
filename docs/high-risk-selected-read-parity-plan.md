@@ -7,10 +7,11 @@ budget snapshot lifecycle changes.
 
 The current management-read baseline is intentionally narrow. Recipients,
 Buckets/Categories, Accounts, and SMS Import Templates have off-by-default,
-flag-gated read experiments and diagnostics. Transactions, Reports, and Budget
-also have separate off-by-default, high-risk read experiments after passing
-screen-specific parity diagnostics. These experiments do not make HTTP
-authoritative and do not approve write or lifecycle migration.
+flag-gated read experiments and diagnostics. Transactions, Reports, Budget,
+and Budget History also have separate off-by-default, high-risk read
+experiments after passing screen-specific parity diagnostics. These
+experiments do not make HTTP authoritative and do not approve write or
+lifecycle migration.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
 remains read-only. No write methods or write endpoints exist.
@@ -345,6 +346,26 @@ enough for a real screen switch.
 
 The experiment must be behind a Budget History-specific flag. Rollback must
 restore the current Dexie path and leave all historical snapshots unchanged.
+
+### Current Experiment
+
+`VITE_PERSONAL_FINANCE_BUDGET_HISTORY_READ_EXPERIMENT=true` enables a narrow
+Budget History read experiment. When the flag is off, Budget History uses the
+existing Dexie read and lifecycle path. When the flag is on with backend
+`dexie`, Budget History still uses the existing Dexie path. In
+`http-readonly` mode, Budget History inputs are loaded through the
+selected-read facade with bounded paginated reads for budget snapshots,
+transactions, budgets, categories, buckets, recipients, and accounts.
+
+This experiment remains local-dev, read-only, and capped. It bypasses
+`migrateBudgetSnapshots` and snapshot lifecycle helpers, and disables snapshot
+edit/delete, budget activate/deactivate/delete, completion, and transaction
+linking actions. Truncated selected-read inputs show an on-page warning and
+must not be treated as full-confidence Budget History results. Passing the
+Budget History read parity diagnostic does not authorize historical snapshot
+mutation, transaction linking migration, snapshot generation, pruning, dedupe,
+repair, coverage, creation, update behavior, or any change to Dexie as the
+authoritative store.
 
 ## Not Yet Allowed
 
