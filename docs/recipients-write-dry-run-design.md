@@ -5,6 +5,9 @@ phase. It is not implementation. It does not add endpoints, mutation handlers,
 repository write adapters, UI wiring, Dexie writes, SQLite writes, dual-write,
 or background sync.
 
+Design review against current Dexie behavior:
+[recipients-write-dry-run-design-review.md](recipients-write-dry-run-design-review.md).
+
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
 remains read-only until a later approved implementation slice. No write
 endpoint should be added from this document alone.
