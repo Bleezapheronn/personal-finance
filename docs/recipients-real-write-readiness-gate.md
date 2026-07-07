@@ -154,3 +154,7 @@ Passing dry-run smoke tests, passing `verify:sqlite`, and having this readiness
 gate documented are not real-write approval. They are prerequisites for a later
 operation-specific implementation plan. A real write endpoint may be added only
 after that separate plan is approved.
+
+Operation-specific planning for the first candidate active-state write is in
+[recipients-active-state-real-write-plan.md](recipients-active-state-real-write-plan.md).
+That document is still planning-only and does not approve implementation.

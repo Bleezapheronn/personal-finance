@@ -79,6 +79,10 @@ The Recipients real-write readiness gate is
 It defines required decisions and hard gates before any real Recipients write
 endpoint can be implemented.
 
+The first operation-specific candidate plan is
+[recipients-active-state-real-write-plan.md](recipients-active-state-real-write-plan.md),
+covering only future activate/deactivate writes. It remains documentation-only.
+
 ### Transaction Writes
 
 Covered actions:
