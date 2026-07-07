@@ -1,13 +1,14 @@
 # Recipients Dry-Run Endpoint Implementation Plan
 
-This is a documentation-only implementation plan for the first future
-Recipients dry-run endpoint slice. It does not implement routes, mutation
-handlers, write adapters, server-side writes, client write wiring, dual-write,
-Dexie changes, SQLite writes, or synchronization.
+This started as a documentation-only implementation plan for the first
+Recipients dry-run endpoint slice. The create-recipient dry-run endpoint has
+now been implemented. This plan still does not authorize mutation handlers,
+write adapters, server-side writes, client write wiring, dual-write, Dexie
+changes, SQLite writes, or synchronization.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
-remains read-only until a later approved implementation slice. These endpoints
-are validation-only dry-runs and must not mutate state.
+remains read-only except for validation-only dry-run endpoints that must not
+mutate state.
 
 Related documents:
 
@@ -17,12 +18,12 @@ Related documents:
 
 ## Scope
 
-The first future endpoint slice is limited to:
+The first endpoint slice is limited to:
 
-- create recipient dry-run
-- update recipient dry-run
-- activate recipient dry-run
-- deactivate recipient dry-run
+- create recipient dry-run: implemented
+- update recipient dry-run: future work
+- activate recipient dry-run: future work
+- deactivate recipient dry-run: future work
 
 Explicitly deferred:
 
@@ -35,14 +36,15 @@ Explicitly deferred:
 
 ## Route Contracts
 
-All routes are future contracts only.
+Only the create route exists today. The other route contracts remain future
+work.
 
 | Action | Route |
 | --- | --- |
-| Create | `POST /prototype/repositories/recipients/dry-run/create` |
-| Update | `POST /prototype/repositories/recipients/dry-run/update` |
-| Activate | `POST /prototype/repositories/recipients/dry-run/activate` |
-| Deactivate | `POST /prototype/repositories/recipients/dry-run/deactivate` |
+| Create | `POST /prototype/repositories/recipients/dry-run/create` implemented |
+| Update | `POST /prototype/repositories/recipients/dry-run/update` future |
+| Activate | `POST /prototype/repositories/recipients/dry-run/activate` future |
+| Deactivate | `POST /prototype/repositories/recipients/dry-run/deactivate` future |
 
 All four routes must be protected by the existing token middleware and origin
 guard. Approved local browser preflight may succeed without a token, but actual
@@ -432,12 +434,14 @@ to validate current recipient state. It must not claim SQLite is authoritative.
 
 ## Later Implementation Sequence
 
-When endpoint implementation is explicitly approved, keep the code slice
-isolated:
+The create dry-run endpoint is implemented with isolated server-side validation
+helpers and smoke-test coverage. When the remaining endpoint implementation is
+explicitly approved, keep each code slice isolated:
 
-1. Add shared recipient dry-run validation helpers under `server/src/lib`.
+1. Add or extend shared recipient dry-run validation helpers under
+   `server/src/lib`.
 2. Add narrow route request/response TypeScript types.
-3. Add the four dry-run handlers in the existing Fastify server.
+3. Add only the approved dry-run handler in the existing Fastify server.
 4. Keep handlers separate from existing read-only lookup route helpers.
 5. Open SQLite read-only through the existing configured path helper.
 6. Return redacted summaries only.
@@ -510,4 +514,3 @@ Do not implement the endpoints until these are accepted:
 - No transaction recipient-reference mutation is included.
 - The smoke-test plan includes no-mutation checks before and after dry-run
   calls.
-

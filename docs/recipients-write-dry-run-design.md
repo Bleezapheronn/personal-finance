@@ -8,12 +8,13 @@ or background sync.
 Design review against current Dexie behavior:
 [recipients-write-dry-run-design-review.md](recipients-write-dry-run-design-review.md).
 
-First-slice endpoint implementation plan:
+First-slice endpoint implementation plan and create dry-run status:
 [recipients-dry-run-endpoint-implementation-plan.md](recipients-dry-run-endpoint-implementation-plan.md).
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
-remains read-only until a later approved implementation slice. No write
-endpoint should be added from this document alone.
+remains read-only except for the implemented create-recipient dry-run endpoint,
+which must not mutate state. No real write endpoint should be added from this
+document alone.
 
 ## Current Recipients Behavior
 
@@ -69,16 +70,16 @@ A Recipients dry-run must not:
 
 ## First Implementation Slice
 
-The safest first future implementation candidate is limited to validation-only
+The safest first implementation candidate is limited to validation-only
 dry-runs for:
 
-- create recipient
+- create recipient: implemented
 - update recipient
 - activate recipient
 - deactivate recipient
 
-These endpoints remain future work only. This document does not implement them
-or authorize implementation.
+Only create dry-run exists today. Update, activate, and deactivate dry-runs
+remain future work and require explicit approval before implementation.
 
 Candidate routes for this first slice:
 

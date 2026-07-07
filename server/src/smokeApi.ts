@@ -32,6 +32,16 @@ interface ResponseJson {
   service?: unknown;
   mode?: unknown;
   readonly?: unknown;
+  action?: unknown;
+  dryRun?: unknown;
+  wouldMutate?: unknown;
+  validationErrors?: unknown;
+  warnings?: unknown;
+  normalizedFieldPresence?: unknown;
+  duplicateSummary?: unknown;
+  timestampBehavior?: unknown;
+  affectedSummary?: unknown;
+  safety?: unknown;
   tables?: unknown;
   table?: unknown;
   resource?: unknown;
@@ -141,8 +151,10 @@ const requestJson = async (
   baseUrl: string,
   pathname: string,
   options: {
+    method?: string;
     token?: string;
     origin?: string;
+    body?: unknown;
   } = {},
 ): Promise<{ status: number; json: ResponseJson }> => {
   const headers: Record<string, string> = {};
@@ -152,10 +164,17 @@ const requestJson = async (
   if (options.origin) {
     headers.Origin = options.origin;
   }
+  if (options.body !== undefined) {
+    headers["content-type"] = "application/json";
+  }
 
   let response: Response;
   try {
-    response = await fetch(buildUrl(baseUrl, pathname), { headers });
+    response = await fetch(buildUrl(baseUrl, pathname), {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
   } catch {
     throw new Error("server_unavailable");
   }
@@ -241,12 +260,65 @@ const optionalIdFromListResponse = (json: ResponseJson): number | undefined => {
   return id as number;
 };
 
+const listResponseFingerprint = (json: ResponseJson): string => {
+  if (!Array.isArray(json.rows)) {
+    throw new Error("list_missing_rows");
+  }
+
+  return JSON.stringify(json.rows);
+};
+
+const countFromListResponse = (json: ResponseJson): number => {
+  expect(typeof json.count === "number", "list_missing_count");
+  return json.count as number;
+};
+
+const firstRowValue = (json: ResponseJson, fieldName: string): string | undefined => {
+  const rows = json.rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return undefined;
+  }
+
+  const row = rows[0] as Record<string, unknown>;
+  const value = row[fieldName];
+  return typeof value === "string" && value.trim() ? value : undefined;
+};
+
+const expectDryRunSafety = (json: ResponseJson): void => {
+  expect(json.action === "create", "unexpected_dry_run_action");
+  expect(json.dryRun === true, "dry_run_flag_missing");
+  expect(json.wouldMutate === false, "dry_run_would_mutate");
+  expect(typeof json.normalizedFieldPresence === "object", "normalized_summary_missing");
+  expect(typeof json.duplicateSummary === "object", "duplicate_summary_missing");
+  expect(typeof json.timestampBehavior === "object", "timestamp_behavior_missing");
+  expect(typeof json.affectedSummary === "object", "affected_summary_missing");
+  expect(typeof json.safety === "object", "safety_missing");
+  const safety = json.safety as Record<string, unknown>;
+  expect(safety.sqliteMutated === false, "sqlite_mutation_reported");
+  expect(safety.dexieMutated === false, "dexie_mutation_reported");
+  expect(safety.filesWritten === false, "file_write_reported");
+  expect(safety.transactionReferencesMutated === false, "transaction_mutation_reported");
+  expect(safety.rawRowsIncluded === false, "raw_rows_reported");
+};
+
+const expectNoSensitiveEcho = (json: ResponseJson, values: Array<string | undefined>): void => {
+  const serialized = JSON.stringify(json);
+  for (const value of values) {
+    if (value && value.trim()) {
+      expect(!serialized.includes(value), "dry_run_echoed_sensitive_value");
+    }
+  }
+};
+
 const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
   let sampledTransactionId: number | undefined;
   let sampledBudgetId: number | undefined;
   let sampledBudgetSnapshotId: number | undefined;
+  let recipientCountBeforeDryRun: number | undefined;
+  let recipientFingerprintBeforeDryRun: string | undefined;
+  let sampledRecipientName: string | undefined;
   const sampledLookupIds = new Map<string, number>();
   const lookupResources = [
     "accounts",
@@ -318,6 +390,30 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
             ?.toLowerCase()
             .includes(TOKEN_HEADER_NAME) === true,
           "unexpected_preflight_allow_headers",
+        );
+      },
+    },
+    {
+      name: "approved dry-run browser preflight succeeds without token",
+      run: async () => {
+        const { status, headers } = await requestRaw(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/create",
+          {
+            method: "OPTIONS",
+            origin: allowedPreflightOrigin,
+            accessControlRequestMethod: "POST",
+            accessControlRequestHeaders: `${TOKEN_HEADER_NAME}, content-type`,
+          },
+        );
+        expectStatus(status, 204);
+        expect(
+          headers.get("access-control-allow-origin") === allowedPreflightOrigin,
+          "unexpected_dry_run_preflight_allow_origin",
+        );
+        expect(
+          headers.get("access-control-allow-methods")?.includes("POST") === true,
+          "unexpected_dry_run_preflight_allow_methods",
         );
       },
     },
@@ -748,6 +844,236 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
         );
         expectStatus(status, 400);
         expect(json.code === "accountId_invalid", "unexpected_invalid_sms_template_lookup_query_response");
+      },
+    },
+    {
+      name: "recipient create dry-run fails without token",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/create",
+          {
+            method: "POST",
+            body: { name: "Smoke Dry Run No Token" },
+          },
+        );
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_dry_run_unauthorized_response");
+      },
+    },
+    {
+      name: "recipient create dry-run bad origin is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/create",
+          {
+            method: "POST",
+            token,
+            origin: "http://unexpected-origin.invalid",
+            body: { name: "Smoke Dry Run Bad Origin" },
+          },
+        );
+        expectStatus(status, 403);
+        expect(json.error === "forbidden_origin", "unexpected_dry_run_origin_response");
+      },
+    },
+    {
+      name: "recipient create dry-run captures baseline without printing rows",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients?limit=20",
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        recipientCountBeforeDryRun = countFromListResponse(json);
+        recipientFingerprintBeforeDryRun = listResponseFingerprint(json);
+        sampledRecipientName = firstRowValue(json, "name");
+      },
+    },
+    {
+      name: "recipient create dry-run missing name fails safely",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/create",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { name: "   " },
+          },
+        );
+        expectStatus(status, 200);
+        expect(json.ok === false, "missing_name_dry_run_should_not_pass");
+        expect(Array.isArray(json.validationErrors), "missing_name_validation_errors_missing");
+        expect(
+          (json.validationErrors as unknown[]).includes("name_required"),
+          "missing_name_code_missing",
+        );
+        expectDryRunSafety(json);
+      },
+    },
+    {
+      name: "recipient create dry-run valid payload returns redacted summary",
+      run: async () => {
+        const sensitiveValues = [
+          "Smoke Dry Run Unique Recipient",
+          "Smoke Dry Run Alias",
+          "smoke-dry-run@example.invalid",
+          "5550000001",
+          "900001",
+          "800001",
+          "700001",
+          "Smoke Dry Run Description",
+        ];
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/create",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              name: sensitiveValues[0],
+              aliases: sensitiveValues[1],
+              email: sensitiveValues[2],
+              phone: sensitiveValues[3],
+              tillNumber: sensitiveValues[4],
+              paybill: sensitiveValues[5],
+              accountNumber: sensitiveValues[6],
+              description: sensitiveValues[7],
+            },
+          },
+        );
+        expectStatus(status, 200);
+        expectDryRunSafety(json);
+        expectNoSensitiveEcho(json, sensitiveValues);
+        expect(json.dryRun === true && json.wouldMutate === false, "dry_run_flags_invalid");
+      },
+    },
+    {
+      name: "recipient create dry-run reports duplicate candidates as counts only",
+      run: async () => {
+        if (!sampledRecipientName) {
+          return;
+        }
+
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/create",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { name: sampledRecipientName },
+          },
+        );
+        expectStatus(status, 200);
+        expect(json.ok === false, "duplicate_dry_run_should_not_pass");
+        expect(
+          Array.isArray(json.validationErrors) &&
+            (json.validationErrors as unknown[]).includes("duplicate_candidate_detected"),
+          "duplicate_candidate_code_missing",
+        );
+        expectDryRunSafety(json);
+        expectNoSensitiveEcho(json, [sampledRecipientName]);
+        const duplicateSummary = json.duplicateSummary as Record<string, unknown>;
+        expect(
+          typeof duplicateSummary.duplicateNameCandidates === "number" &&
+            duplicateSummary.duplicateNameCandidates > 0,
+          "duplicate_name_count_missing",
+        );
+      },
+    },
+    {
+      name: "recipient create dry-run unexpected fields are rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/create",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { name: "Smoke Dry Run Unexpected", id: 123 },
+          },
+        );
+        expectStatus(status, 400);
+        expect(json.code === "unexpected_payload_field", "unexpected_field_code_missing");
+        expect(json.dryRun === true && json.wouldMutate === false, "unexpected_field_dry_run_flags_invalid");
+      },
+    },
+    {
+      name: "recipient dry-run unsupported actions are not exposed",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/create",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { name: "Smoke Dry Run Merge", merge: true },
+          },
+        );
+        expectStatus(status, 400);
+        expect(json.code === "unsupported_first_slice_action", "unsupported_action_code_missing");
+      },
+    },
+    {
+      name: "recipient create dry-run does not mutate recipients",
+      run: async () => {
+        expect(recipientCountBeforeDryRun !== undefined, "recipient_baseline_count_missing");
+        expect(recipientFingerprintBeforeDryRun !== undefined, "recipient_baseline_fingerprint_missing");
+
+        for (let index = 0; index < 2; index += 1) {
+          const { status } = await requestJson(
+            baseUrl,
+            "/prototype/repositories/recipients/dry-run/create",
+            {
+              ...authedOptions,
+              method: "POST",
+              body: { name: `Smoke Dry Run Repeat ${index}` },
+            },
+          );
+          expectStatus(status, 200);
+        }
+
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients?limit=20",
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(countFromListResponse(json) === recipientCountBeforeDryRun, "recipient_count_changed");
+        expect(listResponseFingerprint(json) === recipientFingerprintBeforeDryRun, "recipient_sample_changed");
+      },
+    },
+    {
+      name: "recipient update dry-run is not implemented",
+      run: async () => {
+        const { status } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/update",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { id: 1, name: "Smoke Dry Run Update" },
+          },
+        );
+        expectStatus(status, 404);
+      },
+    },
+    {
+      name: "recipient delete dry-run is not implemented",
+      run: async () => {
+        const { status } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/delete",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { id: 1 },
+          },
+        );
+        expectStatus(status, 404);
       },
     },
     {

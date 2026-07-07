@@ -25,6 +25,10 @@ import {
   type LookupResource,
 } from "./lib/lookups.js";
 import {
+  createRecipientDryRun,
+  RecipientDryRunRequestError,
+} from "./lib/recipientDryRun.js";
+import {
   getBudgetById,
   getBudgetSnapshotById,
   isBudgetFrequency,
@@ -55,7 +59,7 @@ const DEFAULT_LOOKUP_READ_LIMIT = 100;
 const MAX_LOOKUP_READ_LIMIT = 500;
 const DEFAULT_BUDGET_READ_LIMIT = 100;
 const MAX_BUDGET_READ_LIMIT = 500;
-const CORS_ALLOW_METHODS = "GET, OPTIONS";
+const CORS_ALLOW_METHODS = "GET, POST, OPTIONS";
 const CORS_ALLOW_HEADERS = `${TOKEN_HEADER_NAME}, content-type`;
 
 const parsePaginationValue = (
@@ -935,6 +939,60 @@ server.get<{ Params: { id: string } }>(
       return reply.code(500).send({
         ok: false,
         code: "budget_snapshot_read_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/recipients/dry-run/create",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "recipient_create_dry_run_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      return createRecipientDryRun(opened.db, request.body);
+    } catch (error) {
+      if (error instanceof RecipientDryRunRequestError) {
+        return reply.code(error.statusCode).send({
+          ok: false,
+          mode: SERVICE_MODE,
+          action: "create",
+          dryRun: true,
+          wouldMutate: false,
+          code: error.code,
+          validationErrors: [error.code],
+          warnings: [],
+          safety: {
+            sqliteMutated: false,
+            dexieMutated: false,
+            filesWritten: false,
+            transactionReferencesMutated: false,
+            rawRowsIncluded: false,
+          },
+        });
+      }
+
+      return reply.code(500).send({
+        ok: false,
+        code: "recipient_create_dry_run_failed",
       });
     } finally {
       opened.db.close();
