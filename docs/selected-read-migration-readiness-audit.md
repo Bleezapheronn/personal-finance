@@ -14,6 +14,11 @@ High-risk workflow areas have a separate planning document:
 Use that plan before changing or expanding any Transactions, Reports, Budget,
 or Budget History `http-readonly` experiment.
 
+Future write or mutation work is a separate phase covered by
+[write-mutation-architecture-plan.md](write-mutation-architecture-plan.md).
+Read parity and read experiments do not authorize write endpoints, repository
+write adapters, dual-write, background sync, or SQLite authority migration.
+
 ## Implemented
 
 - Local Fastify prototype server with token and origin guards.

@@ -6,6 +6,8 @@ authoritative data store.
 
 Migration readiness gates are summarized in
 [selected-read-migration-readiness-audit.md](selected-read-migration-readiness-audit.md).
+Future write/mutation architecture is intentionally separate and documented in
+[write-mutation-architecture-plan.md](write-mutation-architecture-plan.md).
 
 The HTTP adapters under `src/repositories/http/` are not imported by existing
 pages or by `src/repositories/index.ts`. They are intentionally kept behind
