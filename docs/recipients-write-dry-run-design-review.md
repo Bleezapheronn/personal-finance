@@ -156,3 +156,7 @@ forbids writes. It should not move to endpoint implementation yet. The next
 useful step is to revise the design with the duplicate/timestamp/merge
 corrections above, then add lightweight validation parity tests or diagnostics
 before any server route is written.
+
+Status note: the design has since been revised to narrow the first future
+implementation slice to create/update/activate/deactivate dry-runs only.
+Delete and merge dry-runs remain deferred.

@@ -51,7 +51,6 @@ A Recipients dry-run may:
 - compute the would-be normalized recipient row or field-presence summary
 - compute affected IDs and counts
 - compute duplicate candidate counts
-- compute transaction usage counts for delete and merge
 - return warnings and validation errors
 
 A Recipients dry-run must not:
@@ -65,7 +64,31 @@ A Recipients dry-run must not:
 - enqueue background work
 - assume SQLite is authoritative
 
-## Future Dry-Run Scope
+## First Implementation Slice
+
+The safest first future implementation candidate is limited to validation-only
+dry-runs for:
+
+- create recipient
+- update recipient
+- activate recipient
+- deactivate recipient
+
+These endpoints remain future work only. This document does not implement them
+or authorize implementation.
+
+Candidate routes for this first slice:
+
+- `POST /prototype/repositories/recipients/dry-run/create`
+- `POST /prototype/repositories/recipients/dry-run/update`
+- `POST /prototype/repositories/recipients/dry-run/activate`
+- `POST /prototype/repositories/recipients/dry-run/deactivate`
+
+Delete and merge are intentionally excluded from the first implementation
+slice. They require additional reference-safety design before even dry-run
+endpoint work.
+
+## Future Dry-Run Scope For First Slice
 
 ### Create Recipient Dry-Run
 
@@ -94,36 +117,41 @@ active state, and whether the action would be a no-op.
 Deactivate dry-run should report transaction usage count as informational, since
 deactivation is the current safe fallback for used recipients.
 
+## Deferred Operations
+
 ### Delete Recipient Dry-Run
 
-Validate that the recipient exists and compute transaction usage count.
+Delete dry-run is deferred from the first implementation slice.
 
-Expected outcomes:
+Reason:
 
-- unused recipient: deletion would be allowed by the current Dexie behavior
-- used active recipient: deletion should be blocked and deactivation suggested
-- used inactive recipient: deletion should be blocked
+- delete safety depends on transaction-reference usage
+- current delete safety is driven by transaction counts loaded by the page
+- server-side dry-run must compute reference usage at request time before it can
+  safely advise delete/deactivate behavior
+- reference counting behavior should be fully documented before delete dry-run
+  endpoints exist
+- deactivate is safer than delete for the first dry-run slice
 
 Delete dry-run must not delete the recipient and must not expose transaction
 rows.
 
 ### Merge Recipients Dry-Run
 
-Validate primary and secondary recipient IDs. Confirm both exist and are
-different. Compute:
+Merge dry-run is deferred from the first implementation slice.
 
-- primary recipient ID
-- secondary recipient ID
-- transaction count currently referencing the secondary recipient
-- whether the primary/secondary choice follows the current "more transactions
-  wins" UI convention
-- field-presence summary after combining values
-- alias collision or alias-deduplication summary
+Reason:
 
-Merge is higher risk than simple lookup writes because the real merge path
-moves transaction `recipientId` references and deletes the secondary recipient.
-The dry-run must not update transaction recipient references, update recipient
-rows, delete recipients, or imply transaction-reference mutation is approved.
+- current merge mutates transaction `recipientId` references
+- current merge deletes the secondary recipient
+- merge needs a separate transaction-reference safety design
+- merge is not appropriate for the first write dry-run endpoint slice
+
+A future merge dry-run may validate primary and secondary IDs, confirm both
+exist and are different, compute affected transaction count, and summarize
+field-presence effects after combining values. It still must not update
+transaction recipient references, update recipient rows, delete recipients, or
+imply transaction-reference mutation is approved.
 
 ## Validation Rules To Preserve
 
@@ -136,6 +164,12 @@ Required validation:
 - `accountNumber` requires a non-empty `paybill`.
 - Create duplicate checks compare name case-insensitively, phone, paybill plus
   account number, and current till/phone behavior as implemented.
+- Add/edit duplicate behavior differs from merge duplicate-pair detection.
+- Current till-number duplicate behavior is ambiguous because the current code
+  appears to check phone twice rather than `tillNumber`.
+- First dry-run implementation must mirror current create/update behavior
+  exactly or return an uncertainty warning code. It must not fix duplicate
+  semantics silently.
 - Update duplicate checks exclude the current recipient ID.
 - Alias input is semicolon-separated, lowercased for comparison, trimmed, and
   ignores empty aliases.
@@ -144,12 +178,13 @@ Required validation:
 - `isActive` defaults to `true` on create.
 - `createdAt` is assigned on create.
 - `updatedAt` is refreshed on create and update.
-- Update, activate, deactivate, delete, and merge require existing IDs.
+- Activate/deactivate currently update only `isActive`; they do not explicitly
+  update `updatedAt`.
+- Dry-run must report activate/deactivate timestamp behavior as current
+  behavior, not silently normalize it.
+- Update, activate, and deactivate require existing IDs.
 - Create must not accept a client-provided existing ID unless a later ID
   strategy explicitly allows it.
-- Delete safety depends on transaction usage count.
-- Merge safety depends on transaction usage count for the secondary recipient
-  and must report transaction-reference impact.
 
 Shape validation:
 
@@ -162,16 +197,15 @@ Shape validation:
 - Timestamps should be represented as would-change metadata, not as committed
   mutation timestamps.
 
-## Candidate Endpoint Shapes
+## Candidate Endpoint Shapes For First Slice
 
 These routes are proposed shapes only. Do not implement them without explicit
 approval.
 
 - `POST /prototype/repositories/recipients/dry-run/create`
 - `POST /prototype/repositories/recipients/dry-run/update`
+- `POST /prototype/repositories/recipients/dry-run/activate`
 - `POST /prototype/repositories/recipients/dry-run/deactivate`
-- `POST /prototype/repositories/recipients/dry-run/delete`
-- `POST /prototype/repositories/recipients/dry-run/merge`
 
 Endpoint requirements if a later slice approves them:
 
@@ -201,14 +235,11 @@ Create/update request fields:
 - `description`
 - target `id` for update only
 
-Activate/deactivate/delete request fields:
+Activate/deactivate request fields:
 
 - target `id`
 
-Merge request fields:
-
-- `primaryId`
-- `secondaryId`
+Delete and merge request shapes are intentionally deferred.
 
 Do not accept raw backup rows, raw Dexie rows, arbitrary SQL, full transaction
 objects, or client-provided audit logs.
@@ -224,9 +255,8 @@ Responses should be summary-only and safe:
   "dryRun": true,
   "action": "create",
   "targetIds": {
-    "recipientId": 123,
-    "primaryId": 123,
-    "secondaryId": 456
+    "hasRecipientId": false,
+    "recipientId": null
   },
   "validationErrors": [],
   "warnings": [],
@@ -241,11 +271,14 @@ Responses should be summary-only and safe:
     "hasDescription": false,
     "isActive": true,
     "createdAtWouldChange": true,
-    "updatedAtWouldChange": true
+    "updatedAtWouldChange": true,
+    "updatedAtPreservedByCurrentToggleBehavior": false
   },
   "affectedCounts": {
-    "transactions": 0,
-    "duplicateCandidates": 0,
+    "duplicateNameCandidates": 0,
+    "duplicatePhoneCandidates": 0,
+    "duplicatePaybillAccountCandidates": 0,
+    "duplicateTillCandidates": null,
     "aliasCollisions": 0
   },
   "resultCodes": []
@@ -255,14 +288,14 @@ Responses should be summary-only and safe:
 Allowed detail:
 
 - action name
-- target IDs
+- target ID presence and target ID when applicable
 - validation error codes
 - warning codes
 - normalized field presence booleans
 - `isActive`
-- affected transaction count for delete/merge
-- duplicate candidate count
+- duplicate candidate counts by documented category
 - alias collision count
+- timestamp behavior summary
 
 Forbidden detail by default:
 
@@ -316,13 +349,16 @@ Client rules:
 - Actual write endpoint design is approved separately.
 - No transaction, budget, budget snapshot, report, SMS parsing, import, export,
   or restore writes are included.
-- Merge transaction-reference mutation has a separate explicit approval if it
-  is included.
+- Delete has a separate transaction-reference safety design if it is included.
+- Merge transaction-reference mutation has a separate explicit approval and
+  transaction-reference mutation design if it is included.
 
 ## Not Allowed Yet
 
 - No actual recipient write endpoint.
 - No update/delete/merge mutation through HTTP.
+- No delete dry-run endpoint in the first implementation slice.
+- No merge dry-run endpoint in the first implementation slice.
 - No Dexie-to-SQLite sync.
 - No dual-write.
 - No background reconciliation.
@@ -338,9 +374,14 @@ Client rules:
   or both?
 - If Dexie remains authoritative, should the dry-run be advisory rather than
   blocking?
-- Should duplicate candidate counts follow the add/edit modal duplicate checks,
-  the merge duplicate-pair algorithm, or both as separate result categories?
+- Should the first slice report only add/edit duplicate categories, or also a
+  separate merge-style duplicate-pair count for information?
+- Should the ambiguous till-number duplicate behavior be preserved exactly as
+  current code, reported as unknown, or corrected in a separate UI behavior
+  change before endpoint work?
 - How should dry-run timestamps be represented to avoid false precision?
+- Should activate/deactivate preserve current no-`updatedAt` behavior or should
+  a future approved behavior change update timestamps consistently?
 - What audit record is needed for real writes without leaking contact details?
 - How should merge dry-runs summarize would-be field merging without exposing
   contact values?
