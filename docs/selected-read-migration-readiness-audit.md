@@ -18,6 +18,9 @@ Future write or mutation work is a separate phase covered by
 [write-mutation-architecture-plan.md](write-mutation-architecture-plan.md).
 Read parity and read experiments do not authorize write endpoints, repository
 write adapters, dual-write, background sync, or SQLite authority migration.
+The first domain-specific dry-run design is
+[recipients-write-dry-run-design.md](recipients-write-dry-run-design.md), which
+is documentation only and does not authorize implementation.
 
 ## Implemented
 

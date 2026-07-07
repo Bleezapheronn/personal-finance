@@ -61,6 +61,11 @@ display order and category-to-bucket references. Accounts need special
 attention for image blobs, credit-account fields, currency handling, and any
 transaction-derived usage checks.
 
+The first domain-specific dry-run design is
+[recipients-write-dry-run-design.md](recipients-write-dry-run-design.md). It is
+documentation only and does not authorize Recipients write endpoints or
+transaction recipient-reference mutation.
+
 ### Transaction Writes
 
 Covered actions:
