@@ -8,6 +8,9 @@ or background sync.
 Design review against current Dexie behavior:
 [recipients-write-dry-run-design-review.md](recipients-write-dry-run-design-review.md).
 
+First-slice endpoint implementation plan:
+[recipients-dry-run-endpoint-implementation-plan.md](recipients-dry-run-endpoint-implementation-plan.md).
+
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
 remains read-only until a later approved implementation slice. No write
 endpoint should be added from this document alone.

@@ -66,6 +66,11 @@ The first domain-specific dry-run design is
 documentation only and does not authorize Recipients write endpoints or
 transaction recipient-reference mutation.
 
+The first-slice Recipients dry-run endpoint implementation plan is
+[recipients-dry-run-endpoint-implementation-plan.md](recipients-dry-run-endpoint-implementation-plan.md).
+It is also documentation only; create/update/activate/deactivate dry-runs remain
+future work until explicitly approved.
+
 ### Transaction Writes
 
 Covered actions:
