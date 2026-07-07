@@ -374,3 +374,6 @@ deferred.
 The next safe step, if write exploration continues, is still documentation and
 design for a specific future slice. This review does not authorize any real
 mutation endpoint.
+
+The readiness gate before any future real Recipients write endpoint is
+[recipients-real-write-readiness-gate.md](recipients-real-write-readiness-gate.md).

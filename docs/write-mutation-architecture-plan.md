@@ -74,6 +74,11 @@ non-mutating endpoints. Delete, merge, real writes, write adapters, dual-write,
 and transaction recipient-reference mutation remain future work until
 explicitly approved.
 
+The Recipients real-write readiness gate is
+[recipients-real-write-readiness-gate.md](recipients-real-write-readiness-gate.md).
+It defines required decisions and hard gates before any real Recipients write
+endpoint can be implemented.
+
 ### Transaction Writes
 
 Covered actions:
