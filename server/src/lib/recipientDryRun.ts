@@ -11,6 +11,8 @@ const CREATE_FIELDS = new Set([
   "description",
 ]);
 
+const UPDATE_FIELDS = new Set([...CREATE_FIELDS, "id"]);
+
 const FORBIDDEN_ACTION_FIELDS = new Set([
   "delete",
   "deleteId",
@@ -21,6 +23,7 @@ const FORBIDDEN_ACTION_FIELDS = new Set([
 ]);
 
 interface RecipientDryRunInput {
+  id?: number;
   name?: string;
   aliases?: string;
   email?: string;
@@ -38,16 +41,17 @@ interface RecipientLookupRow {
   phone: string | null;
   paybill: string | null;
   accountNumber: string | null;
+  isActive: number;
 }
 
 export interface RecipientDryRunResponse {
   ok: boolean;
   mode: "prototype";
-  action: "create";
+  action: "create" | "update";
   dryRun: true;
   wouldMutate: false;
-  targetIdPresent: false;
-  targetId: null;
+  targetIdPresent: boolean;
+  targetId: number | null;
   validationErrors: string[];
   warnings: string[];
   normalizedFieldPresence: {
@@ -59,7 +63,7 @@ export interface RecipientDryRunResponse {
     hasPaybill: boolean;
     hasAccountNumber: boolean;
     hasDescription: boolean;
-    isActive: true;
+    isActive: boolean;
   };
   duplicateSummary: {
     duplicateNameCandidates: number;
@@ -69,9 +73,9 @@ export interface RecipientDryRunResponse {
     aliasCollisions: number;
   };
   timestampBehavior: {
-    createdAtWouldChange: true;
-    updatedAtWouldChange: true;
-    createdAtPreserved: false;
+    createdAtWouldChange: boolean;
+    updatedAtWouldChange: boolean;
+    createdAtPreserved: boolean;
     updatedAtPreservedByCurrentToggleBehavior: false;
   };
   affectedSummary: {
@@ -118,6 +122,21 @@ const normalizeOptionalText = (value: unknown, fieldName: keyof RecipientDryRunI
   return value.trim();
 };
 
+const normalizePositiveInteger = (
+  value: unknown,
+  fieldName: keyof RecipientDryRunInput,
+): number | undefined => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new RecipientDryRunRequestError(`${fieldName}_invalid`);
+  }
+
+  return value;
+};
+
 const normalizeAliases = (aliases: string): string[] =>
   aliases
     .split(";")
@@ -149,14 +168,67 @@ const countAliasCollisions = (proposedAliases: string[], rows: RecipientLookupRo
 const readRecipientLookupRows = (db: Database.Database): RecipientLookupRow[] =>
   db
     .prepare(
-      `SELECT id, name, aliases, phone, paybill, accountNumber
-       FROM recipients`,
+      `SELECT id, name, aliases, phone, paybill, accountNumber,
+        isActive FROM recipients`,
     )
     .all() as RecipientLookupRow[];
 
-export const validateCreateRecipientDryRunPayload = (
+const buildSafeRequestErrorResponse = (
+  action: "create" | "update",
+  code: string,
+): RecipientDryRunResponse => ({
+  ok: false,
+  mode: "prototype",
+  action,
+  dryRun: true,
+  wouldMutate: false,
+  targetIdPresent: false,
+  targetId: null,
+  validationErrors: [code],
+  warnings: [],
+  normalizedFieldPresence: {
+    hasName: false,
+    hasAliases: false,
+    hasEmail: false,
+    hasPhone: false,
+    hasTillNumber: false,
+    hasPaybill: false,
+      hasAccountNumber: false,
+      hasDescription: false,
+      isActive: true,
+  },
+  duplicateSummary: {
+    duplicateNameCandidates: 0,
+    duplicatePhoneCandidates: 0,
+    duplicatePaybillAccountCandidates: 0,
+    duplicateTillCandidates: null,
+    aliasCollisions: 0,
+  },
+  timestampBehavior: {
+    createdAtWouldChange: false,
+    updatedAtWouldChange: false,
+    createdAtPreserved: true,
+    updatedAtPreservedByCurrentToggleBehavior: false,
+  },
+  affectedSummary: {
+    recipientRowsWouldChange: 0,
+    transactionRowsWouldChange: 0,
+    transactionUsageCount: 0,
+  },
+  safety: {
+    sqliteMutated: false,
+    dexieMutated: false,
+    filesWritten: false,
+    transactionReferencesMutated: false,
+    rawRowsIncluded: false,
+  },
+  resultCodes: ["dry_run_has_validation_errors", "no_mutation_performed"],
+});
+
+const validatePayloadFields = (
   payload: unknown,
-): RecipientDryRunInput => {
+  allowedFields: Set<string>,
+): Record<string, unknown> => {
   if (!isPlainObject(payload)) {
     throw new RecipientDryRunRequestError("payload_must_be_object");
   }
@@ -166,21 +238,38 @@ export const validateCreateRecipientDryRunPayload = (
       throw new RecipientDryRunRequestError("unsupported_first_slice_action");
     }
 
-    if (!CREATE_FIELDS.has(field)) {
+    if (!allowedFields.has(field)) {
       throw new RecipientDryRunRequestError("unexpected_payload_field");
     }
   }
 
-  return payload as RecipientDryRunInput;
+  return payload;
 };
 
-export const createRecipientDryRun = (
+export const validateCreateRecipientDryRunPayload = (
+  payload: unknown,
+): RecipientDryRunInput => {
+  return validatePayloadFields(payload, CREATE_FIELDS) as RecipientDryRunInput;
+};
+
+export const validateUpdateRecipientDryRunPayload = (
+  payload: unknown,
+): RecipientDryRunInput => {
+  return validatePayloadFields(payload, UPDATE_FIELDS) as RecipientDryRunInput;
+};
+
+const buildRecipientDryRun = (
   db: Database.Database,
   payload: unknown,
+  action: "create" | "update",
 ): RecipientDryRunResponse => {
-  const input = validateCreateRecipientDryRunPayload(payload);
+  const input =
+    action === "create"
+      ? validateCreateRecipientDryRunPayload(payload)
+      : validateUpdateRecipientDryRunPayload(payload);
 
   const normalized = {
+    id: normalizePositiveInteger(input.id, "id"),
     name: normalizeOptionalText(input.name, "name"),
     aliases: normalizeOptionalText(input.aliases, "aliases"),
     email: normalizeOptionalText(input.email, "email"),
@@ -193,6 +282,17 @@ export const createRecipientDryRun = (
 
   const validationErrors = new Set<string>();
   const warnings = new Set<string>();
+
+  const rows = readRecipientLookupRows(db);
+  const target = action === "update" ? rows.find((row) => row.id === normalized.id) : undefined;
+
+  if (action === "update" && normalized.id === undefined) {
+    validationErrors.add("id_required");
+  }
+
+  if (action === "update" && normalized.id !== undefined && !target) {
+    validationErrors.add("recipient_not_found");
+  }
 
   if (!normalized.name) {
     validationErrors.add("name_required");
@@ -207,23 +307,26 @@ export const createRecipientDryRun = (
     warnings.add("duplicate_till_candidates_unknown");
   }
 
-  const rows = readRecipientLookupRows(db);
+  const candidateRows =
+    action === "update" && normalized.id !== undefined
+      ? rows.filter((row) => row.id !== normalized.id)
+      : rows;
   const normalizedNameLower = normalized.name.toLowerCase();
   const duplicateNameCandidates = normalized.name
-    ? rows.filter((row) => row.name.toLowerCase() === normalizedNameLower).length
+    ? candidateRows.filter((row) => row.name.toLowerCase() === normalizedNameLower).length
     : 0;
   const duplicatePhoneCandidates = normalized.phone
-    ? rows.filter((row) => row.phone?.trim() === normalized.phone).length
+    ? candidateRows.filter((row) => row.phone?.trim() === normalized.phone).length
     : 0;
   const duplicatePaybillAccountCandidates =
     normalized.paybill && normalized.accountNumber
-      ? rows.filter(
+      ? candidateRows.filter(
           (row) =>
             row.paybill?.trim() === normalized.paybill &&
             row.accountNumber?.trim() === normalized.accountNumber,
         ).length
       : 0;
-  const aliasCollisions = countAliasCollisions(normalizeAliases(normalized.aliases), rows);
+  const aliasCollisions = countAliasCollisions(normalizeAliases(normalized.aliases), candidateRows);
 
   if (
     duplicateNameCandidates > 0 ||
@@ -263,11 +366,11 @@ export const createRecipientDryRun = (
   return {
     ok: validationErrorList.length === 0,
     mode: "prototype",
-    action: "create",
+    action,
     dryRun: true,
     wouldMutate: false,
-    targetIdPresent: false,
-    targetId: null,
+    targetIdPresent: action === "update" && normalized.id !== undefined,
+    targetId: action === "update" ? normalized.id ?? null : null,
     validationErrors: validationErrorList,
     warnings: warningList,
     normalizedFieldPresence: {
@@ -279,7 +382,7 @@ export const createRecipientDryRun = (
       hasPaybill: normalized.paybill.length > 0,
       hasAccountNumber: normalized.accountNumber.length > 0,
       hasDescription: normalized.description.length > 0,
-      isActive: true,
+      isActive: action === "update" && target ? target.isActive === 1 : true,
     },
     duplicateSummary: {
       duplicateNameCandidates,
@@ -289,9 +392,9 @@ export const createRecipientDryRun = (
       aliasCollisions,
     },
     timestampBehavior: {
-      createdAtWouldChange: true,
+      createdAtWouldChange: action === "create",
       updatedAtWouldChange: true,
-      createdAtPreserved: false,
+      createdAtPreserved: action === "update",
       updatedAtPreservedByCurrentToggleBehavior: false,
     },
     affectedSummary: {
@@ -309,3 +412,18 @@ export const createRecipientDryRun = (
     resultCodes,
   };
 };
+
+export const createRecipientDryRun = (
+  db: Database.Database,
+  payload: unknown,
+): RecipientDryRunResponse => buildRecipientDryRun(db, payload, "create");
+
+export const updateRecipientDryRun = (
+  db: Database.Database,
+  payload: unknown,
+): RecipientDryRunResponse => buildRecipientDryRun(db, payload, "update");
+
+export const recipientDryRunRequestErrorResponse = (
+  action: "create" | "update",
+  code: string,
+): RecipientDryRunResponse => buildSafeRequestErrorResponse(action, code);

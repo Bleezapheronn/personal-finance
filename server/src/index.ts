@@ -26,7 +26,9 @@ import {
 } from "./lib/lookups.js";
 import {
   createRecipientDryRun,
+  recipientDryRunRequestErrorResponse,
   RecipientDryRunRequestError,
+  updateRecipientDryRun,
 } from "./lib/recipientDryRun.js";
 import {
   getBudgetById,
@@ -972,27 +974,55 @@ server.post<{ Body: unknown }>(
     } catch (error) {
       if (error instanceof RecipientDryRunRequestError) {
         return reply.code(error.statusCode).send({
-          ok: false,
-          mode: SERVICE_MODE,
-          action: "create",
-          dryRun: true,
-          wouldMutate: false,
+          ...recipientDryRunRequestErrorResponse("create", error.code),
           code: error.code,
-          validationErrors: [error.code],
-          warnings: [],
-          safety: {
-            sqliteMutated: false,
-            dexieMutated: false,
-            filesWritten: false,
-            transactionReferencesMutated: false,
-            rawRowsIncluded: false,
-          },
         });
       }
 
       return reply.code(500).send({
         ok: false,
         code: "recipient_create_dry_run_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/recipients/dry-run/update",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "recipient_update_dry_run_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      return updateRecipientDryRun(opened.db, request.body);
+    } catch (error) {
+      if (error instanceof RecipientDryRunRequestError) {
+        return reply.code(error.statusCode).send({
+          ...recipientDryRunRequestErrorResponse("update", error.code),
+          code: error.code,
+        });
+      }
+
+      return reply.code(500).send({
+        ok: false,
+        code: "recipient_update_dry_run_failed",
       });
     } finally {
       opened.db.close();
