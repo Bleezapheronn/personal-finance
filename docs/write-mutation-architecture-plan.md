@@ -68,10 +68,11 @@ transaction recipient-reference mutation.
 
 The first-slice Recipients dry-run endpoint implementation plan is
 [recipients-dry-run-endpoint-implementation-plan.md](recipients-dry-run-endpoint-implementation-plan.md).
-The create-recipient and update-recipient dry-run endpoints are implemented as
-validation-only, non-mutating endpoints. Activate, deactivate, delete, merge,
-real writes, write adapters, dual-write, and transaction recipient-reference
-mutation remain future work until explicitly approved.
+The create-recipient, update-recipient, activate-recipient, and
+deactivate-recipient dry-run endpoints are implemented as validation-only,
+non-mutating endpoints. Delete, merge, real writes, write adapters, dual-write,
+and transaction recipient-reference mutation remain future work until
+explicitly approved.
 
 ### Transaction Writes
 

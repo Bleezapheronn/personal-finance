@@ -1,10 +1,11 @@
 # Recipients Dry-Run Endpoint Implementation Plan
 
 This started as a documentation-only implementation plan for the first
-Recipients dry-run endpoint slice. The create-recipient and update-recipient
-dry-run endpoints have now been implemented. This plan still does not authorize
-mutation handlers, write adapters, server-side writes, client write wiring,
-dual-write, Dexie changes, SQLite writes, or synchronization.
+Recipients dry-run endpoint slice. The create-recipient, update-recipient,
+activate-recipient, and deactivate-recipient dry-run endpoints have now been
+implemented. This plan still does not authorize mutation handlers, write
+adapters, server-side writes, client write wiring, dual-write, Dexie changes,
+SQLite writes, or synchronization.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
 remains read-only except for validation-only dry-run endpoints that must not
@@ -22,8 +23,8 @@ The first endpoint slice is limited to:
 
 - create recipient dry-run: implemented
 - update recipient dry-run: implemented
-- activate recipient dry-run: future work
-- deactivate recipient dry-run: future work
+- activate recipient dry-run: implemented
+- deactivate recipient dry-run: implemented
 
 Explicitly deferred:
 
@@ -36,15 +37,15 @@ Explicitly deferred:
 
 ## Route Contracts
 
-The create and update routes exist today. The other route contracts remain
-future work.
+The create, update, activate, and deactivate routes exist today. Delete and
+merge dry-runs remain deferred.
 
 | Action | Route |
 | --- | --- |
 | Create | `POST /prototype/repositories/recipients/dry-run/create` implemented |
 | Update | `POST /prototype/repositories/recipients/dry-run/update` implemented |
-| Activate | `POST /prototype/repositories/recipients/dry-run/activate` future |
-| Deactivate | `POST /prototype/repositories/recipients/dry-run/deactivate` future |
+| Activate | `POST /prototype/repositories/recipients/dry-run/activate` implemented |
+| Deactivate | `POST /prototype/repositories/recipients/dry-run/deactivate` implemented |
 
 Dry-run routes must be protected by the existing token middleware and origin
 guard. Approved local browser preflight may succeed without a token, but actual
@@ -434,9 +435,9 @@ to validate current recipient state. It must not claim SQLite is authoritative.
 
 ## Later Implementation Sequence
 
-The create and update dry-run endpoints are implemented with isolated
-server-side validation helpers and smoke-test coverage. When the remaining
-endpoint implementation is explicitly approved, keep each code slice isolated:
+The create, update, activate, and deactivate dry-run endpoints are implemented
+with isolated server-side validation helpers and smoke-test coverage. If any
+later dry-run endpoint is explicitly approved, keep each code slice isolated:
 
 1. Add or extend shared recipient dry-run validation helpers under
    `server/src/lib`.
@@ -455,7 +456,7 @@ slice.
 
 ## Smoke Test Coverage
 
-Implemented create/update dry-run smoke coverage includes:
+Implemented create/update/activate/deactivate dry-run smoke coverage includes:
 
 - unauthorized dry-run requests fail
 - bad origin fails
@@ -469,6 +470,12 @@ Implemented create/update dry-run smoke coverage includes:
 - update dry-run with unknown ID returns `recipient_not_found`
 - update dry-run with known ID returns a redacted summary
 - update dry-run excludes the target recipient from duplicate candidate counts
+- activate dry-run no-op returns `recipient_already_active`
+- deactivate dry-run no-op returns `recipient_already_inactive` when an
+  inactive recipient exists in the fixture data
+- activate/deactivate timestamp behavior reports no `updatedAt` change
+- activate/deactivate repeated calls do not change row counts or recipient
+  content
 - duplicate candidates are reported only as counts and codes
 - alias collisions are reported only as counts and codes
 - delete and merge endpoints do not exist
@@ -477,14 +484,9 @@ Implemented create/update dry-run smoke coverage includes:
 - repeated dry-run calls do not change recipient content
 - no token/path/contact details appear in responses
 
-Future activate/deactivate implementation must add smoke coverage for:
-
-- activate dry-run unauthorized, bad-origin, invalid-ID, unknown-ID, no-op, and
-  valid-state-change summaries
-- deactivate dry-run unauthorized, bad-origin, invalid-ID, unknown-ID, no-op,
-  valid-state-change, and aggregate transaction usage summaries
-- repeated activate/deactivate dry-run calls do not change row counts or
-  recipient content
+Future delete/merge dry-run implementation, if approved, must add equivalent
+authorization, origin, redaction, no-mutation, and reference-safety smoke
+coverage.
 
 ## Later Manual Verification
 

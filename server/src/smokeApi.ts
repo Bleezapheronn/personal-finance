@@ -293,7 +293,10 @@ const firstRowValue = (json: ResponseJson, fieldName: string): string | number |
   return undefined;
 };
 
-const expectDryRunSafety = (json: ResponseJson, action: "create" | "update"): void => {
+const expectDryRunSafety = (
+  json: ResponseJson,
+  action: "create" | "update" | "activate" | "deactivate",
+): void => {
   expect(json.action === action, "unexpected_dry_run_action");
   expect(json.dryRun === true, "dry_run_flag_missing");
   expect(json.wouldMutate === false, "dry_run_would_mutate");
@@ -331,6 +334,8 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
   let sampledRecipientId: number | undefined;
   let alternateRecipientId: number | undefined;
   let sampledRecipientNameDuplicateCount: number | undefined;
+  let activeRecipientId: number | undefined;
+  let inactiveRecipientId: number | undefined;
   const sampledLookupIds = new Map<string, number>();
   const lookupResources = [
     "accounts",
@@ -910,6 +915,28 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
           const alternateId = (rows[1] as Record<string, unknown>).id;
           alternateRecipientId = typeof alternateId === "number" ? alternateId : undefined;
         }
+        if (Array.isArray(rows)) {
+          for (const row of rows) {
+            const source = row as Record<string, unknown>;
+            const id = source.id;
+            const isActive = source.isActive;
+            if (typeof id !== "number") {
+              continue;
+            }
+            if (
+              activeRecipientId === undefined &&
+              (isActive === 1 || isActive === true)
+            ) {
+              activeRecipientId = id;
+            }
+            if (
+              inactiveRecipientId === undefined &&
+              (isActive === 0 || isActive === false)
+            ) {
+              inactiveRecipientId = id;
+            }
+          }
+        }
         if (Array.isArray(rows) && sampledRecipientName && rows.length === recipientCountBeforeDryRun) {
           const normalizedSampledName = sampledRecipientName.toLowerCase();
           sampledRecipientNameDuplicateCount = rows.filter((row) => {
@@ -1322,6 +1349,223 @@ const buildChecks = (baseUrl: string, token: string, origin?: string): SmokeChec
               ...authedOptions,
               method: "POST",
               body: { id: sampledRecipientId, name: `Smoke Dry Run Update Repeat ${index}` },
+            },
+          );
+          expectStatus(status, 200);
+        }
+
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients?limit=500",
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(countFromListResponse(json) === recipientCountBeforeDryRun, "recipient_count_changed");
+        expect(listResponseFingerprint(json) === recipientFingerprintBeforeDryRun, "recipient_sample_changed");
+      },
+    },
+    {
+      name: "recipient activate dry-run fails without token",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/activate",
+          {
+            method: "POST",
+            body: { id: 1 },
+          },
+        );
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_activate_dry_run_unauthorized_response");
+      },
+    },
+    {
+      name: "recipient deactivate dry-run bad origin is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/deactivate",
+          {
+            method: "POST",
+            token,
+            origin: "http://unexpected-origin.invalid",
+            body: { id: 1 },
+          },
+        );
+        expectStatus(status, 403);
+        expect(json.error === "forbidden_origin", "unexpected_deactivate_dry_run_origin_response");
+      },
+    },
+    {
+      name: "recipient activate dry-run missing id fails safely",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/activate",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {},
+          },
+        );
+        expectStatus(status, 200);
+        expect(json.ok === false, "missing_id_activate_dry_run_should_not_pass");
+        expect(
+          Array.isArray(json.validationErrors) &&
+            (json.validationErrors as unknown[]).includes("id_required"),
+          "activate_missing_id_code_missing",
+        );
+        expectDryRunSafety(json, "activate");
+      },
+    },
+    {
+      name: "recipient deactivate dry-run unknown id fails safely",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/deactivate",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { id: 2147483647 },
+          },
+        );
+        expectStatus(status, 200);
+        expect(json.ok === false, "unknown_id_deactivate_dry_run_should_not_pass");
+        expect(
+          Array.isArray(json.validationErrors) &&
+            (json.validationErrors as unknown[]).includes("recipient_not_found"),
+          "deactivate_recipient_not_found_code_missing",
+        );
+        expectDryRunSafety(json, "deactivate");
+      },
+    },
+    {
+      name: "recipient activate dry-run no-op warns for active recipient",
+      run: async () => {
+        if (activeRecipientId === undefined) {
+          return;
+        }
+
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/activate",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { id: activeRecipientId },
+          },
+        );
+        expectStatus(status, 200);
+        expect(json.ok === true, "activate_noop_should_remain_valid");
+        expect(
+          Array.isArray(json.warnings) &&
+            (json.warnings as unknown[]).includes("recipient_already_active"),
+          "recipient_already_active_warning_missing",
+        );
+        expectDryRunSafety(json, "activate");
+        const timestampBehavior = json.timestampBehavior as Record<string, unknown>;
+        expect(timestampBehavior.createdAtWouldChange === false, "activate_created_at_should_not_change");
+        expect(timestampBehavior.updatedAtWouldChange === false, "activate_updated_at_should_not_change");
+        expect(timestampBehavior.isActiveWouldChange === false, "activate_noop_should_not_change_active_state");
+      },
+    },
+    {
+      name: "recipient deactivate dry-run no-op warns for inactive recipient when present",
+      run: async () => {
+        if (inactiveRecipientId === undefined) {
+          return;
+        }
+
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/deactivate",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { id: inactiveRecipientId },
+          },
+        );
+        expectStatus(status, 200);
+        expect(json.ok === true, "deactivate_noop_should_remain_valid");
+        expect(
+          Array.isArray(json.warnings) &&
+            (json.warnings as unknown[]).includes("recipient_already_inactive"),
+          "recipient_already_inactive_warning_missing",
+        );
+        expectDryRunSafety(json, "deactivate");
+        const timestampBehavior = json.timestampBehavior as Record<string, unknown>;
+        expect(timestampBehavior.createdAtWouldChange === false, "deactivate_created_at_should_not_change");
+        expect(timestampBehavior.updatedAtWouldChange === false, "deactivate_updated_at_should_not_change");
+        expect(timestampBehavior.isActiveWouldChange === false, "deactivate_noop_should_not_change_active_state");
+      },
+    },
+    {
+      name: "recipient deactivate dry-run valid active-state change is redacted",
+      run: async () => {
+        if (activeRecipientId === undefined) {
+          return;
+        }
+
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/deactivate",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { id: activeRecipientId },
+          },
+        );
+        expectStatus(status, 200);
+        expect(json.ok === true, "deactivate_valid_dry_run_should_pass");
+        expectDryRunSafety(json, "deactivate");
+        expectNoSensitiveEcho(json, [sampledRecipientName]);
+        const timestampBehavior = json.timestampBehavior as Record<string, unknown>;
+        expect(timestampBehavior.createdAtWouldChange === false, "deactivate_created_at_should_not_change");
+        expect(timestampBehavior.updatedAtWouldChange === false, "deactivate_updated_at_should_not_change");
+        expect(timestampBehavior.isActiveWouldChange === true, "deactivate_should_change_active_state");
+        const affectedSummary = json.affectedSummary as Record<string, unknown>;
+        expect(
+          typeof affectedSummary.transactionUsageCount === "number",
+          "deactivate_usage_count_missing",
+        );
+      },
+    },
+    {
+      name: "recipient activate dry-run unexpected fields are rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/dry-run/activate",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { id: 1, name: "Smoke Dry Run Unexpected" },
+          },
+        );
+        expectStatus(status, 400);
+        expect(json.code === "unexpected_payload_field", "activate_unexpected_field_code_missing");
+        expect(json.dryRun === true && json.wouldMutate === false, "activate_unexpected_field_flags_invalid");
+      },
+    },
+    {
+      name: "recipient activate and deactivate dry-runs do not mutate recipients",
+      run: async () => {
+        expect(recipientCountBeforeDryRun !== undefined, "recipient_baseline_count_missing");
+        expect(recipientFingerprintBeforeDryRun !== undefined, "recipient_baseline_fingerprint_missing");
+        const targetId = activeRecipientId ?? sampledRecipientId;
+        if (targetId === undefined) {
+          return;
+        }
+
+        for (const action of ["activate", "deactivate"] as const) {
+          const { status } = await requestJson(
+            baseUrl,
+            `/prototype/repositories/recipients/dry-run/${action}`,
+            {
+              ...authedOptions,
+              method: "POST",
+              body: { id: targetId },
             },
           );
           expectStatus(status, 200);

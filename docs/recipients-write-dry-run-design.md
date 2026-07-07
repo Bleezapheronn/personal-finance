@@ -12,9 +12,10 @@ First-slice endpoint implementation plan and dry-run status:
 [recipients-dry-run-endpoint-implementation-plan.md](recipients-dry-run-endpoint-implementation-plan.md).
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable. HTTP
-remains read-only except for the implemented create-recipient and
-update-recipient dry-run endpoints, which must not mutate state. No real write
-endpoint should be added from this document alone.
+remains read-only except for the implemented create-recipient,
+update-recipient, activate-recipient, and deactivate-recipient dry-run
+endpoints, which must not mutate state. No real write endpoint should be added
+from this document alone.
 
 ## Current Recipients Behavior
 
@@ -75,11 +76,11 @@ dry-runs for:
 
 - create recipient: implemented
 - update recipient: implemented
-- activate recipient
-- deactivate recipient
+- activate recipient: implemented
+- deactivate recipient: implemented
 
-Create and update dry-runs exist today. Activate and deactivate dry-runs remain
-future work and require explicit approval before implementation.
+Create, update, activate, and deactivate dry-runs exist today. Delete and merge
+dry-runs remain deferred and require explicit approval before implementation.
 
 Candidate routes for this first slice:
 

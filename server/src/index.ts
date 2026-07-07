@@ -25,7 +25,9 @@ import {
   type LookupResource,
 } from "./lib/lookups.js";
 import {
+  activateRecipientDryRun,
   createRecipientDryRun,
+  deactivateRecipientDryRun,
   recipientDryRunRequestErrorResponse,
   RecipientDryRunRequestError,
   updateRecipientDryRun,
@@ -1023,6 +1025,88 @@ server.post<{ Body: unknown }>(
       return reply.code(500).send({
         ok: false,
         code: "recipient_update_dry_run_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/recipients/dry-run/activate",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "recipient_activate_dry_run_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      return activateRecipientDryRun(opened.db, request.body);
+    } catch (error) {
+      if (error instanceof RecipientDryRunRequestError) {
+        return reply.code(error.statusCode).send({
+          ...recipientDryRunRequestErrorResponse("activate", error.code),
+          code: error.code,
+        });
+      }
+
+      return reply.code(500).send({
+        ok: false,
+        code: "recipient_activate_dry_run_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/recipients/dry-run/deactivate",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "recipient_deactivate_dry_run_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      return deactivateRecipientDryRun(opened.db, request.body);
+    } catch (error) {
+      if (error instanceof RecipientDryRunRequestError) {
+        return reply.code(error.statusCode).send({
+          ...recipientDryRunRequestErrorResponse("deactivate", error.code),
+          code: error.code,
+        });
+      }
+
+      return reply.code(500).send({
+        ok: false,
+        code: "recipient_deactivate_dry_run_failed",
       });
     } finally {
       opened.db.close();

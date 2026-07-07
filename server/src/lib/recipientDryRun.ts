@@ -12,6 +12,7 @@ const CREATE_FIELDS = new Set([
 ]);
 
 const UPDATE_FIELDS = new Set([...CREATE_FIELDS, "id"]);
+const ACTIVE_STATE_FIELDS = new Set(["id"]);
 
 const FORBIDDEN_ACTION_FIELDS = new Set([
   "delete",
@@ -47,7 +48,7 @@ interface RecipientLookupRow {
 export interface RecipientDryRunResponse {
   ok: boolean;
   mode: "prototype";
-  action: "create" | "update";
+  action: RecipientDryRunAction;
   dryRun: true;
   wouldMutate: false;
   targetIdPresent: boolean;
@@ -76,12 +77,13 @@ export interface RecipientDryRunResponse {
     createdAtWouldChange: boolean;
     updatedAtWouldChange: boolean;
     createdAtPreserved: boolean;
-    updatedAtPreservedByCurrentToggleBehavior: false;
+    updatedAtPreservedByCurrentToggleBehavior: boolean;
+    isActiveWouldChange: boolean;
   };
   affectedSummary: {
     recipientRowsWouldChange: 0;
     transactionRowsWouldChange: 0;
-    transactionUsageCount: 0;
+    transactionUsageCount: number;
   };
   safety: {
     sqliteMutated: false;
@@ -92,6 +94,8 @@ export interface RecipientDryRunResponse {
   };
   resultCodes: string[];
 }
+
+type RecipientDryRunAction = "create" | "update" | "activate" | "deactivate";
 
 export class RecipientDryRunRequestError extends Error {
   statusCode: 400;
@@ -173,8 +177,16 @@ const readRecipientLookupRows = (db: Database.Database): RecipientLookupRow[] =>
     )
     .all() as RecipientLookupRow[];
 
+const countTransactionsForRecipient = (db: Database.Database, recipientId: number): number => {
+  const row = db
+    .prepare("SELECT COUNT(*) AS count FROM transactions WHERE recipientId = @recipientId")
+    .get({ recipientId }) as { count: number } | undefined;
+
+  return row?.count ?? 0;
+};
+
 const buildSafeRequestErrorResponse = (
-  action: "create" | "update",
+  action: RecipientDryRunAction,
   code: string,
 ): RecipientDryRunResponse => ({
   ok: false,
@@ -193,9 +205,9 @@ const buildSafeRequestErrorResponse = (
     hasPhone: false,
     hasTillNumber: false,
     hasPaybill: false,
-      hasAccountNumber: false,
-      hasDescription: false,
-      isActive: true,
+    hasAccountNumber: false,
+    hasDescription: false,
+    isActive: action === "deactivate" ? false : true,
   },
   duplicateSummary: {
     duplicateNameCandidates: 0,
@@ -208,7 +220,8 @@ const buildSafeRequestErrorResponse = (
     createdAtWouldChange: false,
     updatedAtWouldChange: false,
     createdAtPreserved: true,
-    updatedAtPreservedByCurrentToggleBehavior: false,
+    updatedAtPreservedByCurrentToggleBehavior: action === "activate" || action === "deactivate",
+    isActiveWouldChange: false,
   },
   affectedSummary: {
     recipientRowsWouldChange: 0,
@@ -256,6 +269,12 @@ export const validateUpdateRecipientDryRunPayload = (
   payload: unknown,
 ): RecipientDryRunInput => {
   return validatePayloadFields(payload, UPDATE_FIELDS) as RecipientDryRunInput;
+};
+
+export const validateActiveStateRecipientDryRunPayload = (
+  payload: unknown,
+): RecipientDryRunInput => {
+  return validatePayloadFields(payload, ACTIVE_STATE_FIELDS) as RecipientDryRunInput;
 };
 
 const buildRecipientDryRun = (
@@ -396,6 +415,7 @@ const buildRecipientDryRun = (
       updatedAtWouldChange: true,
       createdAtPreserved: action === "update",
       updatedAtPreservedByCurrentToggleBehavior: false,
+      isActiveWouldChange: false,
     },
     affectedSummary: {
       recipientRowsWouldChange: 0,
@@ -423,7 +443,113 @@ export const updateRecipientDryRun = (
   payload: unknown,
 ): RecipientDryRunResponse => buildRecipientDryRun(db, payload, "update");
 
+const buildActiveStateRecipientDryRun = (
+  db: Database.Database,
+  payload: unknown,
+  action: "activate" | "deactivate",
+): RecipientDryRunResponse => {
+  const input = validateActiveStateRecipientDryRunPayload(payload);
+  const id = normalizePositiveInteger(input.id, "id");
+  const rows = readRecipientLookupRows(db);
+  const target = id === undefined ? undefined : rows.find((row) => row.id === id);
+  const validationErrors = new Set<string>();
+  const warnings = new Set<string>();
+  const proposedActive = action === "activate";
+  const currentActive = target?.isActive === 1;
+  const isActiveWouldChange = target !== undefined && currentActive !== proposedActive;
+
+  if (id === undefined) {
+    validationErrors.add("id_required");
+  }
+
+  if (id !== undefined && !target) {
+    validationErrors.add("recipient_not_found");
+  }
+
+  if (target && !isActiveWouldChange) {
+    warnings.add(action === "activate" ? "recipient_already_active" : "recipient_already_inactive");
+  }
+
+  if (target && action === "deactivate") {
+    warnings.add("transaction_usage_count_informational");
+  }
+
+  warnings.add("toggle_preserves_updated_at_current_behavior");
+
+  const validationErrorList = [...validationErrors];
+  const warningList = [...warnings];
+  const resultCodes = ["no_mutation_performed"];
+  if (validationErrorList.length > 0) {
+    resultCodes.push("dry_run_has_validation_errors");
+  } else {
+    resultCodes.push("dry_run_valid");
+  }
+  if (warningList.length > 0) {
+    resultCodes.push("dry_run_has_warnings");
+  }
+
+  return {
+    ok: validationErrorList.length === 0,
+    mode: "prototype",
+    action,
+    dryRun: true,
+    wouldMutate: false,
+    targetIdPresent: id !== undefined,
+    targetId: id ?? null,
+    validationErrors: validationErrorList,
+    warnings: warningList,
+    normalizedFieldPresence: {
+      hasName: false,
+      hasAliases: false,
+      hasEmail: false,
+      hasPhone: false,
+      hasTillNumber: false,
+      hasPaybill: false,
+      hasAccountNumber: false,
+      hasDescription: false,
+      isActive: proposedActive,
+    },
+    duplicateSummary: {
+      duplicateNameCandidates: 0,
+      duplicatePhoneCandidates: 0,
+      duplicatePaybillAccountCandidates: 0,
+      duplicateTillCandidates: null,
+      aliasCollisions: 0,
+    },
+    timestampBehavior: {
+      createdAtWouldChange: false,
+      updatedAtWouldChange: false,
+      createdAtPreserved: true,
+      updatedAtPreservedByCurrentToggleBehavior: true,
+      isActiveWouldChange,
+    },
+    affectedSummary: {
+      recipientRowsWouldChange: 0,
+      transactionRowsWouldChange: 0,
+      transactionUsageCount: target && action === "deactivate" ? countTransactionsForRecipient(db, target.id) : 0,
+    },
+    safety: {
+      sqliteMutated: false,
+      dexieMutated: false,
+      filesWritten: false,
+      transactionReferencesMutated: false,
+      rawRowsIncluded: false,
+    },
+    resultCodes,
+  };
+};
+
+export const activateRecipientDryRun = (
+  db: Database.Database,
+  payload: unknown,
+): RecipientDryRunResponse => buildActiveStateRecipientDryRun(db, payload, "activate");
+
+export const deactivateRecipientDryRun = (
+  db: Database.Database,
+  payload: unknown,
+): RecipientDryRunResponse => buildActiveStateRecipientDryRun(db, payload, "deactivate");
+
 export const recipientDryRunRequestErrorResponse = (
-  action: "create" | "update",
+  action: RecipientDryRunAction,
   code: string,
 ): RecipientDryRunResponse => buildSafeRequestErrorResponse(action, code);
