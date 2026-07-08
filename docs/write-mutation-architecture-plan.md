@@ -8,9 +8,10 @@ Dexie, SQLite, budgets, transactions, or budget snapshots.
 The read-path experiment phase is complete enough to define the next boundary:
 read parity is not write approval. Dexie / IndexedDB remains authoritative.
 SQLite remains disposable until an explicit authority migration is designed,
-approved, implemented, backed up, and verified. HTTP remains read-only. No
-write endpoints should be added without a separate per-domain design and
-approval.
+approved, implemented, backed up, and verified. Frontend HTTP repositories
+remain read-only. The only server-side real-write experiment is the
+flag-gated recipient activate endpoint; no additional write endpoint should be
+added without a separate per-domain design and approval.
 
 Current read baseline:
 
@@ -31,10 +32,11 @@ Until a future write phase is explicitly approved:
 
 - Dexie remains the source of truth.
 - SQLite remains disposable.
-- HTTP remains read-only.
+- Frontend HTTP repositories remain read-only.
 - Read parity diagnostics do not authorize writes.
-- No API route may create, update, delete, import, restore, repair, sync, or
-  mutate financial data.
+- Except for the explicitly approved recipient activate experiment, no API
+  route may create, update, delete, import, restore, repair, sync, or mutate
+  financial data.
 - No frontend repository may silently no-op write methods in HTTP mode.
 - No screen may send mutations to HTTP.
 - No budget snapshot lifecycle behavior may move to HTTP.
@@ -81,7 +83,10 @@ endpoint can be implemented.
 
 The first operation-specific candidate plan is
 [recipients-active-state-real-write-plan.md](recipients-active-state-real-write-plan.md),
-covering only future activate/deactivate writes. It remains documentation-only.
+covering active-state writes. Recipient activate is implemented as a
+flag-gated, SQLite-only experiment. Recipient deactivate, create, update,
+delete, merge, frontend write adapters, dual-write, and authority migration
+remain future work.
 
 ### Transaction Writes
 

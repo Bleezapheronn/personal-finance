@@ -2,6 +2,7 @@ import Fastify, { type FastifyReply } from "fastify";
 import {
   ALLOWED_ORIGINS,
   API_VERSION,
+  areRecipientActiveStateWritesEnabled,
   getServerPort,
   getSqlitePath,
   READONLY_MODE,
@@ -13,6 +14,7 @@ import {
 import {
   isKnownTableName,
   openReadOnlyDatabase,
+  openWritableExistingDatabase,
   readKnownTableRowCounts,
   readPaginatedKnownTable,
 } from "./lib/sqlite.js";
@@ -32,6 +34,13 @@ import {
   RecipientDryRunRequestError,
   updateRecipientDryRun,
 } from "./lib/recipientDryRun.js";
+import {
+  activateRecipientWrite,
+  recipientActivateWriteDisabledResponse,
+  recipientActivateWriteRequestErrorResponse,
+  RecipientWriteRequestError,
+  validateRecipientActivateWritePayload,
+} from "./lib/recipientWrite.js";
 import {
   getBudgetById,
   getBudgetSnapshotById,
@@ -285,6 +294,17 @@ const openConfiguredReadOnlyDatabase = ():
   }
 
   return { ok: true, db: openReadOnlyDatabase(sqlitePath) };
+};
+
+const openConfiguredWritableDatabase = ():
+  | { ok: true; db: ReturnType<typeof openWritableExistingDatabase> }
+  | { ok: false; code: "sqlite_not_configured" } => {
+  const sqlitePath = getSqlitePath();
+  if (!sqlitePath) {
+    return { ok: false, code: "sqlite_not_configured" };
+  }
+
+  return { ok: true, db: openWritableExistingDatabase(sqlitePath) };
 };
 
 const applyCorsHeaders = (reply: FastifyReply, origin: string): void => {
@@ -1066,6 +1086,71 @@ server.post<{ Body: unknown }>(
       return reply.code(500).send({
         ok: false,
         code: "recipient_activate_dry_run_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/recipients/write/activate",
+  async (request, reply) => {
+    let validatedPayload: ReturnType<typeof validateRecipientActivateWritePayload>;
+    try {
+      validatedPayload = validateRecipientActivateWritePayload(request.body);
+    } catch (error) {
+      if (error instanceof RecipientWriteRequestError) {
+        return reply.code(error.statusCode).send(
+          recipientActivateWriteRequestErrorResponse(error.code),
+        );
+      }
+
+      return reply.code(400).send(
+        recipientActivateWriteRequestErrorResponse("recipient_activate_write_invalid"),
+      );
+    }
+
+    if (!areRecipientActiveStateWritesEnabled()) {
+      return reply
+        .code(403)
+        .send(recipientActivateWriteDisabledResponse(validatedPayload.id));
+    }
+
+    let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+    try {
+      opened = openConfiguredWritableDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "recipient_activate_write_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      const response = activateRecipientWrite(opened.db, request.body);
+      if (response.code === "recipient_not_found") {
+        return reply.code(404).send(response);
+      }
+      return response;
+    } catch (error) {
+      if (error instanceof RecipientWriteRequestError) {
+        return reply.code(error.statusCode).send(
+          recipientActivateWriteRequestErrorResponse(error.code),
+        );
+      }
+
+      return reply.code(500).send({
+        ok: false,
+        code: "recipient_activate_write_failed",
       });
     } finally {
       opened.db.close();

@@ -157,4 +157,6 @@ after that separate plan is approved.
 
 Operation-specific planning for the first candidate active-state write is in
 [recipients-active-state-real-write-plan.md](recipients-active-state-real-write-plan.md).
-That document is still planning-only and does not approve implementation.
+That document now records the implemented, flag-gated recipient activate
+endpoint. Deactivate, create, update, delete, merge, frontend write adapters,
+dual-write, and SQLite authority migration remain unapproved.

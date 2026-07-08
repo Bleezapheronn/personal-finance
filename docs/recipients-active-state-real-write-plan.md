@@ -1,10 +1,10 @@
 # Recipients Active-State Real-Write Plan
 
-This is a documentation-only, operation-specific plan for the first possible
-Recipients real-write experiment: activate and deactivate. It does not
-implement endpoints, repository write adapters, UI wiring, Dexie writes, SQLite
-writes, dual-write, background sync, delete, merge, create writes, update
-writes, or selected-read behavior.
+This is the operation-specific plan and status note for the first Recipients
+real-write experiment. The first approved implementation slice added only
+recipient activate. It does not implement deactivate, repository write
+adapters, UI wiring, Dexie writes, dual-write, background sync, delete, merge,
+create writes, update writes, or selected-read behavior.
 
 Dexie / IndexedDB remains authoritative today. SQLite remains disposable until
 a later authority decision is explicitly approved. Any first real write
@@ -20,8 +20,17 @@ Implemented no-mutation dry-run endpoints:
 - `POST /prototype/repositories/recipients/dry-run/activate`
 - `POST /prototype/repositories/recipients/dry-run/deactivate`
 
-Those dry-run endpoints must be called and must pass before any future real
-activate/deactivate write. A passing dry-run is a prerequisite, not write
+Implemented experimental real-write endpoint:
+
+- `POST /prototype/repositories/recipients/write/activate`
+
+The activate write endpoint is disabled by default behind
+`PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true`. It mutates only
+disposable SQLite, updates only `recipients.isActive`, and does not update
+`updatedAt`.
+
+The dry-run endpoints must be called and must pass before any future real
+active-state write. A passing dry-run is a prerequisite, not general write
 approval.
 
 If implemented later, the first real write endpoint must handle one operation
@@ -29,16 +38,17 @@ at a time. Do not batch activate and deactivate together, and do not combine
 active-state writes with create, update, delete, merge, import, sync, or UI
 wiring.
 
-## Candidate Future Routes
+## Active-State Routes
 
-These routes are candidate contracts only. They are not implemented.
+Current implementation status:
 
-- `POST /prototype/repositories/recipients/write/activate`
-- `POST /prototype/repositories/recipients/write/deactivate`
+- `POST /prototype/repositories/recipients/write/activate`: implemented as an
+  experimental, flag-gated, SQLite-only endpoint.
+- `POST /prototype/repositories/recipients/write/deactivate`: not implemented.
 
-Both routes would be protected by the existing token middleware and origin
-guard. Browser preflight may follow the existing CORS rules, but actual POST
-requests must require the token.
+The implemented activate route is protected by the existing token middleware
+and origin guard. Browser preflight follows the existing CORS rules, but actual
+`POST` requests require the token.
 
 ## Request Shape
 
@@ -330,9 +340,10 @@ Manual output must remain summary-only and outside Git.
 - budget, budget snapshot, report, SMS parsing, import, export, or restore
   behavior
 
-## Non-Approval Statement
+## Boundary Statement
 
-This plan does not approve implementation. It defines the minimum shape and
-gates for a later implementation request. A future code slice must still be
-explicitly approved and must remain limited to one active-state operation at a
-time.
+The approved implementation scope is limited to recipient activate. It does not
+approve deactivate, create, update, delete, merge, frontend write adapters,
+dual-write, Dexie mutation, transaction recipient-reference mutation, or any
+authority migration. Any additional real-write endpoint still needs a separate
+approved implementation slice.
