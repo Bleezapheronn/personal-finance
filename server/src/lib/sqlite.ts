@@ -12,6 +12,9 @@ export interface PaginatedTableRead {
 export const openReadOnlyDatabase = (sqlitePath: string): Database.Database =>
   new Database(sqlitePath, { readonly: true, fileMustExist: true });
 
+export const openWritableExistingDatabase = (sqlitePath: string): Database.Database =>
+  new Database(sqlitePath, { fileMustExist: true });
+
 export const isKnownTableName = (tableName: string): tableName is FullBackupTableName =>
   (FULL_BACKUP_TABLE_NAMES as readonly string[]).includes(tableName);
 
