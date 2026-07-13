@@ -7,9 +7,9 @@ adapters, UI wiring, Dexie writes, dual-write, background sync, delete, merge,
 create writes, update writes, or selected-read behavior.
 
 Dexie / IndexedDB remains authoritative today. SQLite remains disposable until
-a later authority decision is explicitly approved. Any first real write
-described here would be experimental, local-only, and limited to a disposable
-SQLite database.
+a later authority decision is explicitly approved. The implemented activate
+write is experimental, local-only, and limited to a disposable SQLite
+database.
 
 Baseline tag: `recipients-real-write-readiness-baseline`
 
@@ -33,10 +33,9 @@ The dry-run endpoints must be called and must pass before any future real
 active-state write. A passing dry-run is a prerequisite, not general write
 approval.
 
-If implemented later, the first real write endpoint must handle one operation
-at a time. Do not batch activate and deactivate together, and do not combine
-active-state writes with create, update, delete, merge, import, sync, or UI
-wiring.
+Future real write endpoints must still handle one operation at a time. Do not
+batch activate and deactivate together, and do not combine active-state writes
+with create, update, delete, merge, import, sync, or UI wiring.
 
 ## Active-State Routes
 
@@ -50,20 +49,18 @@ The implemented activate route is protected by the existing token middleware
 and origin guard. Browser preflight follows the existing CORS rules, but actual
 `POST` requests require the token.
 
-## Request Shape
+## Implemented Activate Request Shape
 
 Required:
 
 - `id`: positive integer recipient ID
-
-Optional, if approved in the implementation slice:
-
-- `expectedIsActive`: boolean current state expected by the caller; used to
-  prevent stale writes
-- `confirmation`: short confirmation phrase or nonce proving the caller
-  intentionally requested the real write after reviewing dry-run output
-- `dryRunResultCode`: redacted code or digest tying the request to the matching
-  dry-run result, if a lightweight correlation mechanism is approved
+- `expectedIsActive: false`: the caller must assert that the recipient is
+  currently inactive before activation
+- `dryRunReviewed: true`: the caller must explicitly state that the matching
+  dry-run result was reviewed
+- `confirmation: "activate recipient in disposable sqlite"`: fixed
+  confirmation phrase proving this is the intentional disposable SQLite write
+  path
 
 Rejected:
 
@@ -83,24 +80,28 @@ Rejected:
 
 No name or contact value is required for an active-state change.
 
+Future deactivate, create, update, delete, and merge writes are not covered by
+this request shape and require separate approved implementation slices.
+
 ## Validation Behavior
 
-The future endpoint must fail safely for:
+The implemented activate endpoint fails safely for:
 
 - missing ID: `id_required`
 - malformed, non-integer, or non-positive ID: `id_invalid`
 - target recipient not found: `recipient_not_found`
-- `expectedIsActive` mismatch: `stale_expected_active_state`
+- missing or non-false `expectedIsActive`: `expected_is_active_false_required`
+- missing `dryRunReviewed: true`: `dry_run_reviewed_required`
+- missing or non-matching confirmation phrase: `matching_dry_run_required`
 - activate no-op when already active: `recipient_already_active`
-- deactivate no-op when already inactive: `recipient_already_inactive`
-- missing, stale, or non-matching dry-run evidence: `matching_dry_run_required`
-- backup/restore gate not confirmed: `backup_restore_gate_required`
 - unexpected payload field: `unexpected_payload_field`
 - unsupported action hint: `unsupported_first_write_action`
 
-No-op behavior must be explicit. The recommended first behavior is no SQLite
-write for no-op requests, with `rowsChanged: 0` and a warning/result code. A
-future implementation must not hide a no-op behind a successful mutation shape.
+No-op behavior is explicit. Already-active activate requests do not write to
+SQLite, return `rowsChanged: 0`, and include the `recipient_already_active`
+warning/result code. A future deactivate implementation must follow the same
+principle for already-inactive recipients rather than hiding a no-op behind a
+successful mutation shape.
 
 ## Timestamp Behavior
 
@@ -109,7 +110,7 @@ Current Dexie behavior:
 - activate/deactivate changes only `isActive`
 - activate/deactivate does not explicitly refresh `updatedAt`
 
-Recommended first SQLite write behavior:
+Implemented activate SQLite write behavior:
 
 - match current Dexie behavior exactly
 - update only `recipients.isActive`
@@ -122,8 +123,8 @@ real write.
 
 ## Source-Of-Truth Boundary
 
-The candidate endpoint would mutate only disposable SQLite. It must not claim to
-be the app's real write path.
+The implemented activate endpoint mutates only disposable SQLite. It must not
+claim to be the app's real write path.
 
 Required boundaries:
 
@@ -143,7 +144,7 @@ mutation as the recovery path.
 
 ## Write Transaction Requirements
 
-If implemented later, the write must be constrained to:
+The implemented activate write is constrained to:
 
 - one recipient row
 - one column: `recipients.isActive`
@@ -159,12 +160,13 @@ If implemented later, the write must be constrained to:
 - no file writes
 - no schema creation or migration
 
-The implementation must verify exactly one expected row changed for a real
-state transition. For an explicit no-op, it should verify zero rows changed.
+The implementation verifies exactly one expected row changed for a real state
+transition. For an explicit no-op, it reports zero rows changed.
 
-The current shared SQLite helper opens databases read-only. A future real-write
-implementation must add a deliberately named, narrowly used write-opening path
-and must not weaken existing read-only helpers.
+The normal shared SQLite helpers remain read-only. The activate implementation
+uses a deliberately named, narrowly used write-opening path and does not weaken
+existing read-only helpers. Future write implementations must preserve that
+separation.
 
 ## Response Shape
 
@@ -253,9 +255,10 @@ Reverse mutation may be useful for debugging, but it must not be the primary
 rollback strategy. No real-write test should run against an un-backed-up or
 trusted production-like SQLite file.
 
-## Pre-Implementation Gates
+## Additional Active-State Implementation Gates
 
-All gates must pass before endpoint implementation starts:
+These gates remain required before any additional active-state implementation,
+including recipient deactivate:
 
 - fresh full backup exported
 - restore path verified or rehearsed
@@ -264,8 +267,8 @@ All gates must pass before endpoint implementation starts:
 - `smoke:api` passes with token/token-file arguments
 - Recipients read diagnostic passes against the fresh matching baseline
 - active-state dry-run smoke tests pass
-- matching activate/deactivate dry-run request and redacted response are
-  captured
+- matching dry-run request and redacted response are captured for the target
+  operation
 - `npm run check:local-api-safety` passes
 - `npm run check:no-runtime-artifacts` passes
 - operation-specific rollback instructions are written
@@ -273,21 +276,19 @@ All gates must pass before endpoint implementation starts:
 
 If any gate is stale, skipped, or unknown, implementation must not start.
 
-## Future Smoke Tests
+## Smoke Tests
 
-A future implementation must add smoke coverage for:
+Implemented activate smoke coverage includes:
 
 - unauthorized write requests fail
 - bad origin fails
 - missing ID fails safely
 - malformed ID fails safely
 - unknown ID fails safely
-- no-op activate/deactivate behavior is explicit
-- stale `expectedIsActive` mismatch fails safely
+- no-op activate behavior is explicit
+- missing or non-false `expectedIsActive` fails safely
 - dry-run-required gate fails when not satisfied
-- backup/restore gate fails when not confirmed
 - one successful activate changes exactly one SQLite row
-- one successful deactivate changes exactly one SQLite row
 - row count remains unchanged
 - only `isActive` changes
 - `updatedAt` remains unchanged if matching current Dexie behavior
@@ -298,6 +299,10 @@ A future implementation must add smoke coverage for:
 - dry-run endpoints still pass
 - `verify:sqlite` behavior after intentional disposable SQLite mutation is
   understood and documented
+
+Future deactivate smoke coverage must add the same checks for the deactivate
+operation, including one successful deactivate that changes exactly one SQLite
+row and an already-inactive no-op with `rowsChanged: 0`.
 
 Because an intentional SQLite mutation may make the disposable database diverge
 from the original backup, verification should either run against a re-imported

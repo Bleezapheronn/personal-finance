@@ -186,7 +186,8 @@ Before any write code is implemented, the project needs explicit decisions for:
 
 ## Not Allowed Yet
 
-- No write endpoints.
+- No additional write endpoints beyond the explicitly approved, flag-gated
+  recipient activate experiment.
 - No repository write adapters.
 - No dual-write.
 - No background sync.
