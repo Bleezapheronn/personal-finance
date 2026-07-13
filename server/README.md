@@ -23,8 +23,9 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /prototype/repositories/recipients`
 - `GET /prototype/repositories/recipients/:id`
 - `POST /prototype/repositories/recipients/write/activate` (experimental, disabled by default)
+- `POST /prototype/repositories/recipients/write/deactivate` (experimental, disabled by default)
 
-The backend can optionally open a configured disposable SQLite database read-only for prototype diagnostics. It does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. The only experimental write endpoint is the disabled-by-default recipient activate endpoint, which mutates disposable SQLite only when explicitly enabled. No frontend write path, write adapter, dual-write, or SQLite authority migration exists.
+The backend can optionally open a configured disposable SQLite database read-only for prototype diagnostics. It does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. The only experimental write endpoints are the disabled-by-default recipient activate/deactivate endpoints, which mutate disposable SQLite only when explicitly enabled. No frontend write path, write adapter, dual-write, or SQLite authority migration exists.
 
 ## Safety
 
@@ -442,28 +443,29 @@ Lookup endpoints are prototype-only and read-only. They are shaped for future re
 
 Lookup endpoints return sensitive personal finance metadata, especially account and recipient names, descriptions, contact details, and account identifiers. Use them only for local diagnostics against disposable SQLite.
 
-## Experimental Recipient Activate Write
+## Experimental Recipient Active-State Writes
 
-One experimental real-write endpoint exists:
+Two experimental real-write endpoints exist:
 
 ```text
 POST /prototype/repositories/recipients/write/activate
+POST /prototype/repositories/recipients/write/deactivate
 ```
 
-It is disabled by default. To allow mutation, the server process must be started
-with:
+They are disabled by default. To allow mutation, the server process must be
+started with:
 
 ```text
 PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true
 ```
 
-The endpoint is protected by the same token and origin guards as the prototype
-repository reads. It mutates only the configured disposable SQLite database,
-updates only `recipients.isActive` from inactive to active, and intentionally
-does not update `createdAt`, `updatedAt`, recipient names, contact fields,
-transactions, files, or Dexie / IndexedDB.
+The endpoints are protected by the same token and origin guards as the
+prototype repository reads. They mutate only the configured disposable SQLite
+database, update only `recipients.isActive`, and intentionally do not update
+`createdAt`, `updatedAt`, recipient names, contact fields, transactions, files,
+or Dexie / IndexedDB.
 
-Required request shape:
+Activate request shape:
 
 ```json
 {
@@ -474,24 +476,35 @@ Required request shape:
 }
 ```
 
+Deactivate request shape:
+
+```json
+{
+  "id": 123,
+  "expectedIsActive": true,
+  "dryRunReviewed": true,
+  "confirmation": "deactivate recipient in disposable sqlite"
+}
+```
+
 Responses are redacted summaries only. They do not include raw recipient rows,
 names, aliases, contact values, token values, SQLite paths, backup paths, or
 transaction details. If the write flag is not exactly `true`, the endpoint
 returns a safe disabled response and does not open a writable database.
 
-Normal `smoke:api` remains non-mutating. The successful activate-write smoke is
-opt-in and mutates the disposable SQLite database:
+Normal `smoke:api` remains non-mutating. Successful write smoke is opt-in and
+mutates the disposable SQLite database:
 
 ```bash
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-recipient-activate-write-smoke
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-recipient-deactivate-write-smoke
 ```
 
 Run that opt-in smoke only against a disposable SQLite database imported from a
 fresh backup. After a successful write smoke, delete/re-import the SQLite
 database from the backup before using it as a clean parity baseline again.
-Deactivate, create, update, delete, merge, frontend write adapters, UI
-integration, dual-write, and transaction recipient-reference mutation remain
-future work.
+Create, update, delete, merge, frontend write adapters, UI integration,
+dual-write, and transaction recipient-reference mutation remain future work.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 

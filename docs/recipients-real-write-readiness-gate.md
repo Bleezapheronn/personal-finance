@@ -9,10 +9,10 @@ Dexie / IndexedDB remains authoritative. SQLite remains disposable. The
 implemented Recipients dry-run endpoints are validation-only and do not
 authorize real writes.
 
-Since this gate was written, recipient activate has been implemented as a
-disabled-by-default, SQLite-only experiment behind a separate operation-specific
-plan. This gate remains the boundary for recipient deactivate and any additional
-real write.
+Since this gate was written, recipient activate and deactivate have been
+implemented as disabled-by-default, SQLite-only experiments behind separate
+approved implementation slices. This gate remains the boundary for create,
+update, delete, merge, and any additional real write.
 
 Baseline tag: `recipients-basic-dry-run-review-baseline`
 
@@ -162,8 +162,8 @@ after that separate plan is approved.
 
 Operation-specific planning for the first candidate active-state write is in
 [recipients-active-state-real-write-plan.md](recipients-active-state-real-write-plan.md).
-That document now records the implemented, flag-gated recipient activate
-endpoint. Deactivate, create, update, delete, merge, frontend write adapters,
+That document now records the implemented, flag-gated recipient activate and
+deactivate endpoints. Create, update, delete, merge, frontend write adapters,
 dual-write, and SQLite authority migration remain unapproved.
 
 The implementation review for the completed activate slice is in

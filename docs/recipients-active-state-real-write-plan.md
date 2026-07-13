@@ -1,10 +1,11 @@
 # Recipients Active-State Real-Write Plan
 
 This is the operation-specific plan and status note for the first Recipients
-real-write experiment. The first approved implementation slice added only
-recipient activate. It does not implement deactivate, repository write
-adapters, UI wiring, Dexie writes, dual-write, background sync, delete, merge,
-create writes, update writes, or selected-read behavior.
+real-write experiment. The first approved implementation slice added recipient
+activate, and the second approved implementation slice added recipient
+deactivate. It does not implement repository write adapters, UI wiring, Dexie
+writes, dual-write, background sync, delete, merge, create writes, update
+writes, or selected-read behavior.
 
 Dexie / IndexedDB remains authoritative today. SQLite remains disposable until
 a later authority decision is explicitly approved. The implemented activate
@@ -23,13 +24,14 @@ Implemented no-mutation dry-run endpoints:
 - `POST /prototype/repositories/recipients/dry-run/activate`
 - `POST /prototype/repositories/recipients/dry-run/deactivate`
 
-Implemented experimental real-write endpoint:
+Implemented experimental real-write endpoints:
 
 - `POST /prototype/repositories/recipients/write/activate`
+- `POST /prototype/repositories/recipients/write/deactivate`
 
-The activate write endpoint is disabled by default behind
-`PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true`. It mutates only
-disposable SQLite, updates only `recipients.isActive`, and does not update
+The active-state write endpoints are disabled by default behind
+`PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true`. They mutate only
+disposable SQLite, update only `recipients.isActive`, and do not update
 `updatedAt`.
 
 The dry-run endpoints must be called and must pass before any future real
@@ -46,11 +48,12 @@ Current implementation status:
 
 - `POST /prototype/repositories/recipients/write/activate`: implemented as an
   experimental, flag-gated, SQLite-only endpoint.
-- `POST /prototype/repositories/recipients/write/deactivate`: not implemented.
+- `POST /prototype/repositories/recipients/write/deactivate`: implemented as
+  an experimental, flag-gated, SQLite-only endpoint.
 
-The implemented activate route is protected by the existing token middleware
-and origin guard. Browser preflight follows the existing CORS rules, but actual
-`POST` requests require the token.
+The implemented active-state routes are protected by the existing token
+middleware and origin guard. Browser preflight follows the existing CORS rules,
+but actual `POST` requests require the token.
 
 ## Implemented Activate Request Shape
 
@@ -83,8 +86,28 @@ Rejected:
 
 No name or contact value is required for an active-state change.
 
-Future deactivate, create, update, delete, and merge writes are not covered by
-this request shape and require separate approved implementation slices.
+Future create, update, delete, and merge writes are not covered by this request
+shape and require separate approved implementation slices.
+
+## Implemented Deactivate Request Shape
+
+Required:
+
+- `id`: positive integer recipient ID
+- `expectedIsActive: true`: the caller must assert that the recipient is
+  currently active before deactivation
+- `dryRunReviewed: true`: the caller must explicitly state that the matching
+  dry-run result was reviewed
+- `confirmation: "deactivate recipient in disposable sqlite"`: fixed
+  confirmation phrase proving this is the intentional disposable SQLite write
+  path
+
+The same sensitive fields and arbitrary fields rejected by activate are also
+rejected by deactivate. No name or contact value is required for an active-state
+change.
+
+Future create, update, delete, and merge writes are not covered by this request
+shape and require separate approved implementation slices.
 
 ## Validation Behavior
 
@@ -102,9 +125,13 @@ The implemented activate endpoint fails safely for:
 
 No-op behavior is explicit. Already-active activate requests do not write to
 SQLite, return `rowsChanged: 0`, and include the `recipient_already_active`
-warning/result code. A future deactivate implementation must follow the same
-principle for already-inactive recipients rather than hiding a no-op behind a
-successful mutation shape.
+warning/result code.
+
+The implemented deactivate endpoint fails safely for the same common cases,
+with `expected_is_active_true_required` when `expectedIsActive` is missing or
+not true. Already-inactive deactivate requests do not write to SQLite, return
+`rowsChanged: 0`, and include the `recipient_already_inactive` warning/result
+code.
 
 ## Timestamp Behavior
 
@@ -113,7 +140,7 @@ Current Dexie behavior:
 - activate/deactivate changes only `isActive`
 - activate/deactivate does not explicitly refresh `updatedAt`
 
-Implemented activate SQLite write behavior:
+Implemented active-state SQLite write behavior:
 
 - match current Dexie behavior exactly
 - update only `recipients.isActive`
@@ -126,8 +153,8 @@ real write.
 
 ## Source-Of-Truth Boundary
 
-The implemented activate endpoint mutates only disposable SQLite. It must not
-claim to be the app's real write path.
+The implemented activate and deactivate endpoints mutate only disposable
+SQLite. They must not claim to be the app's real write path.
 
 Required boundaries:
 
@@ -147,7 +174,7 @@ mutation as the recovery path.
 
 ## Write Transaction Requirements
 
-The implemented activate write is constrained to:
+The implemented active-state writes are constrained to:
 
 - one recipient row
 - one column: `recipients.isActive`
@@ -260,8 +287,8 @@ trusted production-like SQLite file.
 
 ## Additional Active-State Implementation Gates
 
-These gates remain required before any additional active-state implementation,
-including recipient deactivate:
+These gates remain required before any additional recipient write
+implementation, including create, update, delete, or merge:
 
 - fresh full backup exported
 - restore path verified or rehearsed
@@ -281,17 +308,18 @@ If any gate is stale, skipped, or unknown, implementation must not start.
 
 ## Smoke Tests
 
-Implemented activate smoke coverage includes:
+Implemented active-state smoke coverage includes:
 
 - unauthorized write requests fail
 - bad origin fails
 - missing ID fails safely
 - malformed ID fails safely
 - unknown ID fails safely
-- no-op activate behavior is explicit
-- missing or non-false `expectedIsActive` fails safely
+- no-op activate/deactivate behavior is explicit
+- missing or wrong `expectedIsActive` fails safely
 - dry-run-required gate fails when not satisfied
 - one successful activate changes exactly one SQLite row
+- one successful deactivate changes exactly one SQLite row
 - row count remains unchanged
 - only `isActive` changes
 - `updatedAt` remains unchanged if matching current Dexie behavior
@@ -302,10 +330,6 @@ Implemented activate smoke coverage includes:
 - dry-run endpoints still pass
 - `verify:sqlite` behavior after intentional disposable SQLite mutation is
   understood and documented
-
-Future deactivate smoke coverage must add the same checks for the deactivate
-operation, including one successful deactivate that changes exactly one SQLite
-row and an already-inactive no-op with `rowsChanged: 0`.
 
 Because an intentional SQLite mutation may make the disposable database diverge
 from the original backup, verification should either run against a re-imported
@@ -350,8 +374,8 @@ Manual output must remain summary-only and outside Git.
 
 ## Boundary Statement
 
-The approved implementation scope is limited to recipient activate. It does not
-approve deactivate, create, update, delete, merge, frontend write adapters,
-dual-write, Dexie mutation, transaction recipient-reference mutation, or any
-authority migration. Any additional real-write endpoint still needs a separate
-approved implementation slice.
+The approved implementation scope is limited to recipient activate and
+recipient deactivate. It does not approve create, update, delete, merge,
+frontend write adapters, dual-write, Dexie mutation, transaction
+recipient-reference mutation, or any authority migration. Any additional
+real-write endpoint still needs a separate approved implementation slice.

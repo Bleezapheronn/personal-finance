@@ -6,6 +6,7 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:3147";
 const TOKEN_HEADER_NAME = "x-personal-finance-token";
 const DEFAULT_ALLOWED_ORIGIN = "http://localhost:5173";
 const RECIPIENT_ACTIVATE_WRITE_CONFIRMATION = "activate recipient in disposable sqlite";
+const RECIPIENT_DEACTIVATE_WRITE_CONFIRMATION = "deactivate recipient in disposable sqlite";
 
 interface SmokeArgs {
   baseUrl: string;
@@ -13,6 +14,7 @@ interface SmokeArgs {
   tokenFile?: string;
   origin?: string;
   allowRecipientActivateWriteSmoke: boolean;
+  allowRecipientDeactivateWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -78,6 +80,8 @@ Options:
   --origin <origin>      Optional Origin header for allowed-origin requests.
   --allow-recipient-activate-write-smoke
                          Opt in to one disposable SQLite recipient activate write smoke.
+  --allow-recipient-deactivate-write-smoke
+                         Opt in to one disposable SQLite recipient deactivate write smoke.
   --help                 Show this help text.
 `;
 
@@ -85,6 +89,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
   const args: SmokeArgs = {
     baseUrl: DEFAULT_BASE_URL,
     allowRecipientActivateWriteSmoke: false,
+    allowRecipientDeactivateWriteSmoke: false,
     help: false,
   };
 
@@ -122,6 +127,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-recipient-activate-write-smoke") {
       args.allowRecipientActivateWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-recipient-deactivate-write-smoke") {
+      args.allowRecipientDeactivateWriteSmoke = true;
       continue;
     }
 
@@ -308,8 +318,11 @@ const firstRowValue = (json: ResponseJson, fieldName: string): string | number |
   return undefined;
 };
 
-const expectSafeActivateWriteShape = (json: ResponseJson): void => {
-  expect(json.action === "activate", "unexpected_write_action");
+const expectSafeActiveStateWriteShape = (
+  json: ResponseJson,
+  action: "activate" | "deactivate",
+): void => {
+  expect(json.action === action, "unexpected_write_action");
   expect(json.dryRunRequired === true, "write_dry_run_required_flag_missing");
   expect(json.realWrite === true, "real_write_flag_missing");
   expect(typeof json.sqliteMutated === "boolean", "write_sqlite_mutated_flag_missing");
@@ -379,6 +392,7 @@ const buildChecks = (
   token: string,
   origin: string | undefined,
   allowRecipientActivateWriteSmoke: boolean,
+  allowRecipientDeactivateWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -1694,7 +1708,7 @@ const buildChecks = (
         );
         expectStatus(status, 400);
         expect(json.code === "id_required", "activate_write_missing_id_code_missing");
-        expectSafeActivateWriteShape(json);
+        expectSafeActiveStateWriteShape(json, "activate");
         expect(json.sqliteMutated === false, "activate_write_validation_mutated");
         expect(json.rowsChanged === 0, "activate_write_validation_rows_changed");
       },
@@ -1727,7 +1741,7 @@ const buildChecks = (
               } else {
                 expect(json.code === "recipient_not_found", "activate_write_unknown_id_code_missing");
               }
-              expectSafeActivateWriteShape(json);
+              expectSafeActiveStateWriteShape(json, "activate");
               expect(json.sqliteMutated === false, "default_activate_write_mutated");
               expect(json.rowsChanged === 0, "default_activate_write_rows_changed");
 
@@ -1750,28 +1764,120 @@ const buildChecks = (
         ]
       : []),
     {
-      name: "recipient deactivate write is not implemented",
+      name: "recipient deactivate write fails without token",
       run: async () => {
-        const { status } = await requestJson(
+        const { status, json } = await requestJson(
           baseUrl,
           "/prototype/repositories/recipients/write/deactivate",
           {
-            ...authedOptions,
             method: "POST",
             body: {
               id: 1,
               expectedIsActive: true,
               dryRunReviewed: true,
+              confirmation: RECIPIENT_DEACTIVATE_WRITE_CONFIRMATION,
             },
           },
         );
-        expectStatus(status, 404);
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_deactivate_write_unauthorized_response");
       },
     },
     {
-      name: "recipient delete and merge writes are not implemented",
+      name: "recipient deactivate write bad origin is rejected",
       run: async () => {
-        for (const action of ["delete", "merge"] as const) {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/write/deactivate",
+          {
+            method: "POST",
+            token,
+            origin: "http://unexpected-origin.invalid",
+            body: {
+              id: 1,
+              expectedIsActive: true,
+              dryRunReviewed: true,
+              confirmation: RECIPIENT_DEACTIVATE_WRITE_CONFIRMATION,
+            },
+          },
+        );
+        expectStatus(status, 403);
+        expect(json.error === "forbidden_origin", "unexpected_deactivate_write_origin_response");
+      },
+    },
+    {
+      name: "recipient deactivate write validation failures are redacted",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/write/deactivate",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { expectedIsActive: true, dryRunReviewed: true },
+          },
+        );
+        expectStatus(status, 400);
+        expect(json.code === "id_required", "deactivate_write_missing_id_code_missing");
+        expectSafeActiveStateWriteShape(json, "deactivate");
+        expect(json.sqliteMutated === false, "deactivate_write_validation_mutated");
+        expect(json.rowsChanged === 0, "deactivate_write_validation_rows_changed");
+      },
+    },
+    ...(!allowRecipientDeactivateWriteSmoke
+      ? [
+          {
+            name: "recipient deactivate write default smoke does not mutate",
+            run: async () => {
+              const { status, json } = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/write/deactivate",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: 2147483647,
+                    expectedIsActive: true,
+                    dryRunReviewed: true,
+                    confirmation: RECIPIENT_DEACTIVATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expect(status === 403 || status === 404, `expected_status_403_or_404_got_${status}`);
+              if (status === 403) {
+                expect(
+                  json.code === "recipient_active_state_writes_disabled",
+                  "deactivate_write_disabled_code_missing",
+                );
+              } else {
+                expect(json.code === "recipient_not_found", "deactivate_write_unknown_id_code_missing");
+              }
+              expectSafeActiveStateWriteShape(json, "deactivate");
+              expect(json.sqliteMutated === false, "default_deactivate_write_mutated");
+              expect(json.rowsChanged === 0, "default_deactivate_write_rows_changed");
+
+              const listResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients?limit=500",
+                authedOptions,
+              );
+              expectStatus(listResponse.status, 200);
+              expect(
+                countFromListResponse(listResponse.json) === recipientCountBeforeDryRun,
+                "default_deactivate_write_changed_recipient_count",
+              );
+              expect(
+                listResponseFingerprint(listResponse.json) === recipientFingerprintBeforeDryRun,
+                "default_deactivate_write_changed_recipient_sample",
+              );
+            },
+          },
+        ]
+      : []),
+    {
+      name: "recipient create, update, delete, and merge writes are not implemented",
+      run: async () => {
+        for (const action of ["create", "update", "delete", "merge"] as const) {
           const { status } = await requestJson(
             baseUrl,
             `/prototype/repositories/recipients/write/${action}`,
@@ -1838,7 +1944,7 @@ const buildChecks = (
               );
               expectStatus(writeResponse.status, 200);
               expect(writeResponse.json.ok === true, "activate_write_should_pass");
-              expectSafeActivateWriteShape(writeResponse.json);
+              expectSafeActiveStateWriteShape(writeResponse.json, "activate");
               expect(writeResponse.json.sqliteMutated === true, "activate_write_did_not_mutate");
               expect(writeResponse.json.rowsChanged === 1, "activate_write_changed_wrong_row_count");
               expectNoSensitiveEcho(writeResponse.json, [targetName]);
@@ -1882,13 +1988,122 @@ const buildChecks = (
                 },
               );
               expectStatus(repeatResponse.status, 200);
-              expectSafeActivateWriteShape(repeatResponse.json);
+              expectSafeActiveStateWriteShape(repeatResponse.json, "activate");
               expect(repeatResponse.json.sqliteMutated === false, "activate_repeat_mutated");
               expect(repeatResponse.json.rowsChanged === 0, "activate_repeat_rows_changed");
               expect(
                 Array.isArray(repeatResponse.json.warnings) &&
                   (repeatResponse.json.warnings as unknown[]).includes("recipient_already_active"),
                 "activate_repeat_noop_warning_missing",
+              );
+            },
+          },
+        ]
+      : []),
+    ...(allowRecipientDeactivateWriteSmoke
+      ? [
+          {
+            name: "recipient deactivate write opt-in smoke mutates exactly one disposable row",
+            run: async () => {
+              expect(recipientCountBeforeDryRun !== undefined, "recipient_baseline_count_missing");
+              if (activeRecipientId === undefined) {
+                throw new Error("active_recipient_required_for_opt_in_write_smoke");
+              }
+
+              const beforeDetailResponse = await requestJson(
+                baseUrl,
+                `/prototype/repositories/recipients/${activeRecipientId}`,
+                authedOptions,
+              );
+              expectStatus(beforeDetailResponse.status, 200);
+              const beforeRecipient = recipientDetail(beforeDetailResponse.json);
+              const targetName =
+                typeof beforeRecipient.name === "string" ? beforeRecipient.name : undefined;
+              expect(
+                beforeRecipient.isActive === 1 || beforeRecipient.isActive === true,
+                "deactivate_write_target_not_active",
+              );
+
+              const dryRunResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/dry-run/deactivate",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: { id: activeRecipientId },
+                },
+              );
+              expectStatus(dryRunResponse.status, 200);
+              expect(dryRunResponse.json.ok === true, "deactivate_write_dry_run_failed");
+              expectDryRunSafety(dryRunResponse.json, "deactivate");
+
+              const writeResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/write/deactivate",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: activeRecipientId,
+                    expectedIsActive: true,
+                    dryRunReviewed: true,
+                    confirmation: RECIPIENT_DEACTIVATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(writeResponse.status, 200);
+              expect(writeResponse.json.ok === true, "deactivate_write_should_pass");
+              expectSafeActiveStateWriteShape(writeResponse.json, "deactivate");
+              expect(writeResponse.json.sqliteMutated === true, "deactivate_write_did_not_mutate");
+              expect(writeResponse.json.rowsChanged === 1, "deactivate_write_changed_wrong_row_count");
+              expectNoSensitiveEcho(writeResponse.json, [targetName]);
+
+              const afterDetailResponse = await requestJson(
+                baseUrl,
+                `/prototype/repositories/recipients/${activeRecipientId}`,
+                authedOptions,
+              );
+              expectStatus(afterDetailResponse.status, 200);
+              const afterRecipient = recipientDetail(afterDetailResponse.json);
+              expect(
+                afterRecipient.isActive === 0 || afterRecipient.isActive === false,
+                "deactivate_write_read_endpoint_not_inactive",
+              );
+              expectRecipientRowsOnlyDifferByActiveState(beforeRecipient, afterRecipient);
+
+              const afterListResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients?limit=500",
+                authedOptions,
+              );
+              expectStatus(afterListResponse.status, 200);
+              expect(
+                countFromListResponse(afterListResponse.json) === recipientCountBeforeDryRun,
+                "deactivate_write_changed_recipient_count",
+              );
+
+              const repeatResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/write/deactivate",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: activeRecipientId,
+                    expectedIsActive: true,
+                    dryRunReviewed: true,
+                    confirmation: RECIPIENT_DEACTIVATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(repeatResponse.status, 200);
+              expectSafeActiveStateWriteShape(repeatResponse.json, "deactivate");
+              expect(repeatResponse.json.sqliteMutated === false, "deactivate_repeat_mutated");
+              expect(repeatResponse.json.rowsChanged === 0, "deactivate_repeat_rows_changed");
+              expect(
+                Array.isArray(repeatResponse.json.warnings) &&
+                  (repeatResponse.json.warnings as unknown[]).includes("recipient_already_inactive"),
+                "deactivate_repeat_noop_warning_missing",
               );
             },
           },
@@ -1967,6 +2182,7 @@ const main = async (): Promise<void> => {
     token,
     args.origin,
     args.allowRecipientActivateWriteSmoke,
+    args.allowRecipientDeactivateWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

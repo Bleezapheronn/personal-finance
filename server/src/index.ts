@@ -36,10 +36,14 @@ import {
 } from "./lib/recipientDryRun.js";
 import {
   activateRecipientWrite,
+  deactivateRecipientWrite,
   recipientActivateWriteDisabledResponse,
   recipientActivateWriteRequestErrorResponse,
+  recipientDeactivateWriteDisabledResponse,
+  recipientDeactivateWriteRequestErrorResponse,
   RecipientWriteRequestError,
   validateRecipientActivateWritePayload,
+  validateRecipientDeactivateWritePayload,
 } from "./lib/recipientWrite.js";
 import {
   getBudgetById,
@@ -1151,6 +1155,71 @@ server.post<{ Body: unknown }>(
       return reply.code(500).send({
         ok: false,
         code: "recipient_activate_write_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/recipients/write/deactivate",
+  async (request, reply) => {
+    let validatedPayload: ReturnType<typeof validateRecipientDeactivateWritePayload>;
+    try {
+      validatedPayload = validateRecipientDeactivateWritePayload(request.body);
+    } catch (error) {
+      if (error instanceof RecipientWriteRequestError) {
+        return reply.code(error.statusCode).send(
+          recipientDeactivateWriteRequestErrorResponse(error.code),
+        );
+      }
+
+      return reply.code(400).send(
+        recipientDeactivateWriteRequestErrorResponse("recipient_deactivate_write_invalid"),
+      );
+    }
+
+    if (!areRecipientActiveStateWritesEnabled()) {
+      return reply
+        .code(403)
+        .send(recipientDeactivateWriteDisabledResponse(validatedPayload.id));
+    }
+
+    let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+    try {
+      opened = openConfiguredWritableDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code: statusCode === 503 ? "sqlite_unavailable" : "recipient_deactivate_write_failed",
+      });
+    }
+
+    if (!opened.ok) {
+      return reply.code(503).send({
+        ok: false,
+        code: opened.code,
+      });
+    }
+
+    try {
+      const response = deactivateRecipientWrite(opened.db, request.body);
+      if (response.code === "recipient_not_found") {
+        return reply.code(404).send(response);
+      }
+      return response;
+    } catch (error) {
+      if (error instanceof RecipientWriteRequestError) {
+        return reply.code(error.statusCode).send(
+          recipientDeactivateWriteRequestErrorResponse(error.code),
+        );
+      }
+
+      return reply.code(500).send({
+        ok: false,
+        code: "recipient_deactivate_write_failed",
       });
     } finally {
       opened.db.close();

@@ -1,7 +1,8 @@
 # Recipient Activate Real-Write Implementation Review
 
 This is a documentation-only review of the implemented recipient activate
-real-write endpoint.
+real-write endpoint. Recipient deactivate was implemented later as a separate
+approved slice; this review remains activate-specific.
 
 Valid baseline tag: `recipient-activate-real-write-complete-baseline`
 
@@ -20,7 +21,6 @@ Implemented real-write endpoint:
 
 Explicitly not implemented:
 
-- recipient deactivate real write
 - recipient create real write
 - recipient update real write
 - recipient delete real write
@@ -157,7 +157,6 @@ Normal `smoke:api` coverage is intentionally non-mutating. It verifies:
 - unexpected origin is rejected
 - validation failures are redacted
 - default-disabled write path does not mutate SQLite
-- deactivate write route is not implemented
 - delete and merge write routes are not implemented
 
 The opt-in write smoke path is explicit. When run with
@@ -180,14 +179,15 @@ The opt-in write smoke path is explicit. When run with
 - SQLite remains disposable.
 - No UI should call this endpoint.
 - No frontend write adapter exists.
-- Deactivate still requires separate review, planning, implementation, and
-  verification.
+- Deactivate is covered by a separate implementation slice and should not be
+  treated as part of this activate-specific review.
 - Create, update, delete, and merge remain out of scope.
 
 ## Follow-Up Risks
 
-- The activate route is intentionally narrow. Expanding active-state writes to
-  deactivate must not reuse this review as implementation approval.
+- The activate route is intentionally narrow. Deactivate and any further
+  recipient writes must be reviewed separately rather than inheriting approval
+  from this activate-specific review.
 - Any future frontend write adapter needs a separate design for user
   confirmation, rollback, stale-state handling, and Dexie authority boundaries.
 - Any successful opt-in mutation can make `verify:sqlite` differ from the
