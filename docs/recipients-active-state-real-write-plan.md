@@ -13,6 +13,9 @@ database.
 
 Baseline tag: `recipients-real-write-readiness-baseline`
 
+Implementation review:
+[recipient-activate-real-write-implementation-review.md](recipient-activate-real-write-implementation-review.md)
+
 ## Current Boundary
 
 Implemented no-mutation dry-run endpoints:

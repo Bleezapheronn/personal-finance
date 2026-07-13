@@ -165,3 +165,6 @@ Operation-specific planning for the first candidate active-state write is in
 That document now records the implemented, flag-gated recipient activate
 endpoint. Deactivate, create, update, delete, merge, frontend write adapters,
 dual-write, and SQLite authority migration remain unapproved.
+
+The implementation review for the completed activate slice is in
+[recipient-activate-real-write-implementation-review.md](recipient-activate-real-write-implementation-review.md).
