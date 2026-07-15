@@ -14,8 +14,11 @@ database.
 
 Baseline tag: `recipients-real-write-readiness-baseline`
 
-Implementation review:
+Activate implementation review:
 [recipient-activate-real-write-implementation-review.md](recipient-activate-real-write-implementation-review.md)
+
+Completed active-state implementation review:
+[recipients-active-state-real-write-implementation-review.md](recipients-active-state-real-write-implementation-review.md)
 
 ## Current Boundary
 

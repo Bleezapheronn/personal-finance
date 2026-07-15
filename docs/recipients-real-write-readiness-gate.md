@@ -168,3 +168,6 @@ dual-write, and SQLite authority migration remain unapproved.
 
 The implementation review for the completed activate slice is in
 [recipient-activate-real-write-implementation-review.md](recipient-activate-real-write-implementation-review.md).
+
+The implementation review for the completed activate/deactivate pair is in
+[recipients-active-state-real-write-implementation-review.md](recipients-active-state-real-write-implementation-review.md).
