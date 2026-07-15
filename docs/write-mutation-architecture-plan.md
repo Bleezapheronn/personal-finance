@@ -92,6 +92,10 @@ as a separate flag-gated, SQLite-only experiment behind
 delete, merge, frontend write adapters, UI integration, dual-write, transaction
 recipient-reference mutation, and authority migration remain future work.
 
+The consolidated status for the completed Recipients dry-run and real-write
+endpoint layer is
+[recipients-real-write-implementation-summary.md](recipients-real-write-implementation-summary.md).
+
 ### Transaction Writes
 
 Covered actions:

@@ -176,3 +176,7 @@ The implementation review for the completed activate slice is in
 
 The implementation review for the completed activate/deactivate pair is in
 [recipients-active-state-real-write-implementation-review.md](recipients-active-state-real-write-implementation-review.md).
+
+The consolidated status summary for the completed Recipients dry-run and
+real-write endpoint layer is in
+[recipients-real-write-implementation-summary.md](recipients-real-write-implementation-summary.md).
