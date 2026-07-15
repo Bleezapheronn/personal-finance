@@ -452,8 +452,13 @@ later dry-run endpoint is explicitly approved, keep each code slice isolated:
 9. Update docs with the implemented route behavior.
 
 Do not add frontend write adapters, Recipients write UI wiring, delete/merge
-dry-runs, real writes, dual-write, or transaction reference mutation in that
-slice.
+dry-runs, additional real writes, dual-write, or transaction reference mutation
+in a dry-run slice.
+
+After this dry-run plan, recipient create/update and activate/deactivate
+real-write endpoints were implemented as separate disabled-by-default,
+SQLite-only experiments. Delete, merge, frontend write adapters, UI wiring,
+dual-write, and transaction recipient-reference mutation remain out of scope.
 
 ## Smoke Test Coverage
 

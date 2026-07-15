@@ -22,10 +22,12 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /prototype/repositories/categories/:id`
 - `GET /prototype/repositories/recipients`
 - `GET /prototype/repositories/recipients/:id`
+- `POST /prototype/repositories/recipients/write/create` (experimental, disabled by default)
+- `POST /prototype/repositories/recipients/write/update` (experimental, disabled by default)
 - `POST /prototype/repositories/recipients/write/activate` (experimental, disabled by default)
 - `POST /prototype/repositories/recipients/write/deactivate` (experimental, disabled by default)
 
-The backend can optionally open a configured disposable SQLite database read-only for prototype diagnostics. It does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. The only experimental write endpoints are the disabled-by-default recipient activate/deactivate endpoints, which mutate disposable SQLite only when explicitly enabled. No frontend write path, write adapter, dual-write, or SQLite authority migration exists.
+The backend can optionally open a configured disposable SQLite database read-only for prototype diagnostics. It does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. The only experimental write endpoints are the disabled-by-default recipient create/update and activate/deactivate endpoints, which mutate disposable SQLite only when explicitly enabled. No frontend write path, write adapter, dual-write, or SQLite authority migration exists.
 
 ## Safety
 
@@ -443,17 +445,25 @@ Lookup endpoints are prototype-only and read-only. They are shaped for future re
 
 Lookup endpoints return sensitive personal finance metadata, especially account and recipient names, descriptions, contact details, and account identifiers. Use them only for local diagnostics against disposable SQLite.
 
-## Experimental Recipient Active-State Writes
+## Experimental Recipient Writes
 
-Two experimental real-write endpoints exist:
+Four experimental real-write endpoints exist:
 
 ```text
+POST /prototype/repositories/recipients/write/create
+POST /prototype/repositories/recipients/write/update
 POST /prototype/repositories/recipients/write/activate
 POST /prototype/repositories/recipients/write/deactivate
 ```
 
-They are disabled by default. To allow mutation, the server process must be
-started with:
+They are disabled by default. Create/update writes require the server process
+to be started with:
+
+```text
+PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES=true
+```
+
+Activate/deactivate writes require the separate active-state flag:
 
 ```text
 PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true
@@ -461,9 +471,47 @@ PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true
 
 The endpoints are protected by the same token and origin guards as the
 prototype repository reads. They mutate only the configured disposable SQLite
-database, update only `recipients.isActive`, and intentionally do not update
-`createdAt`, `updatedAt`, recipient names, contact fields, transactions, files,
-or Dexie / IndexedDB.
+database. Create inserts a recipient with `isActive: true`, `createdAt`, and
+`updatedAt`. Update changes recipient text/contact fields and refreshes
+`updatedAt`, while preserving `createdAt` and `isActive`. Activate/deactivate
+update only `recipients.isActive` and intentionally do not update `createdAt`
+or `updatedAt`. None of these endpoints update transactions, files, or Dexie /
+IndexedDB.
+
+Create request shape:
+
+```json
+{
+  "name": "Example Recipient",
+  "aliases": "Optional Alias",
+  "email": "optional@example.invalid",
+  "phone": "optional",
+  "tillNumber": "optional",
+  "paybill": "optional",
+  "accountNumber": "optional",
+  "description": "optional",
+  "dryRunReviewed": true,
+  "confirmation": "create recipient in disposable sqlite"
+}
+```
+
+Update request shape:
+
+```json
+{
+  "id": 123,
+  "name": "Example Recipient",
+  "aliases": "Optional Alias",
+  "email": "optional@example.invalid",
+  "phone": "optional",
+  "tillNumber": "optional",
+  "paybill": "optional",
+  "accountNumber": "optional",
+  "description": "optional",
+  "dryRunReviewed": true,
+  "confirmation": "update recipient in disposable sqlite"
+}
+```
 
 Activate request shape:
 
@@ -496,6 +544,7 @@ Normal `smoke:api` remains non-mutating. Successful write smoke is opt-in and
 mutates the disposable SQLite database:
 
 ```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-recipient-create-update-write-smoke
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-recipient-activate-write-smoke
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-recipient-deactivate-write-smoke
 ```
@@ -503,8 +552,8 @@ npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token 
 Run that opt-in smoke only against a disposable SQLite database imported from a
 fresh backup. After a successful write smoke, delete/re-import the SQLite
 database from the backup before using it as a clean parity baseline again.
-Create, update, delete, merge, frontend write adapters, UI integration,
-dual-write, and transaction recipient-reference mutation remain future work.
+Delete, merge, frontend write adapters, UI integration, dual-write, and
+transaction recipient-reference mutation remain future work.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 

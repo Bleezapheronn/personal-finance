@@ -114,7 +114,10 @@ is documentation only and does not authorize implementation.
   status, and rounded derived-value mismatch counts without rendering budget
   descriptions, amount values, target values, raw rows, names, tokens, or
   SQLite paths. It does not call budget snapshot lifecycle helpers.
-- No create, update, delete, import, restore, or repair HTTP paths exist.
+- Disabled-by-default server-side recipient create/update and activate/deactivate
+  write experiments exist for disposable SQLite only. No frontend write adapter,
+  UI write integration, dual-write, delete, merge, import, restore, repair, or
+  authority migration path exists.
 - No write no-ops exist; future HTTP write attempts must fail loudly.
 - Browser token exposure is accepted only for this local prototype, never for
   production or shared environments.

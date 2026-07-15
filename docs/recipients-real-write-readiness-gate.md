@@ -9,10 +9,11 @@ Dexie / IndexedDB remains authoritative. SQLite remains disposable. The
 implemented Recipients dry-run endpoints are validation-only and do not
 authorize real writes.
 
-Since this gate was written, recipient activate and deactivate have been
-implemented as disabled-by-default, SQLite-only experiments behind separate
-approved implementation slices. This gate remains the boundary for create,
-update, delete, merge, and any additional real write.
+Since this gate was written, recipient create, update, activate, and deactivate
+have been implemented as disabled-by-default, SQLite-only experiments behind
+separate approved implementation slices. This gate remains the boundary for
+delete, merge, frontend write adapters, UI integration, dual-write, authority
+migration, and any additional real write.
 
 Baseline tag: `recipients-basic-dry-run-review-baseline`
 
@@ -99,18 +100,19 @@ added.
 
 ## Operation Order
 
-Allowed order for future consideration:
+Implemented experimental order:
 
 1. Activate/deactivate real write:
-   First candidate because it changes one boolean and current Dexie behavior
-   does not touch `updatedAt`. This still requires an operation-specific plan,
-   backup, rollback, and verification.
+   Implemented as disabled-by-default, SQLite-only endpoints. They change only
+   `isActive` and do not touch `updatedAt`.
 2. Create real write:
-   Only after ID generation, timestamp behavior, validation source of truth,
-   and duplicate behavior are locked.
+   Implemented as a disabled-by-default, SQLite-only endpoint. SQLite generates
+   the disposable ID, `isActive` defaults to true, and `createdAt`/`updatedAt`
+   are set.
 3. Update real write:
-   Only after duplicate behavior, alias behavior, and the till-number ambiguity
-   are settled.
+   Implemented as a disabled-by-default, SQLite-only endpoint. It updates
+   recipient text/contact fields and `updatedAt`, while preserving `createdAt`
+   and `isActive`.
 
 Deferred:
 
@@ -163,8 +165,11 @@ after that separate plan is approved.
 Operation-specific planning for the first candidate active-state write is in
 [recipients-active-state-real-write-plan.md](recipients-active-state-real-write-plan.md).
 That document now records the implemented, flag-gated recipient activate and
-deactivate endpoints. Create, update, delete, merge, frontend write adapters,
-dual-write, and SQLite authority migration remain unapproved.
+deactivate endpoints. Recipient create/update real-write endpoints are now
+implemented as a separate disabled-by-default SQLite-only experiment behind
+`PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES=true`. Delete, merge,
+frontend write adapters, dual-write, UI integration, transaction
+recipient-reference mutation, and SQLite authority migration remain unapproved.
 
 The implementation review for the completed activate slice is in
 [recipient-activate-real-write-implementation-review.md](recipient-activate-real-write-implementation-review.md).

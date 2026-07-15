@@ -29,8 +29,8 @@ PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true
 
 Explicitly not implemented:
 
-- recipient create real write
-- recipient update real write
+- recipient create real write, now implemented separately after this review
+- recipient update real write, now implemented separately after this review
 - recipient delete real write
 - recipient merge real write
 - frontend write adapter
@@ -57,7 +57,8 @@ Explicitly not implemented:
 
 No gaps were found against the approved active-state plan for the implemented
 activate/deactivate pair. Unknowns and future work remain outside this review:
-create/update/delete/merge behavior, frontend write adapters, UI integration,
+create/update behavior from its later separate slice, delete/merge behavior,
+frontend write adapters, UI integration,
 dual-write, and any authority migration.
 
 ## Request Contracts
@@ -189,7 +190,8 @@ Normal `smoke:api` is intentionally non-mutating. It verifies:
 - unexpected origins are rejected
 - validation failures are redacted
 - default-disabled activate/deactivate write paths do not mutate SQLite
-- recipient create/update/delete/merge write routes remain absent
+- recipient create/update routes are covered by a later separate implementation
+  slice; delete/merge write routes remain absent
 - dry-run endpoints still pass
 - row count and safe list fingerprint remain stable during default-disabled
   write checks
@@ -232,7 +234,8 @@ Additional guard coverage:
 - SQLite remains disposable.
 - No UI should call these endpoints.
 - No frontend write adapter exists.
-- Create, update, delete, and merge real writes remain deferred.
+- Create/update real writes are covered by a later separate implementation
+  slice. Delete and merge real writes remain deferred.
 - Passing this review does not authorize broader writes, UI wiring,
   dual-write, or SQLite authority migration.
 

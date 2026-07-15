@@ -7,6 +7,8 @@ const TOKEN_HEADER_NAME = "x-personal-finance-token";
 const DEFAULT_ALLOWED_ORIGIN = "http://localhost:5173";
 const RECIPIENT_ACTIVATE_WRITE_CONFIRMATION = "activate recipient in disposable sqlite";
 const RECIPIENT_DEACTIVATE_WRITE_CONFIRMATION = "deactivate recipient in disposable sqlite";
+const RECIPIENT_CREATE_WRITE_CONFIRMATION = "create recipient in disposable sqlite";
+const RECIPIENT_UPDATE_WRITE_CONFIRMATION = "update recipient in disposable sqlite";
 
 interface SmokeArgs {
   baseUrl: string;
@@ -15,6 +17,7 @@ interface SmokeArgs {
   origin?: string;
   allowRecipientActivateWriteSmoke: boolean;
   allowRecipientDeactivateWriteSmoke: boolean;
+  allowRecipientCreateUpdateWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -82,6 +85,8 @@ Options:
                          Opt in to one disposable SQLite recipient activate write smoke.
   --allow-recipient-deactivate-write-smoke
                          Opt in to one disposable SQLite recipient deactivate write smoke.
+  --allow-recipient-create-update-write-smoke
+                         Opt in to disposable SQLite recipient create/update write smoke.
   --help                 Show this help text.
 `;
 
@@ -90,6 +95,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     baseUrl: DEFAULT_BASE_URL,
     allowRecipientActivateWriteSmoke: false,
     allowRecipientDeactivateWriteSmoke: false,
+    allowRecipientCreateUpdateWriteSmoke: false,
     help: false,
   };
 
@@ -132,6 +138,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-recipient-deactivate-write-smoke") {
       args.allowRecipientDeactivateWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-recipient-create-update-write-smoke") {
+      args.allowRecipientCreateUpdateWriteSmoke = true;
       continue;
     }
 
@@ -337,6 +348,31 @@ const expectSafeActiveStateWriteShape = (
   expect(safety.rawRowsIncluded === false, "write_raw_rows_reported");
 };
 
+const expectSafeCreateUpdateWriteShape = (
+  json: ResponseJson,
+  action: "create" | "update",
+): void => {
+  expect(json.action === action, "unexpected_create_update_write_action");
+  expect(json.dryRunRequired === true, "create_update_write_dry_run_required_flag_missing");
+  expect(json.realWrite === true, "create_update_real_write_flag_missing");
+  expect(typeof json.sqliteMutated === "boolean", "create_update_sqlite_mutated_flag_missing");
+  expect(typeof json.rowsChanged === "number", "create_update_rows_changed_missing");
+  expect(typeof json.targetIdPresent === "boolean", "create_update_target_presence_missing");
+  expect(typeof json.normalizedFieldPresence === "object", "create_update_normalized_summary_missing");
+  expect(typeof json.duplicateSummary === "object", "create_update_duplicate_summary_missing");
+  expect(typeof json.timestampBehavior === "object", "create_update_timestamp_behavior_missing");
+  expect(typeof json.affectedSummary === "object", "create_update_affected_summary_missing");
+  expect(typeof json.safety === "object", "create_update_write_safety_missing");
+  const safety = json.safety as Record<string, unknown>;
+  expect(safety.dexieMutated === false, "create_update_write_dexie_mutation_reported");
+  expect(safety.filesWritten === false, "create_update_write_file_write_reported");
+  expect(
+    safety.transactionReferencesMutated === false,
+    "create_update_write_transaction_mutation_reported",
+  );
+  expect(safety.rawRowsIncluded === false, "create_update_write_raw_rows_reported");
+};
+
 const recipientDetail = (json: ResponseJson): Record<string, unknown> => {
   const recipient = json.recipient;
   expect(
@@ -393,6 +429,7 @@ const buildChecks = (
   origin: string | undefined,
   allowRecipientActivateWriteSmoke: boolean,
   allowRecipientDeactivateWriteSmoke: boolean,
+  allowRecipientCreateUpdateWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -407,6 +444,8 @@ const buildChecks = (
   let sampledRecipientNameDuplicateCount: number | undefined;
   let activeRecipientId: number | undefined;
   let inactiveRecipientId: number | undefined;
+  let createdRecipientId: number | undefined;
+  let createUpdateSmokeSequence = Date.now();
   const sampledLookupIds = new Map<string, number>();
   const lookupResources = [
     "accounts",
@@ -1875,9 +1914,229 @@ const buildChecks = (
         ]
       : []),
     {
-      name: "recipient create, update, delete, and merge writes are not implemented",
+      name: "recipient create write fails without token",
       run: async () => {
-        for (const action of ["create", "update", "delete", "merge"] as const) {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/write/create",
+          {
+            method: "POST",
+            body: {
+              name: "Smoke Write No Token",
+              dryRunReviewed: true,
+              confirmation: RECIPIENT_CREATE_WRITE_CONFIRMATION,
+            },
+          },
+        );
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_create_write_unauthorized_response");
+      },
+    },
+    {
+      name: "recipient create write bad origin is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/write/create",
+          {
+            method: "POST",
+            token,
+            origin: "http://unexpected-origin.invalid",
+            body: {
+              name: "Smoke Write Bad Origin",
+              dryRunReviewed: true,
+              confirmation: RECIPIENT_CREATE_WRITE_CONFIRMATION,
+            },
+          },
+        );
+        expectStatus(status, 403);
+        expect(json.error === "forbidden_origin", "unexpected_create_write_origin_response");
+      },
+    },
+    {
+      name: "recipient create write validation failures are redacted",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/write/create",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              name: "   ",
+              dryRunReviewed: true,
+              confirmation: RECIPIENT_CREATE_WRITE_CONFIRMATION,
+            },
+          },
+        );
+        expectStatus(status, 400);
+        expect(json.code === "name_required", "create_write_missing_name_code_missing");
+        expectSafeCreateUpdateWriteShape(json, "create");
+        expect(json.sqliteMutated === false, "create_write_validation_mutated");
+        expect(json.rowsChanged === 0, "create_write_validation_rows_changed");
+      },
+    },
+    ...(!allowRecipientCreateUpdateWriteSmoke
+      ? [
+          {
+            name: "recipient create write default smoke does not mutate",
+            run: async () => {
+              const { status, json } = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    name: "Smoke Write Disabled Create",
+                    dryRunReviewed: true,
+                    confirmation: RECIPIENT_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(status, 403);
+              expect(
+                json.code === "recipient_create_update_writes_disabled",
+                "create_write_disabled_code_missing",
+              );
+              expectSafeCreateUpdateWriteShape(json, "create");
+              expect(json.sqliteMutated === false, "default_create_write_mutated");
+              expect(json.rowsChanged === 0, "default_create_write_rows_changed");
+
+              const listResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients?limit=500",
+                authedOptions,
+              );
+              expectStatus(listResponse.status, 200);
+              expect(
+                countFromListResponse(listResponse.json) === recipientCountBeforeDryRun,
+                "default_create_write_changed_recipient_count",
+              );
+              expect(
+                listResponseFingerprint(listResponse.json) === recipientFingerprintBeforeDryRun,
+                "default_create_write_changed_recipient_sample",
+              );
+            },
+          },
+        ]
+      : []),
+    {
+      name: "recipient update write fails without token",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/write/update",
+          {
+            method: "POST",
+            body: {
+              id: 1,
+              name: "Smoke Write Update No Token",
+              dryRunReviewed: true,
+              confirmation: RECIPIENT_UPDATE_WRITE_CONFIRMATION,
+            },
+          },
+        );
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_update_write_unauthorized_response");
+      },
+    },
+    {
+      name: "recipient update write bad origin is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/write/update",
+          {
+            method: "POST",
+            token,
+            origin: "http://unexpected-origin.invalid",
+            body: {
+              id: 1,
+              name: "Smoke Write Update Bad Origin",
+              dryRunReviewed: true,
+              confirmation: RECIPIENT_UPDATE_WRITE_CONFIRMATION,
+            },
+          },
+        );
+        expectStatus(status, 403);
+        expect(json.error === "forbidden_origin", "unexpected_update_write_origin_response");
+      },
+    },
+    {
+      name: "recipient update write validation failures are redacted",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/write/update",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              name: "Smoke Write Missing Id",
+              dryRunReviewed: true,
+              confirmation: RECIPIENT_UPDATE_WRITE_CONFIRMATION,
+            },
+          },
+        );
+        expectStatus(status, 400);
+        expect(json.code === "id_required", "update_write_missing_id_code_missing");
+        expectSafeCreateUpdateWriteShape(json, "update");
+        expect(json.sqliteMutated === false, "update_write_validation_mutated");
+        expect(json.rowsChanged === 0, "update_write_validation_rows_changed");
+      },
+    },
+    ...(!allowRecipientCreateUpdateWriteSmoke
+      ? [
+          {
+            name: "recipient update write default smoke does not mutate",
+            run: async () => {
+              const targetId = sampledRecipientId ?? 1;
+              const { status, json } = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/write/update",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: targetId,
+                    name: "Smoke Write Disabled Update",
+                    dryRunReviewed: true,
+                    confirmation: RECIPIENT_UPDATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(status, 403);
+              expect(
+                json.code === "recipient_create_update_writes_disabled",
+                "update_write_disabled_code_missing",
+              );
+              expectSafeCreateUpdateWriteShape(json, "update");
+              expect(json.sqliteMutated === false, "default_update_write_mutated");
+              expect(json.rowsChanged === 0, "default_update_write_rows_changed");
+
+              const listResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients?limit=500",
+                authedOptions,
+              );
+              expectStatus(listResponse.status, 200);
+              expect(
+                countFromListResponse(listResponse.json) === recipientCountBeforeDryRun,
+                "default_update_write_changed_recipient_count",
+              );
+              expect(
+                listResponseFingerprint(listResponse.json) === recipientFingerprintBeforeDryRun,
+                "default_update_write_changed_recipient_sample",
+              );
+            },
+          },
+        ]
+      : []),
+    {
+      name: "recipient delete and merge writes are not implemented",
+      run: async () => {
+        for (const action of ["delete", "merge"] as const) {
           const { status } = await requestJson(
             baseUrl,
             `/prototype/repositories/recipients/write/${action}`,
@@ -1891,12 +2150,201 @@ const buildChecks = (
         }
       },
     },
+    ...(allowRecipientCreateUpdateWriteSmoke
+      ? [
+          {
+            name: "recipient create/update write opt-in smoke mutates disposable rows only",
+            run: async () => {
+              expect(recipientCountBeforeDryRun !== undefined, "recipient_baseline_count_missing");
+              const recipientBaselineCount = recipientCountBeforeDryRun as number;
+              createUpdateSmokeSequence += 1;
+              const createValues = [
+                `Smoke Write Created Recipient ${createUpdateSmokeSequence}`,
+                `Smoke Write Created Alias ${createUpdateSmokeSequence}`,
+                `smoke-write-${createUpdateSmokeSequence}@example.invalid`,
+                `555${createUpdateSmokeSequence}`,
+                `91${createUpdateSmokeSequence}`,
+                `81${createUpdateSmokeSequence}`,
+                `71${createUpdateSmokeSequence}`,
+                `Smoke Write Created Description ${createUpdateSmokeSequence}`,
+              ];
+
+              const createDryRunResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/dry-run/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    name: createValues[0],
+                    aliases: createValues[1],
+                    email: createValues[2],
+                    phone: createValues[3],
+                    tillNumber: createValues[4],
+                    paybill: createValues[5],
+                    accountNumber: createValues[6],
+                    description: createValues[7],
+                  },
+                },
+              );
+              expectStatus(createDryRunResponse.status, 200);
+              expect(createDryRunResponse.json.ok === true, "create_write_dry_run_failed");
+              expectDryRunSafety(createDryRunResponse.json, "create");
+
+              const createWriteResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    name: createValues[0],
+                    aliases: createValues[1],
+                    email: createValues[2],
+                    phone: createValues[3],
+                    tillNumber: createValues[4],
+                    paybill: createValues[5],
+                    accountNumber: createValues[6],
+                    description: createValues[7],
+                    dryRunReviewed: true,
+                    confirmation: RECIPIENT_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(createWriteResponse.status, 200);
+              expect(createWriteResponse.json.ok === true, "create_write_should_pass");
+              expectSafeCreateUpdateWriteShape(createWriteResponse.json, "create");
+              expect(createWriteResponse.json.sqliteMutated === true, "create_write_did_not_mutate");
+              expect(createWriteResponse.json.rowsChanged === 1, "create_write_changed_wrong_row_count");
+              expectNoSensitiveEcho(createWriteResponse.json, createValues);
+              const targetId = createWriteResponse.json.targetId;
+              expect(typeof targetId === "number", "create_write_target_id_missing");
+              createdRecipientId = targetId as number;
+
+              const createdDetailResponse = await requestJson(
+                baseUrl,
+                `/prototype/repositories/recipients/${createdRecipientId}`,
+                authedOptions,
+              );
+              expectStatus(createdDetailResponse.status, 200);
+              const createdRecipient = recipientDetail(createdDetailResponse.json);
+              expect(createdRecipient.id === createdRecipientId, "create_write_read_id_mismatch");
+              expect(createdRecipient.isActive === 1 || createdRecipient.isActive === true, "created_recipient_not_active");
+              const createdAt = createdRecipient.createdAt;
+              const firstUpdatedAt = createdRecipient.updatedAt;
+              expect(typeof createdAt === "string", "created_at_missing_after_create");
+              expect(typeof firstUpdatedAt === "string", "updated_at_missing_after_create");
+
+              const listAfterCreate = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients?limit=500",
+                authedOptions,
+              );
+              expectStatus(listAfterCreate.status, 200);
+              expect(
+                countFromListResponse(listAfterCreate.json) === recipientBaselineCount + 1,
+                "create_write_did_not_increment_recipient_count",
+              );
+
+              createUpdateSmokeSequence += 1;
+              const updateValues = [
+                `Smoke Write Updated Recipient ${createUpdateSmokeSequence}`,
+                `Smoke Write Updated Alias ${createUpdateSmokeSequence}`,
+                `smoke-write-update-${createUpdateSmokeSequence}@example.invalid`,
+                `556${createUpdateSmokeSequence}`,
+                `92${createUpdateSmokeSequence}`,
+                `82${createUpdateSmokeSequence}`,
+                `72${createUpdateSmokeSequence}`,
+                `Smoke Write Updated Description ${createUpdateSmokeSequence}`,
+              ];
+
+              const updateDryRunResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/dry-run/update",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: createdRecipientId,
+                    name: updateValues[0],
+                    aliases: updateValues[1],
+                    email: updateValues[2],
+                    phone: updateValues[3],
+                    tillNumber: updateValues[4],
+                    paybill: updateValues[5],
+                    accountNumber: updateValues[6],
+                    description: updateValues[7],
+                  },
+                },
+              );
+              expectStatus(updateDryRunResponse.status, 200);
+              expect(updateDryRunResponse.json.ok === true, "update_write_dry_run_failed");
+              expectDryRunSafety(updateDryRunResponse.json, "update");
+
+              const updateWriteResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/write/update",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: createdRecipientId,
+                    name: updateValues[0],
+                    aliases: updateValues[1],
+                    email: updateValues[2],
+                    phone: updateValues[3],
+                    tillNumber: updateValues[4],
+                    paybill: updateValues[5],
+                    accountNumber: updateValues[6],
+                    description: updateValues[7],
+                    dryRunReviewed: true,
+                    confirmation: RECIPIENT_UPDATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(updateWriteResponse.status, 200);
+              expect(updateWriteResponse.json.ok === true, "update_write_should_pass");
+              expectSafeCreateUpdateWriteShape(updateWriteResponse.json, "update");
+              expect(updateWriteResponse.json.sqliteMutated === true, "update_write_did_not_mutate");
+              expect(updateWriteResponse.json.rowsChanged === 1, "update_write_changed_wrong_row_count");
+              expectNoSensitiveEcho(updateWriteResponse.json, [...createValues, ...updateValues]);
+
+              const updatedDetailResponse = await requestJson(
+                baseUrl,
+                `/prototype/repositories/recipients/${createdRecipientId}`,
+                authedOptions,
+              );
+              expectStatus(updatedDetailResponse.status, 200);
+              const updatedRecipient = recipientDetail(updatedDetailResponse.json);
+              expect(updatedRecipient.id === createdRecipientId, "update_write_read_id_mismatch");
+              expect(updatedRecipient.createdAt === createdAt, "update_write_changed_created_at");
+              expect(updatedRecipient.updatedAt !== firstUpdatedAt, "update_write_did_not_change_updated_at");
+              expect(
+                updatedRecipient.isActive === createdRecipient.isActive,
+                "update_write_changed_active_state",
+              );
+
+              const listAfterUpdate = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients?limit=500",
+                authedOptions,
+              );
+              expectStatus(listAfterUpdate.status, 200);
+              expect(
+                countFromListResponse(listAfterUpdate.json) === recipientBaselineCount + 1,
+                "update_write_changed_recipient_count",
+              );
+            },
+          },
+        ]
+      : []),
     ...(allowRecipientActivateWriteSmoke
       ? [
           {
             name: "recipient activate write opt-in smoke mutates exactly one disposable row",
             run: async () => {
               expect(recipientCountBeforeDryRun !== undefined, "recipient_baseline_count_missing");
+              const recipientBaselineCount = recipientCountBeforeDryRun as number;
               if (inactiveRecipientId === undefined) {
                 throw new Error("inactive_recipient_required_for_opt_in_write_smoke");
               }
@@ -1969,7 +2417,8 @@ const buildChecks = (
               );
               expectStatus(afterListResponse.status, 200);
               expect(
-                countFromListResponse(afterListResponse.json) === recipientCountBeforeDryRun,
+                countFromListResponse(afterListResponse.json) ===
+                  recipientBaselineCount + (createdRecipientId !== undefined ? 1 : 0),
                 "activate_write_changed_recipient_count",
               );
 
@@ -2006,6 +2455,7 @@ const buildChecks = (
             name: "recipient deactivate write opt-in smoke mutates exactly one disposable row",
             run: async () => {
               expect(recipientCountBeforeDryRun !== undefined, "recipient_baseline_count_missing");
+              const recipientBaselineCount = recipientCountBeforeDryRun as number;
               if (activeRecipientId === undefined) {
                 throw new Error("active_recipient_required_for_opt_in_write_smoke");
               }
@@ -2078,7 +2528,8 @@ const buildChecks = (
               );
               expectStatus(afterListResponse.status, 200);
               expect(
-                countFromListResponse(afterListResponse.json) === recipientCountBeforeDryRun,
+                countFromListResponse(afterListResponse.json) ===
+                  recipientBaselineCount + (createdRecipientId !== undefined ? 1 : 0),
                 "deactivate_write_changed_recipient_count",
               );
 
@@ -2183,6 +2634,7 @@ const main = async (): Promise<void> => {
     args.origin,
     args.allowRecipientActivateWriteSmoke,
     args.allowRecipientDeactivateWriteSmoke,
+    args.allowRecipientCreateUpdateWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

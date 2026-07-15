@@ -10,6 +10,8 @@ export const TOKEN_FILE_NAME = ".server-token" as const;
 export const SQLITE_PATH_ENV_VAR = "PERSONAL_FINANCE_SQLITE_PATH" as const;
 export const RECIPIENT_ACTIVE_STATE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES" as const;
+export const RECIPIENT_CREATE_UPDATE_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES" as const;
 
 export const ALLOWED_ORIGINS = new Set([
   "http://localhost:8100",
@@ -43,3 +45,6 @@ export const getSqlitePath = (): string | undefined => {
 
 export const areRecipientActiveStateWritesEnabled = (): boolean =>
   process.env[RECIPIENT_ACTIVE_STATE_WRITES_ENV_VAR] === "true";
+
+export const areRecipientCreateUpdateWritesEnabled = (): boolean =>
+  process.env[RECIPIENT_CREATE_UPDATE_WRITES_ENV_VAR] === "true";

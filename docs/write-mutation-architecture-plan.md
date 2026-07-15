@@ -10,8 +10,9 @@ read parity is not write approval. Dexie / IndexedDB remains authoritative.
 SQLite remains disposable until an explicit authority migration is designed,
 approved, implemented, backed up, and verified. Frontend HTTP repositories
 remain read-only. The only server-side real-write experiments are the
-flag-gated recipient activate/deactivate endpoints; no additional write
-endpoint should be added without a separate per-domain design and approval.
+flag-gated recipient create/update and activate/deactivate endpoints; no
+additional write endpoint should be added without a separate per-domain design
+and approval.
 
 Current read baseline:
 
@@ -34,9 +35,9 @@ Until a future write phase is explicitly approved:
 - SQLite remains disposable.
 - Frontend HTTP repositories remain read-only.
 - Read parity diagnostics do not authorize writes.
-- Except for the explicitly approved recipient activate/deactivate
-  experiments, no API route may create, update, delete, import, restore,
-  repair, sync, or mutate financial data.
+- Except for the explicitly approved recipient create/update and
+  activate/deactivate experiments, no API route may create, update, delete,
+  import, restore, repair, sync, or mutate financial data.
 - No frontend repository may silently no-op write methods in HTTP mode.
 - No screen may send mutations to HTTP.
 - No budget snapshot lifecycle behavior may move to HTTP.
@@ -85,9 +86,11 @@ The first operation-specific candidate plan is
 [recipients-active-state-real-write-plan.md](recipients-active-state-real-write-plan.md),
 covering active-state writes. Recipient activate is implemented as a
 flag-gated, SQLite-only experiment. Recipient deactivate is implemented as a
-flag-gated, SQLite-only experiment. Recipient create, update, delete, merge,
-frontend write adapters, dual-write, and authority migration remain future
-work.
+flag-gated, SQLite-only experiment. Recipient create and update are implemented
+as a separate flag-gated, SQLite-only experiment behind
+`PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES=true`. Recipient
+delete, merge, frontend write adapters, UI integration, dual-write, transaction
+recipient-reference mutation, and authority migration remain future work.
 
 ### Transaction Writes
 
@@ -188,7 +191,7 @@ Before any write code is implemented, the project needs explicit decisions for:
 ## Not Allowed Yet
 
 - No additional write endpoints beyond the explicitly approved, flag-gated
-  recipient activate/deactivate experiments.
+  recipient create/update and activate/deactivate experiments.
 - No repository write adapters.
 - No dual-write.
 - No background sync.
