@@ -23,6 +23,7 @@ VITE_PERSONAL_FINANCE_LOCAL_API_URL=http://127.0.0.1:3147
 VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN=<local prototype token>
 VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS=true
 VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS=true
+VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT=true
 ```
 
 `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND` supports:
@@ -49,6 +50,22 @@ Do not commit `.env` files or token values. The local API client fails closed
 when its URL or token is missing, and it does not include token values in thrown
 errors.
 
+`VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT=true` enables the dev-only
+Recipients SQLite write UI experiment only when
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly` is also selected.
+Restart Vite after changing this flag. The API server must separately be
+started with the backend write flags for the actions being tested:
+
+```text
+PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES=true
+PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true
+```
+
+The Recipients write experiment is SQLite-only and disposable. Dexie remains
+authoritative, no dual-write occurs, and delete/merge remain unavailable.
+Successful writes dirty the disposable SQLite database; re-import SQLite from a
+fresh backup before clean parity checks.
+
 Browser calls use the custom `x-personal-finance-token` header, which triggers a
 CORS preflight request. The local API server must be running with the Vite dev
 origin allowed. The prototype server allows these common Vite origins by
@@ -71,12 +88,14 @@ The scaffold uses `fetch` and sends the token with the server's existing
 - budgets: budget and budget snapshot list/detail reads
 - budget snapshots for a budget
 
-No write calls are implemented. Normal app behavior still defaults to Dexie;
-local API use is limited to diagnostics and explicit flag-gated read
-experiments.
+No broad write adapter is implemented. Normal app behavior still defaults to
+Dexie; local API use is limited to diagnostics, explicit flag-gated read
+experiments, and the dev-only Recipients SQLite write experiment.
 
-The `http-readonly` backend has no write support. Future consumers must not
-silently no-op writes; write attempts in HTTP-readonly mode should fail loudly.
+The selected-read `http-readonly` facade has no write support. Future consumers
+must not silently no-op writes; write attempts through the selected-read facade
+in HTTP-readonly mode should fail loudly. The dev-only Recipients write
+experiment uses a separate, narrow helper and is not a broad write repository.
 Dexie remains authoritative.
 
 ## Selected Read Facade
