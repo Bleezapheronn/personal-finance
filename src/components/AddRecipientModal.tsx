@@ -30,6 +30,21 @@ interface AddRecipientModalProps {
     accountNumber?: string,
     excludeId?: number
   ) => Promise<Recipient | null>;
+  onSaveRecipient?: (
+    input: RecipientFormValues,
+    editingRecipient?: Recipient | null
+  ) => Promise<void>;
+}
+
+export interface RecipientFormValues {
+  name: string;
+  aliases?: string;
+  email?: string;
+  phone?: string;
+  tillNumber?: string;
+  paybill?: string;
+  accountNumber?: string;
+  description?: string;
 }
 
 export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
@@ -39,6 +54,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
   editingRecipient,
   onDuplicateFound,
   checkForDuplicate,
+  onSaveRecipient,
 }) => {
   const [name, setName] = useState("");
   const [aliases, setAliases] = useState(""); // NEW: Aliases field
@@ -114,6 +130,24 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
     try {
       setLoading(true);
 
+      const formValues: RecipientFormValues = {
+        name: name.trim(),
+        aliases: aliases.trim() || undefined,
+        email: email.trim() || undefined,
+        phone: phone.trim() || undefined,
+        tillNumber: tillNumber.trim() || undefined,
+        paybill: paybill.trim() || undefined,
+        accountNumber: accountNumber.trim() || undefined,
+        description: description.trim() || undefined,
+      };
+
+      if (onSaveRecipient) {
+        await onSaveRecipient(formValues, editingRecipient);
+        resetForm();
+        onClose();
+        return;
+      }
+
       // Check for duplicate name when adding NEW recipient
       if (!editingRecipient?.id && checkForDuplicate) {
         const duplicate = await checkForDuplicate(
@@ -183,14 +217,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
       if (editingRecipient?.id) {
         // UPDATE MODE
         await db.recipients.update(editingRecipient.id, {
-          name: name.trim(),
-          aliases: aliases.trim() || undefined,
-          email: email.trim() || undefined,
-          phone: phone.trim() || undefined,
-          tillNumber: tillNumber.trim() || undefined,
-          paybill: paybill.trim() || undefined,
-          accountNumber: accountNumber.trim() || undefined,
-          description: description.trim() || undefined,
+          ...formValues,
           updatedAt: now,
         });
         const updated = await db.recipients.get(editingRecipient.id);
@@ -201,14 +228,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
       } else {
         // ADD MODE
         const newRecipient: Omit<Recipient, "id"> = {
-          name: name.trim(),
-          aliases: aliases.trim() || undefined,
-          email: email.trim() || undefined,
-          phone: phone.trim() || undefined,
-          tillNumber: tillNumber.trim() || undefined,
-          paybill: paybill.trim() || undefined,
-          accountNumber: accountNumber.trim() || undefined,
-          description: description.trim() || undefined,
+          ...formValues,
           isActive: true,
           createdAt: now,
           updatedAt: now,
@@ -228,7 +248,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
       onClose();
     } catch (err) {
       console.error(err);
-      setErrorMsg("Failed to save recipient");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to save recipient");
     } finally {
       setLoading(false);
     }

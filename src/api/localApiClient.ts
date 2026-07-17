@@ -109,3 +109,25 @@ export const localApiGet = async <ResponseBody>(
 
   return (await response.json()) as ResponseBody;
 };
+
+export const localApiPost = async <ResponseBody>(
+  pathname: string,
+  body: unknown,
+): Promise<ResponseBody> => {
+  const config = getLocalApiClientConfig();
+  const response = await fetch(buildUrl(config.baseUrl, pathname, undefined), {
+    method: "POST",
+    headers: {
+      [TOKEN_HEADER_NAME]: config.token,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const code = await responseCode(response);
+    throw new LocalApiError(code, "Local API request failed.", response.status);
+  }
+
+  return (await response.json()) as ResponseBody;
+};

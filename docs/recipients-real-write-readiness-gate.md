@@ -12,8 +12,10 @@ authorize real writes.
 Since this gate was written, recipient create, update, activate, and deactivate
 have been implemented as disabled-by-default, SQLite-only experiments behind
 separate approved implementation slices. This gate remains the boundary for
-delete, merge, frontend write adapters, UI integration, dual-write, authority
-migration, and any additional real write.
+delete, merge, broad frontend write adapters, dual-write, authority migration,
+and any additional real write. A dev-only Recipients UI wiring experiment now
+exists for create/update/activate/deactivate only; it is disabled by default
+and does not authorize delete, merge, dual-write, or authority migration.
 
 Baseline tag: `recipients-basic-dry-run-review-baseline`
 
@@ -127,8 +129,8 @@ Deferred:
 - No transaction recipient-reference mutation.
 - No dual-write.
 - No background sync.
-- No frontend write adapter.
-- No UI integration.
+- No broad frontend write adapter.
+- No UI integration outside the explicit dev-only Recipients write experiment.
 - No permanent SQLite authority switch.
 - No writes without backup and rollback rehearsal.
 - No batch operation that combines create, update, activate, deactivate,
@@ -170,6 +172,9 @@ implemented as a separate disabled-by-default SQLite-only experiment behind
 `PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES=true`. Delete, merge,
 frontend write adapters, dual-write, UI integration, transaction
 recipient-reference mutation, and SQLite authority migration remain unapproved.
+The dev-only Recipients UI write experiment is documented in
+[recipients-real-write-implementation-summary.md](recipients-real-write-implementation-summary.md)
+and remains disabled by default.
 
 The implementation review for the completed activate slice is in
 [recipient-activate-real-write-implementation-review.md](recipient-activate-real-write-implementation-review.md).

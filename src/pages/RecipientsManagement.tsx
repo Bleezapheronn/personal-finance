@@ -35,7 +35,10 @@ import {
   warningOutline,
 } from "ionicons/icons";
 import { db } from "../db";
-import { AddRecipientModal } from "../components/AddRecipientModal";
+import {
+  AddRecipientModal,
+  type RecipientFormValues,
+} from "../components/AddRecipientModal";
 import { findAllDuplicatePairs } from "../utils/recipientMerge";
 import { MergeRecipientsModal } from "../components/MergeRecipientsModal";
 import { recipientRepository, transactionRepository } from "../repositories";
@@ -45,6 +48,14 @@ import {
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
+import {
+  activateRecipientInDisposableSqlite,
+  createRecipientInDisposableSqlite,
+  deactivateRecipientInDisposableSqlite,
+  isRecipientsWriteExperimentEnabled,
+  recipientWriteErrorCode,
+  updateRecipientInDisposableSqlite,
+} from "../repositories/http/recipientWriteExperiment";
 import {
   booleanValue,
   type DevPreviewListResult,
@@ -169,12 +180,67 @@ const RecipientsManagement: React.FC = () => {
 
   const selectedBackend = getRepositoryBackend();
   const recipientsReadExperimentEnabled = isRecipientsReadExperimentEnabled();
-  const recipientsReadExperimentHttpReadonly =
-    recipientsReadExperimentEnabled && selectedBackend === "http-readonly";
+  const recipientsWriteExperimentEnabled = isRecipientsWriteExperimentEnabled();
+  const recipientsSqliteWriteExperimentActive =
+    recipientsWriteExperimentEnabled && selectedBackend === "http-readonly";
+  const recipientsHttpSelectedReadActive =
+    (recipientsReadExperimentEnabled || recipientsWriteExperimentEnabled) &&
+    selectedBackend === "http-readonly";
+  const recipientsHttpReadonlyWithoutWrites =
+    recipientsHttpSelectedReadActive && !recipientsSqliteWriteExperimentActive;
 
   useEffect(() => {
     fetchRecipients();
   }, []);
+
+  const safeRecipientWriteMessage = (code: string): string => {
+    if (code === "recipient_create_update_writes_disabled") {
+      return "Server recipient create/update write flag is off.";
+    }
+
+    if (code === "recipient_active_state_writes_disabled") {
+      return "Server recipient active-state write flag is off.";
+    }
+
+    if (
+      code === "local_api_base_url_missing" ||
+      code === "local_api_token_missing" ||
+      code === "recipient_write_failed" ||
+      code === "local_api_request_failed"
+    ) {
+      return "Local API write failed. Check the local server and write flags.";
+    }
+
+    return `Recipient write failed: ${code}`;
+  };
+
+  const showSafeRecipientWriteError = (error: unknown): string => {
+    const message = safeRecipientWriteMessage(recipientWriteErrorCode(error));
+    setToastMessage(message);
+    setShowToast(true);
+    return message;
+  };
+
+  const handleSqliteRecipientSave = async (
+    input: RecipientFormValues,
+    currentRecipient?: Recipient | null
+  ) => {
+    try {
+      if (currentRecipient?.id) {
+        await updateRecipientInDisposableSqlite(currentRecipient.id, input);
+        setToastMessage("Recipient updated in disposable SQLite.");
+      } else {
+        await createRecipientInDisposableSqlite(input);
+        setToastMessage("Recipient created in disposable SQLite.");
+      }
+
+      setEditingRecipient(null);
+      setShowToast(true);
+      await fetchRecipients();
+    } catch (error) {
+      throw new Error(showSafeRecipientWriteError(error));
+    }
+  };
 
   /**
    * fetchRecipients - Retrieves all recipients from the database
@@ -185,7 +251,7 @@ const RecipientsManagement: React.FC = () => {
       let all: Recipient[];
       let selectedReadCount: number | undefined;
 
-      if (recipientsReadExperimentHttpReadonly) {
+      if (recipientsHttpSelectedReadActive) {
         const repositories = getSelectedReadRepositories(selectedBackend);
         const result = await repositories.recipients.list({
           limit: RECIPIENTS_READ_EXPERIMENT_LIMIT,
@@ -230,7 +296,7 @@ const RecipientsManagement: React.FC = () => {
 
       // NEW: Find duplicate pairs
       setDuplicatePairs(
-        recipientsReadExperimentHttpReadonly ? [] : findAllDuplicatePairs(sorted)
+        recipientsHttpSelectedReadActive ? [] : findAllDuplicatePairs(sorted)
       );
     } catch (err) {
       console.error("Error fetching recipients:", err);
@@ -245,7 +311,7 @@ const RecipientsManagement: React.FC = () => {
    * handleRecipientSaved - Called when recipient is added/updated via modal
    */
   const handleRecipientSaved = async () => {
-    if (recipientsReadExperimentHttpReadonly) {
+    if (recipientsHttpReadonlyWithoutWrites) {
       setToastMessage("Writes are disabled in the recipients read experiment");
       setShowToast(true);
       return;
@@ -267,7 +333,7 @@ const RecipientsManagement: React.FC = () => {
    * Removed: old fuzzy duplicate detection that showed false positives
    */
   const handleEditRecipient = (recipient: Recipient) => {
-    if (recipientsReadExperimentHttpReadonly) {
+    if (recipientsHttpReadonlyWithoutWrites) {
       setToastMessage("Switch back to Dexie to edit recipients");
       setShowToast(true);
       return;
@@ -283,7 +349,23 @@ const RecipientsManagement: React.FC = () => {
    * handleDeactivateRecipient - Deactivates a recipient instead of deleting
    */
   const handleDeactivateRecipient = async (recipientId: number) => {
-    if (recipientsReadExperimentHttpReadonly) {
+    if (recipientsSqliteWriteExperimentActive) {
+      try {
+        setLoading(true);
+        await deactivateRecipientInDisposableSqlite(recipientId);
+        setDeleteState({ type: "none" });
+        setToastMessage("Recipient deactivated in disposable SQLite.");
+        setShowToast(true);
+        await fetchRecipients();
+      } catch (error) {
+        showSafeRecipientWriteError(error);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (recipientsHttpReadonlyWithoutWrites) {
       setToastMessage("Switch back to Dexie to edit recipients");
       setShowToast(true);
       setDeleteState({ type: "none" });
@@ -310,8 +392,8 @@ const RecipientsManagement: React.FC = () => {
    * handleDeleteRecipient - Removes a recipient from the database
    */
   const handleDeleteRecipient = async (recipientId: number) => {
-    if (recipientsReadExperimentHttpReadonly) {
-      setToastMessage("Switch back to Dexie to delete recipients");
+    if (recipientsHttpSelectedReadActive) {
+      setToastMessage("Delete is not available in the recipients SQLite write experiment");
       setShowToast(true);
       setDeleteState({ type: "none" });
       return;
@@ -337,7 +419,33 @@ const RecipientsManagement: React.FC = () => {
    * handleToggleRecipientActive - Toggles recipient active/inactive status
    */
   const handleToggleRecipientActive = async (recipient: Recipient) => {
-    if (recipientsReadExperimentHttpReadonly) {
+    if (recipientsSqliteWriteExperimentActive) {
+      if (!recipient.id) {
+        setToastMessage("Recipient write failed: recipient_id_missing");
+        setShowToast(true);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        if (recipient.isActive === false) {
+          await activateRecipientInDisposableSqlite(recipient.id);
+          setToastMessage("Recipient activated in disposable SQLite.");
+        } else {
+          await deactivateRecipientInDisposableSqlite(recipient.id);
+          setToastMessage("Recipient deactivated in disposable SQLite.");
+        }
+        setShowToast(true);
+        await fetchRecipients();
+      } catch (error) {
+        showSafeRecipientWriteError(error);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (recipientsHttpReadonlyWithoutWrites) {
       setToastMessage("Switch back to Dexie to edit recipients");
       setShowToast(true);
       return;
@@ -424,7 +532,7 @@ const RecipientsManagement: React.FC = () => {
     accountNumber?: string,
     excludeId?: number
   ): Promise<Recipient | null> => {
-    if (recipientsReadExperimentHttpReadonly) {
+    if (recipientsHttpSelectedReadActive) {
       return null;
     }
 
@@ -549,8 +657,8 @@ const RecipientsManagement: React.FC = () => {
    * If unused: confirm deletion
    */
   const initiateDeleteRecipient = async (recipient: Recipient) => {
-    if (recipientsReadExperimentHttpReadonly) {
-      setToastMessage("Switch back to Dexie to delete recipients");
+    if (recipientsHttpSelectedReadActive) {
+      setToastMessage("Delete is not available in the recipients SQLite write experiment");
       setShowToast(true);
       return;
     }
@@ -604,7 +712,11 @@ const RecipientsManagement: React.FC = () => {
             resourceLabel="Selected-read recipients"
             loading={selectedReadPreviewLoading}
             onLoad={() => void loadSelectedReadPreview()}
-            description="This preview uses the selected read facade only when manually loaded. It does not replace this management screen or change create, edit, delete, search, or merge actions."
+            description={
+              recipientsSqliteWriteExperimentActive
+                ? "This preview uses the selected read facade only when manually loaded. The active write experiment is separate and still does not enable delete or merge."
+                : "This preview uses the selected read facade only when manually loaded. It does not replace this management screen or change create, edit, delete, search, or merge actions."
+            }
           >
               {selectedReadPreview && (
                 <IonList>
@@ -677,11 +789,11 @@ const RecipientsManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
-        {recipientsReadExperimentEnabled && (
+        {(recipientsReadExperimentEnabled || recipientsWriteExperimentEnabled) && (
           <IonCard
             style={{
               marginBottom: "16px",
-              borderLeft: recipientsReadExperimentHttpReadonly
+              borderLeft: recipientsHttpSelectedReadActive
                 ? "4px solid var(--ion-color-warning)"
                 : "4px solid var(--ion-color-medium)",
             }}
@@ -693,7 +805,7 @@ const RecipientsManagement: React.FC = () => {
                 <IonIcon
                   icon={warningOutline}
                   style={{
-                    color: recipientsReadExperimentHttpReadonly
+                    color: recipientsHttpSelectedReadActive
                       ? "var(--ion-color-warning)"
                       : "var(--ion-color-medium)",
                     fontSize: "1.5rem",
@@ -706,16 +818,20 @@ const RecipientsManagement: React.FC = () => {
                       fontWeight: 600,
                     }}
                   >
-                    {recipientsReadExperimentHttpReadonly
-                      ? "Recipients read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie to edit."
-                      : "Recipients read experiment flag is active with the Dexie backend. Existing Dexie write behavior remains available."}
+                    {recipientsSqliteWriteExperimentActive
+                      ? "Recipients SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
+                      : recipientsHttpReadonlyWithoutWrites
+                        ? "Recipients read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie or enable the dev write experiment to edit."
+                        : "Recipients experiment flag is active with the Dexie backend. Existing Dexie write behavior remains available."}
                   </p>
                   <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
                     Backend: {selectedBackend}
-                    {recipientsReadExperimentHttpReadonly &&
+                    {recipientsHttpSelectedReadActive &&
                       recipientsReadExperimentCount !== undefined &&
                       recipientsReadExperimentCount > recipients.length &&
                       `; loaded first ${recipients.length} of ${recipientsReadExperimentCount} recipients for this experiment.`}
+                    {recipientsSqliteWriteExperimentActive &&
+                      " Delete and merge remain unavailable."}
                   </p>
                 </div>
               </div>
@@ -724,7 +840,7 @@ const RecipientsManagement: React.FC = () => {
         )}
 
         {/* NEW: DUPLICATE NOTIFICATION BANNER */}
-        {!recipientsReadExperimentHttpReadonly && duplicatePairs.length > 0 && (
+        {!recipientsHttpSelectedReadActive && duplicatePairs.length > 0 && (
           <IonCard
             style={{
               marginBottom: "16px",
@@ -851,7 +967,7 @@ const RecipientsManagement: React.FC = () => {
             {filteredRecipients.length === 0 ? (
               <p>
                 {recipients.length === 0
-                  ? recipientsReadExperimentHttpReadonly
+                  ? recipientsHttpSelectedReadActive
                     ? "No recipients loaded from the read-only experiment."
                     : "No recipients yet. Tap the + button to add one."
                   : "No recipients match your search."}
@@ -901,7 +1017,8 @@ const RecipientsManagement: React.FC = () => {
                               </p>
                             )}
                           </IonCol>
-                          {!recipientsReadExperimentHttpReadonly && (
+                          {(!recipientsHttpSelectedReadActive ||
+                            recipientsSqliteWriteExperimentActive) && (
                             <IonCol size="auto">
                               <IonButton
                                 fill="clear"
@@ -933,16 +1050,18 @@ const RecipientsManagement: React.FC = () => {
                                 />
                               </IonButton>
 
-                              <IonButton
-                                fill="clear"
-                                size="small"
-                                color="danger"
-                                onClick={() =>
-                                  initiateDeleteRecipient(recipient)
-                                }
-                              >
-                                <IonIcon icon={trashOutline} />
-                              </IonButton>
+                              {!recipientsHttpSelectedReadActive && (
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  color="danger"
+                                  onClick={() =>
+                                    initiateDeleteRecipient(recipient)
+                                  }
+                                >
+                                  <IonIcon icon={trashOutline} />
+                                </IonButton>
+                              )}
                             </IonCol>
                           )}
                         </IonRow>
@@ -1050,7 +1169,8 @@ const RecipientsManagement: React.FC = () => {
         />
 
         {/* MODALS */}
-        {!recipientsReadExperimentHttpReadonly && (
+        {(!recipientsHttpSelectedReadActive ||
+          recipientsSqliteWriteExperimentActive) && (
           <AddRecipientModal
             isOpen={showAddRecipientModal}
             onClose={() => {
@@ -1064,11 +1184,16 @@ const RecipientsManagement: React.FC = () => {
               setShowDuplicateAlert(true);
             }}
             checkForDuplicate={checkForDuplicateRecipient}
+            onSaveRecipient={
+              recipientsSqliteWriteExperimentActive
+                ? handleSqliteRecipientSave
+                : undefined
+            }
           />
         )}
 
         {/* MERGE MODAL */}
-        {!recipientsReadExperimentHttpReadonly && (
+        {!recipientsHttpSelectedReadActive && (
           <MergeRecipientsModal
             isOpen={showMergeModal}
             onClose={() => setShowMergeModal(false)}
@@ -1084,7 +1209,8 @@ const RecipientsManagement: React.FC = () => {
         )}
 
         {/* FAB BUTTON FOR ADDING RECIPIENTS */}
-        {!recipientsReadExperimentHttpReadonly && (
+        {(!recipientsHttpSelectedReadActive ||
+          recipientsSqliteWriteExperimentActive) && (
           <IonFab vertical="bottom" horizontal="end" slot="fixed">
             <IonFabButton
               onClick={() => {
