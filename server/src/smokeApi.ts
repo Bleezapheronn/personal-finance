@@ -31,6 +31,7 @@ interface SmokeArgs {
   allowBucketCategoryWriteSmoke: boolean;
   allowAccountWriteSmoke: boolean;
   allowTransactionBasicWriteSmoke: boolean;
+  allowTransactionCostBudgetWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -69,6 +70,12 @@ interface ResponseJson {
   foreignKeyPresence?: unknown;
   unsupportedReasons?: unknown;
   financialEffectSummary?: unknown;
+  reportEffectSummary?: unknown;
+  budgetHistoryEffectSummary?: unknown;
+  transactionCostPresence?: unknown;
+  transactionCostClassification?: unknown;
+  budgetSnapshotLinkagePresence?: unknown;
+  budgetLinkageAction?: unknown;
   normalizedFieldPresence?: unknown;
   duplicateSummary?: unknown;
   timestampBehavior?: unknown;
@@ -112,6 +119,8 @@ Options:
                          Opt in to disposable SQLite account create/update write smoke.
   --allow-transaction-basic-write-smoke
                          Opt in to disposable SQLite basic transaction create/update write smoke.
+  --allow-transaction-cost-budget-write-smoke
+                         Opt in to disposable SQLite transaction cost/budget-link create/update write smoke.
   --help                 Show this help text.
 `;
 
@@ -124,6 +133,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowBucketCategoryWriteSmoke: false,
     allowAccountWriteSmoke: false,
     allowTransactionBasicWriteSmoke: false,
+    allowTransactionCostBudgetWriteSmoke: false,
     help: false,
   };
 
@@ -186,6 +196,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-transaction-basic-write-smoke") {
       args.allowTransactionBasicWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-transaction-cost-budget-write-smoke") {
+      args.allowTransactionCostBudgetWriteSmoke = true;
       continue;
     }
 
@@ -566,6 +581,34 @@ const expectSafeTransactionBasicShape = (
     typeof json.financialEffectSummary === "object",
     "transaction_financial_summary_missing",
   );
+  expect(
+    typeof json.reportEffectSummary === "object",
+    "transaction_report_summary_missing",
+  );
+  expect(
+    typeof json.budgetHistoryEffectSummary === "object",
+    "transaction_budget_history_summary_missing",
+  );
+  expect(
+    typeof json.transactionCostPresence === "boolean",
+    "transaction_cost_presence_missing",
+  );
+  expect(
+    json.transactionCostClassification === "none" ||
+      json.transactionCostClassification === "zero" ||
+      json.transactionCostClassification === "negative",
+    "transaction_cost_classification_invalid",
+  );
+  expect(
+    typeof json.budgetSnapshotLinkagePresence === "boolean",
+    "transaction_budget_link_presence_missing",
+  );
+  expect(
+    ["none", "preserve", "link", "change", "unlink"].includes(
+      String(json.budgetLinkageAction),
+    ),
+    "transaction_budget_link_action_invalid",
+  );
   expect(typeof json.timestampBehavior === "object", "transaction_timestamps_missing");
   expect(typeof json.affectedSummary === "object", "transaction_affected_missing");
   expect(typeof json.safety === "object", "transaction_safety_missing");
@@ -651,6 +694,7 @@ const buildChecks = (
   allowBucketCategoryWriteSmoke: boolean,
   allowAccountWriteSmoke: boolean,
   allowTransactionBasicWriteSmoke: boolean,
+  allowTransactionCostBudgetWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -4138,31 +4182,42 @@ const buildChecks = (
             body: { ...basePayload, transferPairId: 1 },
             expectedStatus: 400,
           },
-          {
-            action: "create",
-            body: { ...basePayload, transactionCost: -1 },
-            expectedStatus: 400,
-          },
+          ...(!allowTransactionCostBudgetWriteSmoke
+            ? [
+                {
+                  action: "create" as const,
+                  body: { ...basePayload, transactionCost: -1 },
+                  expectedStatus: 400,
+                },
+              ]
+            : []),
           {
             action: "create",
             body: { ...basePayload, paymentChannelId: 1 },
             expectedStatus: 400,
           },
-          {
-            action: "create",
-            body: { ...basePayload, budgetId: 1 },
-            expectedStatus: 400,
-          },
-          {
-            action: "create",
-            body: { ...basePayload, occurrenceDate: "2098-01-10T12:00:00.000Z" },
-            expectedStatus: 400,
-          },
-          {
-            action: "create",
-            body: { ...basePayload, budgetSnapshotId: 1 },
-            expectedStatus: 400,
-          },
+          ...(!allowTransactionCostBudgetWriteSmoke
+            ? [
+                {
+                  action: "create" as const,
+                  body: { ...basePayload, budgetId: 1 },
+                  expectedStatus: 400,
+                },
+                {
+                  action: "create" as const,
+                  body: {
+                    ...basePayload,
+                    occurrenceDate: "2098-01-10T12:00:00.000Z",
+                  },
+                  expectedStatus: 400,
+                },
+                {
+                  action: "create" as const,
+                  body: { ...basePayload, budgetSnapshotId: 1 },
+                  expectedStatus: 400,
+                },
+              ]
+            : []),
           {
             action: "update",
             body: { ...basePayload, id: 2_147_483_647 },
@@ -4196,7 +4251,8 @@ const buildChecks = (
         }
       },
     },
-    ...(!allowTransactionBasicWriteSmoke
+    ...(!allowTransactionBasicWriteSmoke &&
+    !allowTransactionCostBudgetWriteSmoke
       ? [
           {
             name: "transaction basic writes are disabled and non-mutating by default",
@@ -4263,6 +4319,90 @@ const buildChecks = (
                 rowsFingerprint(transactionsAfter) ===
                   rowsFingerprint(transactionsBefore),
                 "disabled_transaction_write_mutated",
+              );
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    ...(!allowTransactionCostBudgetWriteSmoke
+      ? [
+          {
+            name: "transaction cost and budget writes require explicit Phase 2 opt-in",
+            run: async () => {
+              const transactionsBefore = await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              );
+              const accounts = await readAllTableRows(
+                baseUrl,
+                "accounts",
+                authedOptions,
+              );
+              const buckets = await readAllTableRows(
+                baseUrl,
+                "buckets",
+                authedOptions,
+              );
+              const categories = await readAllTableRows(
+                baseUrl,
+                "categories",
+                authedOptions,
+              );
+              const recipients = await readAllTableRows(
+                baseUrl,
+                "recipients",
+                authedOptions,
+              );
+              const category = categories.find((candidate) =>
+                buckets.some((bucket) => bucket.id === candidate.bucketId),
+              );
+              expect(
+                Boolean(accounts[0] && category && recipients[0]),
+                "transaction_phase2_fixture_missing",
+              );
+              const response = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    classification: "expense",
+                    date: "2098-02-10T12:00:00.000Z",
+                    amount: -10,
+                    transactionCost: -1,
+                    categoryId: category!.id,
+                    accountId: accounts[0].id,
+                    recipientId: recipients[0].id,
+                    description: "Disabled Phase 2 transaction smoke",
+                    dryRunReviewed: true,
+                    confirmation: TRANSACTION_BASIC_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(response.status, 403);
+              expect(
+                response.json.code ===
+                  "transaction_cost_budget_writes_disabled" ||
+                  (!allowTransactionBasicWriteSmoke &&
+                    response.json.code === "transaction_basic_writes_disabled"),
+                "transaction_phase2_disabled_code_missing",
+              );
+              expectSafeTransactionBasicShape(
+                response.json,
+                "create",
+                false,
+              );
+              const transactionsAfter = await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              );
+              expect(
+                rowsFingerprint(transactionsAfter) ===
+                  rowsFingerprint(transactionsBefore),
+                "disabled_transaction_phase2_write_mutated",
               );
             },
           } satisfies SmokeCheck,
@@ -4564,6 +4704,351 @@ const buildChecks = (
           } satisfies SmokeCheck,
         ]
       : []),
+    ...(allowTransactionCostBudgetWriteSmoke
+      ? [
+          {
+            name: "transaction Phase 2 opt-in smoke verifies cost and existing snapshot linkage",
+            run: async () => {
+              const relatedTables = [
+                "accounts",
+                "paymentMethods",
+                "budgets",
+                "budgetSnapshots",
+                "buckets",
+                "categories",
+                "recipients",
+                "smsImportTemplates",
+              ] as const;
+              const relatedBefore = new Map<
+                string,
+                Record<string, unknown>[]
+              >();
+              for (const table of relatedTables) {
+                relatedBefore.set(
+                  table,
+                  await readAllTableRows(baseUrl, table, authedOptions),
+                );
+              }
+              const transactionsBefore = await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              );
+              const accounts = relatedBefore.get("accounts")!;
+              const buckets = relatedBefore.get("buckets")!;
+              const categories = relatedBefore.get("categories")!;
+              const recipients = relatedBefore.get("recipients")!;
+              const budgets = relatedBefore.get("budgets")!;
+              const snapshots = relatedBefore.get("budgetSnapshots")!;
+              const category = categories.find((candidate) =>
+                buckets.some((bucket) => bucket.id === candidate.bucketId),
+              );
+              const snapshot = snapshots.find(
+                (candidate) =>
+                  typeof candidate.id === "number" &&
+                  typeof candidate.budgetId === "number" &&
+                  typeof candidate.dueDate === "string" &&
+                  budgets.some((budget) => budget.id === candidate.budgetId),
+              );
+              expect(
+                Boolean(accounts[0] && category && recipients[0] && snapshot),
+                "transaction_phase2_fixture_missing",
+              );
+
+              const privateDescription = `Phase 2 Smoke ${transactionSmokeSequence}`;
+              const privateReference = `phase2-reference-${transactionSmokeSequence}`;
+              const basePayload = {
+                classification: "expense",
+                date: "2098-02-15T12:00:00.000Z",
+                amount: -125,
+                transactionCost: -2.5,
+                categoryId: category!.id,
+                accountId: accounts[0].id,
+                recipientId: recipients[0].id,
+                description: privateDescription,
+                transactionReference: privateReference,
+                budgetSnapshotId: snapshot!.id,
+                budgetId: snapshot!.budgetId,
+                occurrenceDate: snapshot!.dueDate,
+              };
+
+              const invalidCases = [
+                {
+                  body: { ...basePayload, transactionCost: 2.5 },
+                  code: "transactionCost_must_be_non_positive",
+                },
+                {
+                  body: { ...basePayload, transactionCost: "invalid" },
+                  code: "transactionCost_invalid",
+                },
+                {
+                  body: { ...basePayload, budgetSnapshotId: 2_147_483_647 },
+                  code: "budget_snapshot_not_found",
+                },
+                {
+                  body: { ...basePayload, budgetId: 2_147_483_647 },
+                  code: "budget_snapshot_budget_mismatch",
+                },
+                {
+                  body: {
+                    ...basePayload,
+                    occurrenceDate: "2098-02-16T12:00:00.000Z",
+                  },
+                  code: "budget_snapshot_occurrence_mismatch",
+                },
+              ];
+              for (const invalidCase of invalidCases) {
+                const result = await requestJson(
+                  baseUrl,
+                  "/prototype/repositories/transactions/dry-run/create",
+                  {
+                    ...authedOptions,
+                    method: "POST",
+                    body: invalidCase.body,
+                  },
+                );
+                expectStatus(result.status, 400);
+                expect(
+                  result.json.code === invalidCase.code ||
+                    (Array.isArray(result.json.validationErrors) &&
+                      result.json.validationErrors.includes(invalidCase.code)),
+                  `transaction_phase2_validation_missing_${invalidCase.code}`,
+                );
+                expectNoSensitiveEcho(result.json, [
+                  privateDescription,
+                  privateReference,
+                ]);
+              }
+              expect(
+                rowsFingerprint(
+                  await readAllTableRows(
+                    baseUrl,
+                    "transactions",
+                    authedOptions,
+                  ),
+                ) === rowsFingerprint(transactionsBefore),
+                "transaction_phase2_invalid_dry_run_mutated",
+              );
+
+              const createDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/dry-run/create",
+                { ...authedOptions, method: "POST", body: basePayload },
+              );
+              expectStatus(createDryRun.status, 200);
+              expectSafeTransactionBasicShape(
+                createDryRun.json,
+                "create",
+                true,
+              );
+              expect(
+                createDryRun.json.transactionCostClassification === "negative" &&
+                  createDryRun.json.budgetLinkageAction === "link",
+                "transaction_phase2_create_summary_invalid",
+              );
+              expectNoSensitiveEcho(createDryRun.json, [
+                privateDescription,
+                privateReference,
+              ]);
+
+              const createWrite = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...basePayload,
+                    dryRunReviewed: true,
+                    confirmation: TRANSACTION_BASIC_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(createWrite.status, 200);
+              expectSafeTransactionBasicShape(
+                createWrite.json,
+                "create",
+                false,
+              );
+              expect(
+                createWrite.json.rowsChanged === 1 &&
+                  typeof createWrite.json.targetId === "number",
+                "transaction_phase2_create_write_failed",
+              );
+              const createdId = createWrite.json.targetId as number;
+              const transactionsAfterCreate = await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              );
+              expect(
+                transactionsAfterCreate.length === transactionsBefore.length + 1,
+                "transaction_phase2_create_count_invalid",
+              );
+              const created = transactionsAfterCreate.find(
+                (row) => row.id === createdId,
+              );
+              expect(Boolean(created), "transaction_phase2_created_row_missing");
+              expect(
+                created!.transactionCost === -2.5 &&
+                  created!.budgetSnapshotId === snapshot!.id &&
+                  created!.budgetId === snapshot!.budgetId &&
+                  new Date(String(created!.occurrenceDate)).getTime() ===
+                    new Date(String(snapshot!.dueDate)).getTime(),
+                "transaction_phase2_create_storage_invalid",
+              );
+              expect(
+                rowsFingerprint(
+                  transactionsAfterCreate.filter((row) => row.id !== createdId),
+                ) === rowsFingerprint(transactionsBefore),
+                "transaction_phase2_create_changed_existing_row",
+              );
+
+              const baselineAggregates =
+                transactionAggregates(transactionsBefore);
+              const createAggregates =
+                transactionAggregates(transactionsAfterCreate);
+              const accountId = accounts[0].id as number;
+              const month = "2098-02";
+              const createDelta = cents(-127.5);
+              expect(
+                (createAggregates.accounts.get(accountId) ?? 0) -
+                  (baselineAggregates.accounts.get(accountId) ?? 0) ===
+                  createDelta,
+                "transaction_phase2_account_delta_invalid",
+              );
+              expect(
+                (createAggregates.months.get(month) ?? 0) -
+                  (baselineAggregates.months.get(month) ?? 0) ===
+                  createDelta,
+                "transaction_phase2_report_delta_invalid",
+              );
+              expect(
+                transactionsAfterCreate.filter(
+                  (row) => row.budgetSnapshotId === snapshot!.id,
+                ).length ===
+                  transactionsBefore.filter(
+                    (row) => row.budgetSnapshotId === snapshot!.id,
+                  ).length +
+                    1,
+                "transaction_phase2_budget_history_membership_invalid",
+              );
+
+              const updatePayload = {
+                ...basePayload,
+                id: createdId,
+                amount: -140,
+                transactionCost: -3.75,
+                budgetSnapshotId: null,
+                budgetId: null,
+                occurrenceDate: null,
+              };
+              const updateDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/dry-run/update",
+                { ...authedOptions, method: "POST", body: updatePayload },
+              );
+              expectStatus(updateDryRun.status, 200);
+              expectSafeTransactionBasicShape(
+                updateDryRun.json,
+                "update",
+                true,
+              );
+              expect(
+                updateDryRun.json.budgetLinkageAction === "unlink",
+                "transaction_phase2_unlink_summary_missing",
+              );
+              const updateWrite = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/write/update",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...updatePayload,
+                    dryRunReviewed: true,
+                    confirmation: TRANSACTION_BASIC_UPDATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(updateWrite.status, 200);
+              expectSafeTransactionBasicShape(
+                updateWrite.json,
+                "update",
+                false,
+              );
+              const transactionsAfterUpdate = await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              );
+              const updated = transactionsAfterUpdate.find(
+                (row) => row.id === createdId,
+              );
+              expect(
+                transactionsAfterUpdate.length ===
+                  transactionsAfterCreate.length &&
+                  updated?.amount === -140 &&
+                  updated.transactionCost === -3.75 &&
+                  updated.budgetSnapshotId == null &&
+                  updated.budgetId == null &&
+                  updated.occurrenceDate == null,
+                "transaction_phase2_update_storage_invalid",
+              );
+              expect(
+                rowsFingerprint(
+                  transactionsAfterUpdate.filter((row) => row.id !== createdId),
+                ) === rowsFingerprint(transactionsBefore),
+                "transaction_phase2_update_changed_other_row",
+              );
+              const updateAggregates =
+                transactionAggregates(transactionsAfterUpdate);
+              expect(
+                (updateAggregates.accounts.get(accountId) ?? 0) -
+                  (createAggregates.accounts.get(accountId) ?? 0) ===
+                  cents(-16.25),
+                "transaction_phase2_update_account_delta_invalid",
+              );
+              expect(
+                (updateAggregates.months.get(month) ?? 0) -
+                  (createAggregates.months.get(month) ?? 0) ===
+                  cents(-16.25),
+                "transaction_phase2_update_report_delta_invalid",
+              );
+
+              const detail = await requestJson(
+                baseUrl,
+                `/prototype/repositories/transactions/${createdId}`,
+                authedOptions,
+              );
+              expectStatus(detail.status, 200);
+              const detailTransaction = detail.json.transaction as Record<
+                string,
+                unknown
+              >;
+              expect(
+                detailTransaction.id === createdId &&
+                  detailTransaction.transactionCost === -3.75 &&
+                  detailTransaction.budgetSnapshotId == null,
+                "transaction_phase2_selected_read_refresh_invalid",
+              );
+
+              for (const table of relatedTables) {
+                const after = await readAllTableRows(
+                  baseUrl,
+                  table,
+                  authedOptions,
+                );
+                expect(
+                  rowsFingerprint(after) ===
+                    rowsFingerprint(relatedBefore.get(table)!),
+                  `${table}_changed_during_transaction_phase2_write_smoke`,
+                );
+              }
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
     {
       name: "transaction delete transfer and bulk write routes are not implemented",
       run: async () => {
@@ -4685,6 +5170,7 @@ const main = async (): Promise<void> => {
     args.allowBucketCategoryWriteSmoke,
     args.allowAccountWriteSmoke,
     args.allowTransactionBasicWriteSmoke,
+    args.allowTransactionCostBudgetWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

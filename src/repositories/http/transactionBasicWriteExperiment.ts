@@ -2,6 +2,8 @@ import { LocalApiError, localApiPost } from "../../api/localApiClient";
 
 export const TRANSACTIONS_BASIC_WRITE_EXPERIMENT_FLAG =
   "VITE_PERSONAL_FINANCE_TRANSACTIONS_BASIC_WRITE_EXPERIMENT";
+export const TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT_FLAG =
+  "VITE_PERSONAL_FINANCE_TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT";
 
 const CREATE_CONFIRMATION = "create basic transaction in disposable sqlite";
 const UPDATE_CONFIRMATION = "update basic transaction in disposable sqlite";
@@ -20,7 +22,10 @@ export interface BasicTransactionWriteInput {
   accountId: number;
   recipientId: number;
   description: string;
-  transactionCost?: null | 0;
+  transactionCost?: number | null;
+  budgetId?: number | null;
+  occurrenceDate?: string | null;
+  budgetSnapshotId?: number | null;
 }
 
 export interface BasicTransactionEligibilityInput {
@@ -53,6 +58,10 @@ export interface TransactionBasicWriteResponse {
   warnings?: string[];
   unsupportedReasons?: string[];
   resultCodes?: string[];
+  transactionCostPresence?: boolean;
+  transactionCostClassification?: "none" | "zero" | "negative";
+  budgetSnapshotLinkagePresence?: boolean;
+  budgetLinkageAction?: "none" | "preserve" | "link" | "change" | "unlink";
 }
 
 const envValue = (key: string): string | undefined => {
@@ -63,6 +72,108 @@ const envValue = (key: string): string | undefined => {
 
 export const isTransactionsBasicWriteExperimentEnabled = (): boolean =>
   envValue(TRANSACTIONS_BASIC_WRITE_EXPERIMENT_FLAG) === "true";
+
+export const isTransactionsCostBudgetWriteExperimentEnabled = (): boolean =>
+  envValue(TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT_FLAG) === "true";
+
+export interface TransactionBudgetSnapshotReference {
+  id?: number;
+  budgetId?: number;
+  dueDate?: Date | string;
+}
+
+export interface TransactionBudgetReference {
+  id?: number;
+}
+
+const sameInstant = (
+  left: Date | string | null | undefined,
+  right: Date | string | null | undefined,
+): boolean => {
+  if (left == null || right == null) {
+    return false;
+  }
+  const leftTime = new Date(left).getTime();
+  const rightTime = new Date(right).getTime();
+  return (
+    Number.isFinite(leftTime) &&
+    Number.isFinite(rightTime) &&
+    leftTime === rightTime
+  );
+};
+
+export const transactionCostBudgetEligibilityReason = (
+  transaction: BasicTransactionEligibilityInput,
+  snapshots: TransactionBudgetSnapshotReference[],
+  budgets: TransactionBudgetReference[],
+): string | undefined => {
+  if (
+    typeof transaction.id !== "number" ||
+    typeof transaction.amount !== "number" ||
+    !Number.isFinite(transaction.amount) ||
+    transaction.amount === 0 ||
+    typeof transaction.accountId !== "number" ||
+    transaction.accountId <= 0 ||
+    typeof transaction.categoryId !== "number" ||
+    transaction.categoryId <= 0 ||
+    typeof transaction.recipientId !== "number" ||
+    transaction.recipientId <= 0
+  ) {
+    return "transaction_basic_fields_invalid";
+  }
+  if (
+    transaction.isTransfer === true ||
+    transaction.isTransfer === 1 ||
+    transaction.transferPairId != null
+  ) {
+    return "transfers_not_supported";
+  }
+  if (
+    transaction.transactionCost != null &&
+    (!Number.isFinite(transaction.transactionCost) ||
+      transaction.transactionCost > 0)
+  ) {
+    return "transaction_cost_invalid";
+  }
+
+  const hasSnapshot = transaction.budgetSnapshotId != null;
+  const hasLegacyBudget = transaction.budgetId != null;
+  const hasOccurrence = transaction.occurrenceDate != null;
+  if (!hasSnapshot) {
+    return hasLegacyBudget || hasOccurrence
+      ? "legacy_only_budget_link_not_supported"
+      : undefined;
+  }
+  if (!hasLegacyBudget || !hasOccurrence) {
+    return "budget_linkage_incomplete";
+  }
+
+  const snapshot = snapshots.find(
+    (candidate) => candidate.id === transaction.budgetSnapshotId,
+  );
+  if (!snapshot) {
+    return "budget_snapshot_not_found";
+  }
+  if (
+    typeof snapshot.budgetId !== "number" ||
+    snapshot.budgetId !== transaction.budgetId ||
+    !budgets.some((budget) => budget.id === snapshot.budgetId)
+  ) {
+    return "budget_snapshot_budget_mismatch";
+  }
+  if (!sameInstant(transaction.occurrenceDate, snapshot.dueDate)) {
+    return "budget_snapshot_occurrence_mismatch";
+  }
+  return undefined;
+};
+
+export const isCostBudgetTransactionWriteEligible = (
+  transaction: BasicTransactionEligibilityInput,
+  snapshots: TransactionBudgetSnapshotReference[],
+  budgets: TransactionBudgetReference[],
+): boolean =>
+  transactionCostBudgetEligibilityReason(transaction, snapshots, budgets) ===
+  undefined;
 
 export const isBasicTransactionWriteEligible = (
   transaction: BasicTransactionEligibilityInput,
@@ -147,6 +258,13 @@ const payload = (input: BasicTransactionWriteInput) => ({
   recipientId: input.recipientId,
   description: input.description,
   transactionCost: input.transactionCost,
+  ...(input.budgetId !== undefined ? { budgetId: input.budgetId } : {}),
+  ...(input.occurrenceDate !== undefined
+    ? { occurrenceDate: input.occurrenceDate }
+    : {}),
+  ...(input.budgetSnapshotId !== undefined
+    ? { budgetSnapshotId: input.budgetSnapshotId }
+    : {}),
 });
 
 export const createBasicTransactionInDisposableSqlite = async (

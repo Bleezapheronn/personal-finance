@@ -694,7 +694,7 @@ actual responses:
 Preflight does not require the token, but protected `GET` requests still do.
 The API does not use wildcard CORS origins or cookies.
 
-## Experimental Basic Transaction Writes
+## Experimental Transaction Writes
 
 Backend-only Phase 1 endpoints are available for simple single-row income and
 expense create/update operations:
@@ -712,6 +712,17 @@ is set:
 ```text
 PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true
 ```
+
+Phase 2 transaction-cost and existing-budget-snapshot writes additionally
+require this separate exact flag:
+
+```text
+PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES=true
+```
+
+Both flags must be `true` for a real write containing a nonzero transaction
+cost or any budget-linkage field. With only the basic flag enabled, Phase 1
+behavior and rejection rules are unchanged.
 
 Real-write requests also require `dryRunReviewed: true` and the action-specific
 confirmation phrase:
@@ -740,15 +751,30 @@ budget snapshots, and SMS templates remain byte-for-byte unchanged. Account
 balances and reports are derived; their totals may change only by the signed
 transaction amount.
 
+Phase 2 retains the same single-row routes and dry-run-first contract.
+`transactionCost` remains separate from `amount`, and persisted costs must be
+zero, null, or negative. Financial effects are always derived from
+`amount + transactionCost`; no Account row is updated. A caller may link only
+an existing budget snapshot. `budgetSnapshotId` is canonical, while legacy
+`budgetId` is derived from the snapshot parent and `occurrenceDate` is derived
+from the snapshot due date. Conflicting caller values, missing snapshots,
+missing parent budgets, and inconsistent existing links are rejected.
+
+Phase 2 never creates, updates, generates, repairs, prunes, or deletes a Budget
+or budget snapshot. Linking, changing, or unlinking modifies only the three
+linkage columns on the target transaction. Transfers, paired rows, transaction
+delete, and bulk operations remain unavailable.
+
 Normal smoke remains non-mutating. Successful mutation smoke is explicit:
 
 ```bash
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-transaction-basic-write-smoke
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-transaction-cost-budget-write-smoke
 ```
 
-Run it only against a disposable database with the transaction write flag
-enabled. It creates and updates one expense and one income, then verifies exact
-financial deltas and selected-read visibility. The database is dirty afterward;
-re-import it from a fresh matching backup before clean parity checks. No
-frontend transaction write adapter or UI wiring exists, and Dexie remains
-authoritative.
+Run these only against disposable databases with the corresponding server
+flags enabled. The Phase 2 mode selects an existing snapshot, creates one
+cost-bearing linked transaction, verifies exact financial and Budget History
+membership deltas, then updates and unlinks that transaction. The database is
+dirty afterward; re-import a separate SQLite database from a fresh matching
+backup before clean parity checks. Dexie remains authoritative.

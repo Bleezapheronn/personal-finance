@@ -1,11 +1,12 @@
 import Database from "better-sqlite3";
 import {
-  normalizeBasicTransactionPayload,
+  normalizeTransactionPayloadForWrite,
   transactionBasicDryRun,
   type NormalizedBasicTransactionInput,
   type TransactionBasicAction,
   type TransactionBasicDryRunResponse,
   type TransactionClassification,
+  type TransactionWriteCapabilities,
 } from "./transactionBasicDryRun.js";
 
 export const TRANSACTION_BASIC_CREATE_WRITE_CONFIRMATION =
@@ -59,10 +60,16 @@ export interface TransactionBasicWriteResponse {
   targetId: number | null;
   classification: TransactionClassification | null;
   foreignKeyPresence: TransactionBasicDryRunResponse["foreignKeyPresence"];
+  transactionCostPresence: boolean;
+  transactionCostClassification: TransactionBasicDryRunResponse["transactionCostClassification"];
+  budgetSnapshotLinkagePresence: boolean;
+  budgetLinkageAction: TransactionBasicDryRunResponse["budgetLinkageAction"];
   validationErrors: string[];
   warnings: string[];
   unsupportedReasons: string[];
   financialEffectSummary: TransactionBasicDryRunResponse["financialEffectSummary"];
+  reportEffectSummary: TransactionBasicDryRunResponse["reportEffectSummary"];
+  budgetHistoryEffectSummary: TransactionBasicDryRunResponse["budgetHistoryEffectSummary"];
   timestampBehavior: TransactionBasicDryRunResponse["timestampBehavior"];
   affectedSummary: {
     transactionRowsChanged: number;
@@ -204,6 +211,12 @@ const response = (input: {
       budget: false,
       budgetSnapshot: false,
     },
+    transactionCostPresence: dryRun?.transactionCostPresence ?? false,
+    transactionCostClassification:
+      dryRun?.transactionCostClassification ?? "none",
+    budgetSnapshotLinkagePresence:
+      dryRun?.budgetSnapshotLinkagePresence ?? false,
+    budgetLinkageAction: dryRun?.budgetLinkageAction ?? "none",
     validationErrors,
     warnings: dryRun?.warnings ?? [],
     unsupportedReasons: dryRun?.unsupportedReasons ?? [],
@@ -212,6 +225,16 @@ const response = (input: {
       reportTotalsWouldChange: false,
       amountDelta: 0,
       transactionCostDelta: 0,
+      combinedDelta: 0,
+    },
+    reportEffectSummary: dryRun?.reportEffectSummary ?? {
+      combinedTotalDelta: 0,
+    },
+    budgetHistoryEffectSummary: dryRun?.budgetHistoryEffectSummary ?? {
+      membershipWouldChange: false,
+      linkedBudgetIdPresent: false,
+      linkedBudgetSnapshotIdPresent: false,
+      combinedTotalDelta: 0,
     },
     timestampBehavior: dryRun?.timestampBehavior ?? {
       timestampsPresent: false,
@@ -251,6 +274,22 @@ export const transactionBasicWriteDisabledResponse = (
     code: "transaction_basic_writes_disabled",
   });
 
+export const transactionCostBudgetWriteDisabledResponse = (
+  action: TransactionBasicAction,
+): TransactionBasicWriteResponse =>
+  response({
+    action,
+    targetId: null,
+    rowsChanged: 0,
+    sqliteMutated: false,
+    validationErrors: ["transaction_cost_budget_writes_disabled"],
+    resultCodes: [
+      "transaction_cost_budget_writes_disabled",
+      "no_mutation_performed",
+    ],
+    code: "transaction_cost_budget_writes_disabled",
+  });
+
 export const transactionBasicWriteRequestErrorResponse = (
   action: TransactionBasicAction,
   code: string,
@@ -282,7 +321,8 @@ const createTransaction = (
       ) VALUES (
         @categoryId, NULL, @accountId, @recipientId, @date, @amount,
         @originalAmount, @originalCurrency, @exchangeRate, @transactionReference,
-        @transactionCost, @description, NULL, 0, NULL, NULL, NULL
+        @transactionCost, @description, NULL, 0, @budgetId, @occurrenceDate,
+        @budgetSnapshotId
       )`,
     )
     .run(normalized);
@@ -313,6 +353,7 @@ const updateTransaction = (
   db: Database.Database,
   normalized: NormalizedBasicTransactionInput,
   dryRun: TransactionBasicDryRunResponse,
+  capabilities: TransactionWriteCapabilities,
 ): TransactionBasicWriteResponse => {
   const targetId = normalized.id!;
   const transactionsBefore = tableRows(db, "transactions");
@@ -330,9 +371,24 @@ const updateTransaction = (
     });
   }
   const relatedBefore = relatedFingerprints(db);
-  const result = db
-    .prepare(
-      `UPDATE transactions
+  const updateSql = capabilities.costBudget
+    ? `UPDATE transactions
+       SET categoryId = @categoryId,
+           accountId = @accountId,
+           recipientId = @recipientId,
+           date = @date,
+           amount = @amount,
+           originalAmount = @originalAmount,
+           originalCurrency = @originalCurrency,
+           exchangeRate = @exchangeRate,
+           transactionReference = @transactionReference,
+           description = @description,
+           transactionCost = @transactionCost,
+           budgetId = @budgetId,
+           occurrenceDate = @occurrenceDate,
+           budgetSnapshotId = @budgetSnapshotId
+       WHERE id = @id`
+    : `UPDATE transactions
        SET categoryId = @categoryId,
            accountId = @accountId,
            recipientId = @recipientId,
@@ -343,21 +399,24 @@ const updateTransaction = (
            exchangeRate = @exchangeRate,
            transactionReference = @transactionReference,
            description = @description
-       WHERE id = @id`,
-    )
-    .run(normalized);
+       WHERE id = @id`;
+  const result = db.prepare(updateSql).run(normalized);
   const transactionsAfter = tableRows(db, "transactions");
   const next = transactionsAfter.find((row) => row.id === targetId);
 
   for (const field of [
     "id",
     "paymentChannelId",
-    "transactionCost",
     "transferPairId",
     "isTransfer",
-    "budgetId",
-    "occurrenceDate",
-    "budgetSnapshotId",
+    ...(!capabilities.costBudget
+      ? [
+          "transactionCost",
+          "budgetId",
+          "occurrenceDate",
+          "budgetSnapshotId",
+        ]
+      : []),
   ]) {
     if (serialized(previous[field]) !== serialized(next?.[field])) {
       throw new Error(`transaction_update_changed_preserved_${field}`);
@@ -388,9 +447,15 @@ export const transactionBasicRealWrite = (
   db: Database.Database,
   payload: unknown,
   action: TransactionBasicAction,
+  capabilities: TransactionWriteCapabilities = { costBudget: false },
 ): TransactionBasicWriteResponse => {
   const dataPayload = validateTransactionBasicWritePayload(payload, action);
-  const dryRun = transactionBasicDryRun(db, dataPayload, action);
+  const dryRun = transactionBasicDryRun(
+    db,
+    dataPayload,
+    action,
+    capabilities,
+  );
 
   if (!dryRun.ok) {
     return response({
@@ -412,10 +477,15 @@ export const transactionBasicRealWrite = (
   }
 
   const transaction = db.transaction(() => {
-    const normalized = normalizeBasicTransactionPayload(dataPayload, action);
+    const normalized = normalizeTransactionPayloadForWrite(
+      db,
+      dataPayload,
+      action,
+      capabilities,
+    );
     return action === "create"
       ? createTransaction(db, normalized, dryRun)
-      : updateTransaction(db, normalized, dryRun);
+      : updateTransaction(db, normalized, dryRun, capabilities);
   });
   return transaction();
 };

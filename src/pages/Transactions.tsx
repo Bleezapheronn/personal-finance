@@ -74,8 +74,12 @@ import {
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import {
+  isCostBudgetTransactionWriteEligible,
   isBasicTransactionWriteEligible,
   isTransactionsBasicWriteExperimentEnabled,
+  isTransactionsCostBudgetWriteExperimentEnabled,
+  type TransactionBudgetReference,
+  type TransactionBudgetSnapshotReference,
 } from "../repositories/http/transactionBasicWriteExperiment";
 import "./Transactions.css";
 
@@ -387,6 +391,72 @@ const loadSelectedReadLookupRows = async (
   };
 };
 
+const loadSelectedReadReferenceRows = async (
+  list: (options: {
+    limit: number;
+    offset: number;
+  }) => Promise<unknown>,
+  errorCode: string,
+): Promise<Array<{ id?: unknown }>> => {
+  const rows: Array<{ id?: unknown }> = [];
+  while (rows.length < LOOKUP_READ_EXPERIMENT_LIMIT) {
+    const limit = Math.min(
+      TRANSACTIONS_READ_EXPERIMENT_PAGE_SIZE,
+      LOOKUP_READ_EXPERIMENT_LIMIT - rows.length,
+    );
+    const result = (await list({
+      limit,
+      offset: rows.length,
+    })) as DevPreviewListResult;
+    const page = selectedReadListRows(result, errorCode);
+    rows.push(...page);
+    const count = previewCount(result);
+    if (
+      page.length === 0 ||
+      page.length < limit ||
+      (count !== undefined && rows.length >= count)
+    ) {
+      break;
+    }
+  }
+  return rows;
+};
+
+const loadSelectedReadCostBudgetReferences = async (
+  repositories: ReturnType<typeof getSelectedReadRepositories>,
+): Promise<{
+  budgets: TransactionBudgetReference[];
+  snapshots: TransactionBudgetSnapshotReference[];
+}> => {
+  const [budgetRows, snapshotRows] = await Promise.all([
+    loadSelectedReadReferenceRows(
+      (options) => repositories.budgets.list(options),
+      "invalid_transactions_budget_reference_response",
+    ),
+    loadSelectedReadReferenceRows(
+      (options) => repositories.budgetSnapshots.list(options),
+      "invalid_transactions_budget_snapshot_reference_response",
+    ),
+  ]);
+
+  return {
+    budgets: budgetRows.map((row) => ({
+      id: optionalNumber((row as Record<string, unknown>).id),
+    })),
+    snapshots: snapshotRows.map((row) => {
+      const source = row as Record<string, unknown>;
+      return {
+        id: optionalNumber(source.id),
+        budgetId: optionalNumber(source.budgetId),
+        dueDate:
+          source.dueDate instanceof Date || typeof source.dueDate === "string"
+            ? source.dueDate
+            : undefined,
+      };
+    }),
+  };
+};
+
 const toDayKey = (value: unknown): string | undefined => {
   if (typeof value !== "string" && !(value instanceof Date)) {
     return undefined;
@@ -428,6 +498,10 @@ const Transactions: React.FC = () => {
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [costBudgetReferences, setCostBudgetReferences] = useState<{
+    budgets: TransactionBudgetReference[];
+    snapshots: TransactionBudgetSnapshotReference[];
+  }>({ budgets: [], snapshots: [] });
   const [accountImages, setAccountImages] = useState<Map<number, string>>(
     new Map(),
   );
@@ -478,9 +552,14 @@ const Transactions: React.FC = () => {
     isTransactionsReadExperimentEnabled();
   const transactionsBasicWriteExperimentEnabled =
     isTransactionsBasicWriteExperimentEnabled();
+  const transactionsCostBudgetWriteExperimentEnabled =
+    isTransactionsCostBudgetWriteExperimentEnabled();
   const transactionsSqliteWriteExperimentActive =
     transactionsBasicWriteExperimentEnabled &&
     selectedBackend === "http-readonly";
+  const transactionsCostBudgetWriteExperimentActive =
+    transactionsSqliteWriteExperimentActive &&
+    transactionsCostBudgetWriteExperimentEnabled;
   const transactionsHttpSelectedReadActive =
     (transactionsReadExperimentEnabled ||
       transactionsBasicWriteExperimentEnabled) &&
@@ -499,9 +578,12 @@ const Transactions: React.FC = () => {
 
       if (transactionsHttpSelectedReadActive) {
         const repositories = getSelectedReadRepositories(selectedBackend);
-        const [transactionLoad, lookupRows] = await Promise.all([
+        const [transactionLoad, lookupRows, references] = await Promise.all([
           loadSelectedReadTransactionExperimentRows(repositories),
           loadSelectedReadLookupRows(repositories),
+          transactionsCostBudgetWriteExperimentActive
+            ? loadSelectedReadCostBudgetReferences(repositories)
+            : Promise.resolve({ budgets: [], snapshots: [] }),
         ]);
 
         allTransactions = transactionLoad.transactions;
@@ -510,6 +592,7 @@ const Transactions: React.FC = () => {
         recs = lookupRows.recipients;
         accs = lookupRows.accounts;
         experimentLoad = transactionLoad;
+        setCostBudgetReferences(references);
       } else {
         [allTransactions, cats, bkts, recs, accs] = await Promise.all([
           transactionRepository.listTransactions(),
@@ -518,6 +601,7 @@ const Transactions: React.FC = () => {
           recipientRepository.listRecipients(),
           accountRepository.listAccounts(),
         ]);
+        setCostBudgetReferences({ budgets: [], snapshots: [] });
       }
 
       // REMOVED: paymentMethods fetch - no longer needed
@@ -594,14 +678,22 @@ const Transactions: React.FC = () => {
 
   // Handler to navigate to Edit Transaction page
   const handleEdit = (transaction: Transaction) => {
+    const editEligible = transactionsCostBudgetWriteExperimentActive
+      ? isCostBudgetTransactionWriteEligible(
+          transaction,
+          costBudgetReferences.snapshots,
+          costBudgetReferences.budgets,
+        )
+      : isBasicTransactionWriteEligible(transaction);
     if (
       transactionsHttpSelectedReadActive &&
-      (!transactionsSqliteWriteExperimentActive ||
-        !isBasicTransactionWriteEligible(transaction))
+      (!transactionsSqliteWriteExperimentActive || !editEligible)
     ) {
       setError(
         transactionsSqliteWriteExperimentActive
-          ? "Advanced transaction editing is not available in the SQLite experiment."
+          ? transactionsCostBudgetWriteExperimentActive
+            ? "This transaction has unsupported or inconsistent cost or budget linkage and remains read-only."
+            : "Advanced transaction editing is not available in the SQLite experiment."
           : "Transactions HTTP reads are active, but the basic write experiment is off.",
       );
       return;
@@ -1459,7 +1551,9 @@ const Transactions: React.FC = () => {
               >
                 <p style={{ marginTop: 0 }}>
                   {transactionsSqliteWriteExperimentActive
-                    ? "Basic Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Transfers, transaction costs, and budget-linked transactions are not supported."
+                    ? transactionsCostBudgetWriteExperimentActive
+                      ? "Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Single-row income/expense transactions may include transaction costs and links to existing budget snapshots. Transfers and delete remain unsupported."
+                      : "Basic Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Transfers, transaction costs, and budget-linked transactions are not supported."
                     : transactionsHttpSelectedReadActive
                       ? "Transactions read experiment is active. The selected-read list is HTTP read-only and transaction writes are disabled."
                       : "Transactions experiment flag is active with the Dexie backend. Existing Dexie behavior remains available."}
@@ -1479,8 +1573,10 @@ const Transactions: React.FC = () => {
                 {transactionsSqliteWriteExperimentActive && (
                   <p style={{ marginBottom: 0, color: "#666", fontSize: "0.85rem" }}>
                     Create/update only. No Dexie write occurs. Re-import SQLite
-                    before clean parity checks. Advanced transactions are
-                    read-only.
+                    before clean parity checks.
+                    {transactionsCostBudgetWriteExperimentActive
+                      ? " Existing snapshots may be linked or unlinked; no snapshot is generated or modified."
+                      : " Advanced transactions are read-only."}
                   </p>
                 )}
               </IonText>
@@ -2312,7 +2408,13 @@ const Transactions: React.FC = () => {
                               </IonRow>
                             )}
                             {transactionsSqliteWriteExperimentActive &&
-                              isBasicTransactionWriteEligible(txn) && (
+                              (transactionsCostBudgetWriteExperimentActive
+                                ? isCostBudgetTransactionWriteEligible(
+                                    txn,
+                                    costBudgetReferences.snapshots,
+                                    costBudgetReferences.budgets,
+                                  )
+                                : isBasicTransactionWriteEligible(txn)) && (
                                 <IonRow className="item-actions">
                                   <IonCol className="item-actions-container">
                                     <IonButton
@@ -2320,7 +2422,11 @@ const Transactions: React.FC = () => {
                                       size="small"
                                       style={{ marginRight: "0" }}
                                       onClick={() => handleEdit(txn)}
-                                      title="Edit basic transaction in disposable SQLite"
+                                      title={
+                                        transactionsCostBudgetWriteExperimentActive
+                                          ? "Edit transaction in disposable SQLite"
+                                          : "Edit basic transaction in disposable SQLite"
+                                      }
                                     >
                                       <IonIcon slot="end" icon={createOutline} />
                                     </IonButton>

@@ -138,14 +138,20 @@ transfer, cost, and budget-linkage columns. Transactions have no current
 `createdAt` or `updatedAt` fields, so this phase does not invent timestamp
 behavior.
 
-Transfers, paired rows, nonzero `transactionCost`, budget and snapshot
-linkage, delete, duplicate, bulk writes, CSV/import/export, SMS import,
-recurring behavior, broad frontend write adapters, dual-write, and authority
-migration remain deferred. The UI does not manually patch account balances or
-report state; derived values can change only through the selected transaction
-data after refresh. These deferred operations require separate plans that
-preserve transfer-pair reciprocity and `budgetSnapshotId` as the canonical
-budget linkage.
+Phase 2 extends the same routes and dev-only UI with a second backend and
+frontend flag. It supports valid nonpositive `transactionCost` values and
+link/change/unlink operations against existing valid budget snapshots only.
+Financial effects use `amount + transactionCost`. `budgetSnapshotId` is
+canonical; legacy `budgetId` and `occurrenceDate` are derived from the selected
+snapshot. No Account, Budget, snapshot, lookup, or related transaction row is
+mutated.
+
+Transfers, paired rows, snapshot creation/generation/pruning/repair, transaction
+delete, duplicate, bulk writes, CSV/import/export, SMS import, recurring
+behavior, broad frontend write adapters, dual-write, and authority migration
+remain deferred. The UI does not manually patch account balances, reports,
+Budgets, or snapshots; derived values change only through selected transaction
+data after refresh.
 
 ### Budget Writes
 
@@ -226,7 +232,8 @@ Before any write code is implemented, the project needs explicit decisions for:
 ## Not Allowed Yet
 
 - No additional write endpoints beyond the explicitly approved, flag-gated
-  recipient operations and bucket/category/Account create/update operations.
+  recipient operations, bucket/category/Account create/update operations, and
+  single-row transaction Phase 1/Phase 2 create/update operations.
 - No broad repository write adapters.
 - No dual-write.
 - No background sync.

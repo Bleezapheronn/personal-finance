@@ -874,3 +874,36 @@ have its backend write flag enabled independently of the Vite flag. Re-import
 SQLite from a fresh matching backup before clean parity verification.
 Transfers, costs, budget linkage, delete, bulk operations, dual-write, and
 authority migration remain deferred.
+
+## Transaction Write Phase 2
+
+Phase 2 extends the same dry-run-first single-row transaction routes with
+transaction costs and links to existing budget snapshots. Backend support is
+disabled unless both
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true` and
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES=true`. The dev-only UI
+is disabled unless the existing basic frontend flag and
+`VITE_PERSONAL_FINANCE_TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT=true` are both
+set with the `http-readonly` backend. Restart Vite after changing frontend
+environment values, and ensure its local API base URL matches the server port.
+
+The form keeps the existing cost convention: the user enters a nonnegative
+magnitude and the persisted `transactionCost` is negative. Costs remain
+separate from `amount`; account and report effects use
+`amount + transactionCost`, with no Account-row mutation. Phase 2 may link,
+change, or explicitly remove a link to an existing snapshot.
+`budgetSnapshotId` is canonical, legacy `budgetId` is derived from the
+snapshot's parent budget, and `occurrenceDate` is derived from the snapshot due
+date.
+
+The HTTP form loads only existing budgets and snapshots. It does not call
+snapshot lifecycle helpers and cannot create, generate, repair, prune, update,
+or delete snapshots or Budgets. Invalid legacy-only or inconsistent linked
+transactions remain read-only. Transfers, paired rows, delete, duplicate, SMS
+import, CSV import/export, and bulk operations remain unavailable.
+
+Normal smoke remains non-mutating. Phase 1 and Phase 2 mutation smoke are
+separate explicit modes; the Phase 2 mode uses
+`--allow-transaction-cost-budget-write-smoke`. Mutation smoke dirties its
+disposable SQLite database. Re-import a fresh matching backup into a separate
+SQLite database before running parity verification.

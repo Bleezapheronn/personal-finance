@@ -7,6 +7,7 @@ import {
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
   areTransactionBasicWritesEnabled,
+  areTransactionCostBudgetWritesEnabled,
   getServerPort,
   getSqlitePath,
   READONLY_MODE,
@@ -100,11 +101,13 @@ import {
 import {
   transactionBasicDryRun,
   transactionBasicDryRunRequestErrorResponse,
+  transactionPayloadRequestsCostBudgetWrite,
   TransactionBasicDryRunRequestError,
 } from "./lib/transactionBasicDryRun.js";
 import {
   transactionBasicRealWrite,
   transactionBasicWriteDisabledResponse,
+  transactionCostBudgetWriteDisabledResponse,
   transactionBasicWriteRequestErrorResponse,
   TransactionBasicWriteRequestError,
   validateTransactionBasicWritePayload,
@@ -1323,6 +1326,11 @@ for (const action of ["create", "update"] as const) {
           opened.db,
           request.body,
           action,
+          {
+            costBudget:
+              areTransactionBasicWritesEnabled() &&
+              areTransactionCostBudgetWritesEnabled(),
+          },
         );
         if (response.code === "transaction_not_found") {
           return reply.code(404).send(response);
@@ -1374,6 +1382,16 @@ for (const action of ["create", "update"] as const) {
           .code(403)
           .send(transactionBasicWriteDisabledResponse(action));
       }
+      const costBudgetRequested =
+        transactionPayloadRequestsCostBudgetWrite(request.body);
+      if (
+        costBudgetRequested &&
+        !areTransactionCostBudgetWritesEnabled()
+      ) {
+        return reply
+          .code(403)
+          .send(transactionCostBudgetWriteDisabledResponse(action));
+      }
 
       let opened: ReturnType<typeof openConfiguredWritableDatabase>;
       try {
@@ -1401,6 +1419,9 @@ for (const action of ["create", "update"] as const) {
           opened.db,
           request.body,
           action,
+          {
+            costBudget: areTransactionCostBudgetWritesEnabled(),
+          },
         );
         if (response.code === "transaction_not_found") {
           return reply.code(404).send(response);

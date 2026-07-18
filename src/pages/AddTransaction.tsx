@@ -28,6 +28,8 @@ import {
   Category,
   Bucket,
   Account,
+  Budget,
+  BudgetSnapshot,
   Recipient,
   SmsImportTemplate,
 } from "../db";
@@ -63,6 +65,8 @@ import { getSelectedReadRepositories } from "../repositories/selectedReadReposit
 import type {
   AccountDto,
   ApiListResponse,
+  BudgetDto,
+  BudgetSnapshotDto,
   BucketDto,
   CategoryDto,
   RecipientDto,
@@ -70,8 +74,10 @@ import type {
 } from "../repositories/http/types";
 import {
   createBasicTransactionInDisposableSqlite,
+  isCostBudgetTransactionWriteEligible,
   isBasicTransactionWriteEligible,
   isTransactionsBasicWriteExperimentEnabled,
+  isTransactionsCostBudgetWriteExperimentEnabled,
   transactionBasicWriteErrorCode,
   updateBasicTransactionInDisposableSqlite,
   type BasicTransactionWriteInput,
@@ -103,6 +109,36 @@ type TransferUpdatePatch = TransferContentPayload & { transferPairId: number };
 const selectedRows = <Row,>(
   result: Row[] | ApiListResponse<Row>,
 ): Row[] => (Array.isArray(result) ? result : result.rows);
+
+const SELECTED_BUDGET_PAGE_SIZE = 200;
+const SELECTED_BUDGET_ROW_LIMIT = 5000;
+
+const loadSelectedPages = async <Row,>(
+  list: (options: {
+    limit: number;
+    offset: number;
+  }) => Promise<Row[] | ApiListResponse<Row>>,
+): Promise<Row[]> => {
+  const rows: Row[] = [];
+  while (rows.length < SELECTED_BUDGET_ROW_LIMIT) {
+    const limit = Math.min(
+      SELECTED_BUDGET_PAGE_SIZE,
+      SELECTED_BUDGET_ROW_LIMIT - rows.length,
+    );
+    const result = await list({ limit, offset: rows.length });
+    const page = selectedRows(result);
+    rows.push(...page);
+    const count = Array.isArray(result) ? undefined : result.count;
+    if (
+      page.length < limit ||
+      page.length === 0 ||
+      (typeof count === "number" && rows.length >= count)
+    ) {
+      break;
+    }
+  }
+  return rows;
+};
 
 const selectedBoolean = (value: boolean | number): boolean =>
   value === true || value === 1;
@@ -194,6 +230,61 @@ const normalizeSelectedTransaction = (
   budgetSnapshotId: transaction.budgetSnapshotId ?? undefined,
 });
 
+const normalizeSelectedBudget = (budget: Budget | BudgetDto): Budget => ({
+  id: budget.id,
+  description: budget.description,
+  categoryId: budget.categoryId,
+  paymentChannelId: budget.paymentChannelId ?? undefined,
+  accountId: budget.accountId ?? undefined,
+  recipientId: budget.recipientId ?? undefined,
+  amount: budget.amount,
+  transactionCost: budget.transactionCost ?? undefined,
+  frequency: budget.frequency,
+  frequencyDetails:
+    typeof budget.frequencyDetails === "string"
+      ? undefined
+      : (budget.frequencyDetails ?? undefined),
+  isGoal: selectedBoolean(budget.isGoal),
+  isFlexible: selectedBoolean(budget.isFlexible),
+  goalPercentage: budget.goalPercentage ?? undefined,
+  goalDirection: budget.goalDirection ?? undefined,
+  isActive: selectedBoolean(budget.isActive),
+  remainingCyclesTotal: budget.remainingCyclesTotal ?? undefined,
+  dueDate: selectedDate(budget.dueDate),
+  createdAt: selectedDate(budget.createdAt),
+  updatedAt: selectedDate(budget.updatedAt),
+});
+
+const normalizeSelectedBudgetSnapshot = (
+  snapshot: BudgetSnapshot | BudgetSnapshotDto,
+): BudgetSnapshot => ({
+  id: snapshot.id,
+  budgetId: snapshot.budgetId,
+  occurrenceDate: selectedDate(snapshot.occurrenceDate),
+  dueDate: selectedDate(snapshot.dueDate),
+  cycleIndex: snapshot.cycleIndex,
+  description: snapshot.description,
+  categoryId: snapshot.categoryId,
+  accountId: snapshot.accountId ?? undefined,
+  recipientId: snapshot.recipientId ?? undefined,
+  amount: snapshot.amount,
+  transactionCost: snapshot.transactionCost ?? undefined,
+  frequency: snapshot.frequency,
+  frequencyDetails:
+    typeof snapshot.frequencyDetails === "string"
+      ? undefined
+      : (snapshot.frequencyDetails ?? undefined),
+  isGoal: selectedBoolean(snapshot.isGoal),
+  isFlexible: selectedBoolean(snapshot.isFlexible),
+  goalPercentage: snapshot.goalPercentage ?? undefined,
+  goalDirection: snapshot.goalDirection ?? undefined,
+  remainingCyclesTotal: snapshot.remainingCyclesTotal ?? undefined,
+  isHistorical: selectedBoolean(snapshot.isHistorical),
+  sourceBudgetUpdatedAt: selectedDate(snapshot.sourceBudgetUpdatedAt),
+  createdAt: selectedDate(snapshot.createdAt),
+  updatedAt: selectedDate(snapshot.updatedAt),
+});
+
 const AddTransaction: React.FC = () => {
   const history = useHistory();
   const location = useLocation<AddTransactionLocationState>();
@@ -203,11 +294,16 @@ const AddTransaction: React.FC = () => {
   const selectedBackend = getRepositoryBackend();
   const transactionsBasicWriteExperimentEnabled =
     isTransactionsBasicWriteExperimentEnabled();
+  const transactionsCostBudgetWriteExperimentEnabled =
+    isTransactionsCostBudgetWriteExperimentEnabled();
   const transactionsSqliteWriteExperimentActive =
     selectedBackend === "http-readonly" &&
     transactionsBasicWriteExperimentEnabled;
   const transactionsHttpBackendSelected =
     selectedBackend === "http-readonly";
+  const transactionsCostBudgetWriteExperimentActive =
+    transactionsSqliteWriteExperimentActive &&
+    transactionsCostBudgetWriteExperimentEnabled;
 
   // Combined date and time into single datetime state
   const [transactionDateTime, setTransactionDateTime] = useState<string>("");
@@ -246,6 +342,13 @@ const AddTransaction: React.FC = () => {
   const [sortedAccounts, setSortedAccounts] = useState<Account[]>([]);
   const [sortedRecipients, setSortedRecipients] = useState<Recipient[]>([]);
   const [smsTemplates, setSmsTemplates] = useState<SmsImportTemplate[]>([]);
+  const [selectedBudgets, setSelectedBudgets] = useState<Budget[]>([]);
+  const [selectedBudgetSnapshots, setSelectedBudgetSnapshots] = useState<
+    BudgetSnapshot[]
+  >([]);
+  const [budgetSnapshotId, setBudgetSnapshotId] = useState<
+    number | undefined
+  >(undefined);
   const [showRecipientModal, setShowRecipientModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
 
@@ -309,13 +412,29 @@ const AddTransaction: React.FC = () => {
     try {
       if (transactionsHttpBackendSelected) {
         const repositories = getSelectedReadRepositories("http-readonly");
-        const [bucketResult, categoryResult, accountResult, recipientResult] =
-          await Promise.all([
-            repositories.buckets.list({ limit: 5000 }),
-            repositories.categories.list({ limit: 5000 }),
-            repositories.accounts.list({ limit: 5000 }),
-            repositories.recipients.list({ limit: 5000 }),
-          ]);
+        const [
+          bucketResult,
+          categoryResult,
+          accountResult,
+          recipientResult,
+          budgetRows,
+          snapshotRows,
+        ] = await Promise.all([
+          repositories.buckets.list({ limit: 5000 }),
+          repositories.categories.list({ limit: 5000 }),
+          repositories.accounts.list({ limit: 5000 }),
+          repositories.recipients.list({ limit: 5000 }),
+          transactionsCostBudgetWriteExperimentActive
+            ? loadSelectedPages<Budget | BudgetDto>((options) =>
+                repositories.budgets.list(options),
+              )
+            : Promise.resolve([]),
+          transactionsCostBudgetWriteExperimentActive
+            ? loadSelectedPages<BudgetSnapshot | BudgetSnapshotDto>((options) =>
+                repositories.budgetSnapshots.list(options),
+              )
+            : Promise.resolve([]),
+        ]);
         const selectedBuckets = selectedRows<Bucket | BucketDto>(
           bucketResult,
         ).map(normalizeSelectedBucket);
@@ -356,6 +475,10 @@ const AddTransaction: React.FC = () => {
         setSortedAccounts(activeAccounts);
         setSortedRecipients(activeRecipients);
         setSmsTemplates([]);
+        setSelectedBudgets(budgetRows.map(normalizeSelectedBudget));
+        setSelectedBudgetSnapshots(
+          snapshotRows.map(normalizeSelectedBudgetSnapshot),
+        );
         return;
       }
 
@@ -443,6 +566,7 @@ const AddTransaction: React.FC = () => {
 
             if (
               transactionsHttpBackendSelected &&
+              !transactionsCostBudgetWriteExperimentActive &&
               !isBasicTransactionWriteEligible(txn)
             ) {
               setErrorMsg(
@@ -511,6 +635,7 @@ const AddTransaction: React.FC = () => {
             setExchangeRate(txn.exchangeRate?.toString() || "");
             setExchangeRateOverride(!!txn.exchangeRate);
             setDescription(txn.description || "");
+            setBudgetSnapshotId(txn.budgetSnapshotId);
           }
         } catch (err) {
           console.error("Failed to load transaction:", err);
@@ -536,6 +661,7 @@ const AddTransaction: React.FC = () => {
       setTransferRecipientId(duplicatePrefill.transferRecipientId);
       setTransferToAccountId(duplicatePrefill.transferToAccountId);
       setDescription(duplicatePrefill.description);
+      setBudgetSnapshotId(undefined);
       setEditingTransaction(null);
     } else {
       // ADD MODE: Clear form
@@ -554,12 +680,14 @@ const AddTransaction: React.FC = () => {
       setTransferRecipientId(undefined);
       setTransferToAccountId(undefined);
       setDescription("");
+      setBudgetSnapshotId(undefined);
       setEditingTransaction(null);
     }
   }, [
     duplicatePrefill,
     id,
     isEditMode,
+    transactionsCostBudgetWriteExperimentActive,
     transactionsHttpBackendSelected,
   ]);
 
@@ -810,19 +938,34 @@ const AddTransaction: React.FC = () => {
           );
           return;
         }
-        if (transactionCost.trim() !== "") {
+        if (
+          !transactionsCostBudgetWriteExperimentActive &&
+          transactionCost.trim() !== ""
+        ) {
           setErrorMsg(
             "Transaction costs are not supported by the basic SQLite write experiment.",
           );
           return;
         }
+        const costBudgetEditEligible =
+          !isEditMode ||
+          (editingTransaction !== null &&
+            isCostBudgetTransactionWriteEligible(
+              editingTransaction,
+              selectedBudgetSnapshots,
+              selectedBudgets,
+            ));
         if (
           isEditMode &&
           (!editingTransaction ||
-            !isBasicTransactionWriteEligible(editingTransaction))
+            (transactionsCostBudgetWriteExperimentActive
+              ? !costBudgetEditEligible
+              : !isBasicTransactionWriteEligible(editingTransaction)))
         ) {
           setErrorMsg(
-            "This transaction is not eligible for the basic SQLite write experiment.",
+            transactionsCostBudgetWriteExperimentActive
+              ? "This transaction has unsupported or inconsistent cost or budget linkage and remains read-only."
+              : "This transaction is not eligible for the basic SQLite write experiment.",
           );
           return;
         }
@@ -837,6 +980,20 @@ const AddTransaction: React.FC = () => {
             : transactionType === "expense"
               ? -Math.abs(numericOriginalAmountRaw)
               : Math.abs(numericOriginalAmountRaw);
+        const selectedSnapshot =
+          budgetSnapshotId === undefined
+            ? undefined
+            : selectedBudgetSnapshots.find(
+                (snapshot) => snapshot.id === budgetSnapshotId,
+              );
+        if (
+          transactionsCostBudgetWriteExperimentActive &&
+          budgetSnapshotId !== undefined &&
+          !selectedSnapshot
+        ) {
+          setErrorMsg("The selected budget snapshot is unavailable.");
+          return;
+        }
         const input: BasicTransactionWriteInput = {
           classification: transactionType,
           date: selectedDateTime.toISOString(),
@@ -849,7 +1006,17 @@ const AddTransaction: React.FC = () => {
           accountId: accountId!,
           recipientId: recipientId!,
           description,
-          transactionCost: null,
+          transactionCost: transactionsCostBudgetWriteExperimentActive
+            ? (numericCost ?? null)
+            : null,
+          ...(transactionsCostBudgetWriteExperimentActive
+            ? {
+                budgetSnapshotId: selectedSnapshot?.id ?? null,
+                budgetId: selectedSnapshot?.budgetId ?? null,
+                occurrenceDate:
+                  selectedSnapshot?.dueDate.toISOString() ?? null,
+              }
+            : {}),
         };
         const response =
           isEditMode && id
@@ -1272,12 +1439,24 @@ const AddTransaction: React.FC = () => {
     !isEditMode ||
     (editingTransaction !== null &&
       isBasicTransactionWriteEligible(editingTransaction));
+  const costBudgetHttpEditEligible =
+    !isEditMode ||
+    (editingTransaction !== null &&
+      isCostBudgetTransactionWriteEligible(
+        editingTransaction,
+        selectedBudgetSnapshots,
+        selectedBudgets,
+      ));
+  const httpEditEligible = transactionsCostBudgetWriteExperimentActive
+    ? costBudgetHttpEditEligible
+    : basicHttpEditEligible;
   const transactionSubmitDisabled =
     transactionsHttpBackendSelected &&
     (!transactionsSqliteWriteExperimentActive ||
       transactionType === "transfer" ||
-      transactionCost.trim() !== "" ||
-      !basicHttpEditEligible);
+      (!transactionsCostBudgetWriteExperimentActive &&
+        transactionCost.trim() !== "") ||
+      !httpEditEligible);
 
   return (
     <IonPage>
@@ -1312,7 +1491,9 @@ const AddTransaction: React.FC = () => {
               }}
             >
               {transactionsSqliteWriteExperimentActive
-                ? "Basic Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Transfers, transaction costs, and budget-linked transactions are not supported. Create/update only; re-import SQLite before clean parity checks."
+                ? transactionsCostBudgetWriteExperimentActive
+                  ? "Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Single-row income/expense transactions may include transaction costs and links to existing budget snapshots. Transfers and delete remain unsupported."
+                  : "Basic Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Transfers, transaction costs, and budget-linked transactions are not supported. Create/update only; re-import SQLite before clean parity checks."
                 : "The HTTP transaction backend is selected, but the basic SQLite write experiment is disabled. No transaction write will be attempted."}
             </p>
           </IonText>
@@ -1348,7 +1529,7 @@ const AddTransaction: React.FC = () => {
                     disabled={
                       (isEditMode && editingTransaction?.isTransfer) ||
                       (transactionsHttpBackendSelected &&
-                        !basicHttpEditEligible)
+                        !httpEditEligible)
                     }
                   >
                     <IonSegmentButton value="income">
@@ -1968,7 +2149,8 @@ const AddTransaction: React.FC = () => {
                 </div>
               </IonCol>
 
-              {!transactionsHttpBackendSelected && (
+              {(!transactionsHttpBackendSelected ||
+                transactionsCostBudgetWriteExperimentActive) && (
                 <IonCol size="3">
                   <div className="form-input-wrapper">
                     <label className="form-label">
@@ -1987,6 +2169,45 @@ const AddTransaction: React.FC = () => {
                 </IonCol>
               )}
             </IonRow>
+
+            {transactionsCostBudgetWriteExperimentActive && (
+              <IonRow>
+                <IonCol size="11">
+                  <div className="form-input-wrapper">
+                    <label className="form-label">
+                      Existing Budget Snapshot (optional)
+                    </label>
+                    <SelectableDropdown
+                      label="Budget snapshot"
+                      placeholder="No budget snapshot"
+                      value={
+                        budgetSnapshotId === undefined
+                          ? undefined
+                          : String(budgetSnapshotId)
+                      }
+                      options={[
+                        { value: "", label: "No budget snapshot" },
+                        ...selectedBudgetSnapshots.map((snapshot) => ({
+                          value: String(snapshot.id),
+                          label: `Snapshot ${snapshot.id} / Budget ${snapshot.budgetId} / ${snapshot.dueDate.toLocaleDateString()}`,
+                        })),
+                      ]}
+                      onValueChange={(value) =>
+                        setBudgetSnapshotId(
+                          value === "" ? undefined : Number(value),
+                        )
+                      }
+                    />
+                    <IonText color="medium">
+                      <small>
+                        Existing snapshots only. This form does not generate or
+                        modify budget snapshots.
+                      </small>
+                    </IonText>
+                  </div>
+                </IonCol>
+              </IonRow>
+            )}
 
             {/* Original Amount, Currency, Exchange Rate */}
             <IonRow>

@@ -18,6 +18,8 @@ export const ACCOUNT_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES" as const;
 export const TRANSACTION_BASIC_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES" as const;
+export const TRANSACTION_COST_BUDGET_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES" as const;
 
 export const ALLOWED_ORIGINS = new Set([
   "http://localhost:8100",
@@ -63,3 +65,6 @@ export const areAccountWritesEnabled = (): boolean =>
 
 export const areTransactionBasicWritesEnabled = (): boolean =>
   process.env[TRANSACTION_BASIC_WRITES_ENV_VAR] === "true";
+
+export const areTransactionCostBudgetWritesEnabled = (): boolean =>
+  process.env[TRANSACTION_COST_BUDGET_WRITES_ENV_VAR] === "true";
