@@ -5,6 +5,10 @@ import {
   TRANSACTION_BASIC_CREATE_WRITE_CONFIRMATION,
   TRANSACTION_BASIC_UPDATE_WRITE_CONFIRMATION,
 } from "./lib/transactionBasicWrite.js";
+import {
+  TRANSACTION_TRANSFER_CREATE_WRITE_CONFIRMATION,
+  TRANSACTION_TRANSFER_UPDATE_WRITE_CONFIRMATION,
+} from "./lib/transactionTransferWrite.js";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3147";
 const TOKEN_HEADER_NAME = "x-personal-finance-token";
@@ -32,6 +36,7 @@ interface SmokeArgs {
   allowAccountWriteSmoke: boolean;
   allowTransactionBasicWriteSmoke: boolean;
   allowTransactionCostBudgetWriteSmoke: boolean;
+  allowTransactionTransferWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -121,6 +126,8 @@ Options:
                          Opt in to disposable SQLite basic transaction create/update write smoke.
   --allow-transaction-cost-budget-write-smoke
                          Opt in to disposable SQLite transaction cost/budget-link create/update write smoke.
+  --allow-transaction-transfer-write-smoke
+                         Opt in to disposable SQLite paired transfer create/update write smoke.
   --help                 Show this help text.
 `;
 
@@ -134,6 +141,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowAccountWriteSmoke: false,
     allowTransactionBasicWriteSmoke: false,
     allowTransactionCostBudgetWriteSmoke: false,
+    allowTransactionTransferWriteSmoke: false,
     help: false,
   };
 
@@ -201,6 +209,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-transaction-cost-budget-write-smoke") {
       args.allowTransactionCostBudgetWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-transaction-transfer-write-smoke") {
+      args.allowTransactionTransferWriteSmoke = true;
       continue;
     }
 
@@ -622,6 +635,40 @@ const expectSafeTransactionBasicShape = (
   expect(safety.rawRowsIncluded === false, "transaction_raw_rows_reported");
 };
 
+const expectSafeTransactionTransferShape = (
+  json: ResponseJson,
+  action: "create" | "update",
+  dryRun: boolean,
+): void => {
+  expect(json.entity === "transfer", "unexpected_transfer_entity");
+  expect(json.action === action, "unexpected_transfer_action");
+  if (dryRun) {
+    expect(json.dryRun === true, "transfer_dry_run_flag_missing");
+    expect(json.wouldMutate === false, "transfer_dry_run_would_mutate");
+  } else {
+    expect(json.realWrite === true, "transfer_real_write_flag_missing");
+    expect(
+      typeof json.sqliteMutated === "boolean",
+      "transfer_mutation_flag_missing",
+    );
+    expect(typeof json.rowsChanged === "number", "transfer_rows_changed_missing");
+  }
+  expect(
+    typeof json.financialEffectSummary === "object",
+    "transfer_financial_summary_missing",
+  );
+  expect(typeof json.timestampBehavior === "object", "transfer_timestamps_missing");
+  expect(typeof json.safety === "object", "transfer_safety_missing");
+  const safety = json.safety as Record<string, unknown>;
+  expect(safety.dexieMutated === false, "transfer_dexie_mutation_reported");
+  expect(safety.filesWritten === false, "transfer_file_write_reported");
+  expect(
+    safety.relatedRecordsMutated === false,
+    "transfer_related_mutation_reported",
+  );
+  expect(safety.rawRowsIncluded === false, "transfer_raw_rows_reported");
+};
+
 const detailRow = (
   json: ResponseJson,
   key: "account" | "bucket" | "category",
@@ -695,6 +742,7 @@ const buildChecks = (
   allowAccountWriteSmoke: boolean,
   allowTransactionBasicWriteSmoke: boolean,
   allowTransactionCostBudgetWriteSmoke: boolean,
+  allowTransactionTransferWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -4252,7 +4300,8 @@ const buildChecks = (
       },
     },
     ...(!allowTransactionBasicWriteSmoke &&
-    !allowTransactionCostBudgetWriteSmoke
+    !allowTransactionCostBudgetWriteSmoke &&
+    !allowTransactionTransferWriteSmoke
       ? [
           {
             name: "transaction basic writes are disabled and non-mutating by default",
@@ -5050,9 +5099,530 @@ const buildChecks = (
         ]
       : []),
     {
-      name: "transaction delete transfer and bulk write routes are not implemented",
+      name: "transaction transfer routes remain protected and dry-runs are non-mutating",
       run: async () => {
-        for (const action of ["delete", "transfer", "bulk"] as const) {
+        const accounts = await readAllTableRows(
+          baseUrl,
+          "accounts",
+          authedOptions,
+        );
+        const buckets = await readAllTableRows(
+          baseUrl,
+          "buckets",
+          authedOptions,
+        );
+        const categories = await readAllTableRows(
+          baseUrl,
+          "categories",
+          authedOptions,
+        );
+        const recipients = await readAllTableRows(
+          baseUrl,
+          "recipients",
+          authedOptions,
+        );
+        const category = categories.find((candidate) =>
+          buckets.some((bucket) => bucket.id === candidate.bucketId),
+        );
+        expect(
+          Boolean(accounts[0] && accounts[1] && category && recipients[0]),
+          "transaction_transfer_fixture_missing",
+        );
+        const privateDescription = `Transfer Dry Run ${transactionSmokeSequence}`;
+        const privateReference = `transfer-private-${transactionSmokeSequence}`;
+        const payload = {
+          sourceAccountId: accounts[0].id,
+          destinationAccountId: accounts[1].id,
+          sourceRecipientId: recipients[0].id,
+          destinationRecipientId: recipients[0].id,
+          date: "2098-03-10T12:00:00.000Z",
+          amount: 10,
+          transactionCost: -1,
+          categoryId: category!.id,
+          description: privateDescription,
+          transactionReference: privateReference,
+        };
+        for (const mode of ["dry-run", "write"] as const) {
+          for (const action of ["create", "update"] as const) {
+            const route = `/prototype/repositories/transactions/transfers/${mode}/${action}`;
+            const body = {
+              ...payload,
+              ...(action === "update" ? { id: 2_147_483_647 } : {}),
+              ...(mode === "write"
+                ? {
+                    dryRunReviewed: true,
+                    confirmation:
+                      action === "create"
+                        ? TRANSACTION_TRANSFER_CREATE_WRITE_CONFIRMATION
+                        : TRANSACTION_TRANSFER_UPDATE_WRITE_CONFIRMATION,
+                  }
+                : {}),
+            };
+            expectStatus(
+              (
+                await requestJson(baseUrl, route, {
+                  method: "POST",
+                  body,
+                })
+              ).status,
+              401,
+            );
+            expectStatus(
+              (
+                await requestJson(baseUrl, route, {
+                  ...authedOptions,
+                  origin: "https://unexpected.invalid",
+                  method: "POST",
+                  body,
+                })
+              ).status,
+              403,
+            );
+          }
+        }
+
+        const tables = [
+          "transactions",
+          "accounts",
+          "paymentMethods",
+          "budgets",
+          "budgetSnapshots",
+          "buckets",
+          "categories",
+          "recipients",
+          "smsImportTemplates",
+        ] as const;
+        const before = new Map<string, string>();
+        for (const table of tables) {
+          before.set(
+            table,
+            rowsFingerprint(
+              await readAllTableRows(baseUrl, table, authedOptions),
+            ),
+          );
+        }
+        const valid = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions/transfers/dry-run/create",
+          { ...authedOptions, method: "POST", body: payload },
+        );
+        expectStatus(valid.status, 200);
+        expectSafeTransactionTransferShape(valid.json, "create", true);
+        expectNoSensitiveEcho(valid.json, [
+          privateDescription,
+          privateReference,
+        ]);
+
+        const invalidCases = [
+          { ...payload, sourceAccountId: 2_147_483_647 },
+          { ...payload, destinationAccountId: 2_147_483_647 },
+          { ...payload, destinationAccountId: accounts[0].id },
+          { ...payload, amount: 0 },
+          { ...payload, amount: -10 },
+          { ...payload, id: 1 },
+          { ...payload, transferPairId: 1 },
+          { ...payload, budgetSnapshotId: 1 },
+          { ...payload, unexpected: true },
+        ];
+        for (const body of invalidCases) {
+          const result = await requestJson(
+            baseUrl,
+            "/prototype/repositories/transactions/transfers/dry-run/create",
+            { ...authedOptions, method: "POST", body },
+          );
+          expectStatus(result.status, 400);
+          expectSafeTransactionTransferShape(result.json, "create", true);
+          expectNoSensitiveEcho(result.json, [
+            privateDescription,
+            privateReference,
+          ]);
+        }
+        const missingUpdate = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions/transfers/dry-run/update",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { ...payload, id: 2_147_483_647 },
+          },
+        );
+        expectStatus(missingUpdate.status, 404);
+        expectSafeTransactionTransferShape(
+          missingUpdate.json,
+          "update",
+          true,
+        );
+        for (const table of tables) {
+          expect(
+            rowsFingerprint(
+              await readAllTableRows(baseUrl, table, authedOptions),
+            ) === before.get(table),
+            `${table}_changed_during_transfer_dry_run`,
+          );
+        }
+      },
+    },
+    ...(!allowTransactionTransferWriteSmoke
+      ? [
+          {
+            name: "transaction transfer writes are disabled and non-mutating by default",
+            run: async () => {
+              const accounts = await readAllTableRows(
+                baseUrl,
+                "accounts",
+                authedOptions,
+              );
+              const buckets = await readAllTableRows(
+                baseUrl,
+                "buckets",
+                authedOptions,
+              );
+              const categories = await readAllTableRows(
+                baseUrl,
+                "categories",
+                authedOptions,
+              );
+              const recipients = await readAllTableRows(
+                baseUrl,
+                "recipients",
+                authedOptions,
+              );
+              const category = categories.find((candidate) =>
+                buckets.some((bucket) => bucket.id === candidate.bucketId),
+              );
+              expect(
+                Boolean(accounts[0] && accounts[1] && category && recipients[0]),
+                "transaction_transfer_fixture_missing",
+              );
+              const before = await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              );
+              const response = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/transfers/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    sourceAccountId: accounts[0].id,
+                    destinationAccountId: accounts[1].id,
+                    sourceRecipientId: recipients[0].id,
+                    destinationRecipientId: recipients[0].id,
+                    date: "2098-03-10T12:00:00.000Z",
+                    amount: 10,
+                    categoryId: category!.id,
+                    description: "Disabled transfer smoke",
+                    dryRunReviewed: true,
+                    confirmation:
+                      TRANSACTION_TRANSFER_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(response.status, 403);
+              expectSafeTransactionTransferShape(
+                response.json,
+                "create",
+                false,
+              );
+              expect(
+                rowsFingerprint(
+                  await readAllTableRows(
+                    baseUrl,
+                    "transactions",
+                    authedOptions,
+                  ),
+                ) === rowsFingerprint(before),
+                "disabled_transfer_write_mutated",
+              );
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    ...(allowTransactionTransferWriteSmoke
+      ? [
+          {
+            name: "transaction transfer opt-in smoke verifies atomic pair and exact deltas",
+            run: async () => {
+              const relatedTables = [
+                "accounts",
+                "paymentMethods",
+                "budgets",
+                "budgetSnapshots",
+                "buckets",
+                "categories",
+                "recipients",
+                "smsImportTemplates",
+              ] as const;
+              const relatedBefore = new Map<string, string>();
+              for (const table of relatedTables) {
+                relatedBefore.set(
+                  table,
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ),
+                );
+              }
+              const transactionsBefore = await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              );
+              const accounts = await readAllTableRows(
+                baseUrl,
+                "accounts",
+                authedOptions,
+              );
+              const categories = await readAllTableRows(
+                baseUrl,
+                "categories",
+                authedOptions,
+              );
+              const buckets = await readAllTableRows(
+                baseUrl,
+                "buckets",
+                authedOptions,
+              );
+              const recipients = await readAllTableRows(
+                baseUrl,
+                "recipients",
+                authedOptions,
+              );
+              const category = categories.find((candidate) =>
+                buckets.some((bucket) => bucket.id === candidate.bucketId),
+              );
+              expect(
+                Boolean(accounts[0] && accounts[1] && category && recipients[0]),
+                "transaction_transfer_fixture_missing",
+              );
+              const sourceAccountId = accounts[0].id as number;
+              const destinationAccountId = accounts[1].id as number;
+              const privateDescription = `Transfer Write ${transactionSmokeSequence}`;
+              const privateReference = `transfer-write-${transactionSmokeSequence}`;
+              const createPayload = {
+                sourceAccountId,
+                destinationAccountId,
+                sourceRecipientId: recipients[0].id,
+                destinationRecipientId: recipients[0].id,
+                date: "2098-03-10T12:00:00.000Z",
+                amount: 100,
+                transactionCost: -2,
+                categoryId: category!.id,
+                description: privateDescription,
+                transactionReference: privateReference,
+              };
+              const dryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/transfers/dry-run/create",
+                { ...authedOptions, method: "POST", body: createPayload },
+              );
+              expectStatus(dryRun.status, 200);
+              expectSafeTransactionTransferShape(dryRun.json, "create", true);
+              const write = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/transfers/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...createPayload,
+                    dryRunReviewed: true,
+                    confirmation:
+                      TRANSACTION_TRANSFER_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(write.status, 200);
+              expectSafeTransactionTransferShape(write.json, "create", false);
+              expect(
+                write.json.rowsChanged === 2 &&
+                  write.json.transactionCountDelta === 2 &&
+                  write.json.pairIntegrityVerified === true,
+                "transaction_transfer_create_summary_invalid",
+              );
+              expectNoSensitiveEcho(write.json, [
+                privateDescription,
+                privateReference,
+              ]);
+              const sourceId = write.json.sourceTransactionId as number;
+              const destinationId = write.json.destinationTransactionId as number;
+              expect(
+                Number.isInteger(sourceId) &&
+                  Number.isInteger(destinationId) &&
+                  sourceId !== destinationId,
+                "transaction_transfer_created_ids_invalid",
+              );
+
+              const afterCreate = await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              );
+              const source = afterCreate.find((row) => row.id === sourceId);
+              const destination = afterCreate.find(
+                (row) => row.id === destinationId,
+              );
+              expect(
+                afterCreate.length === transactionsBefore.length + 2 &&
+                  source?.amount === -100 &&
+                  source.transactionCost === -2 &&
+                  source.transferPairId === destinationId &&
+                  source.isTransfer === 1 &&
+                  destination?.amount === 100 &&
+                  destination.transactionCost == null &&
+                  destination.transferPairId === sourceId &&
+                  destination.isTransfer === 1,
+                "transaction_transfer_pair_storage_invalid",
+              );
+              expect(
+                rowsFingerprint(
+                  afterCreate.filter(
+                    (row) => row.id !== sourceId && row.id !== destinationId,
+                  ),
+                ) === rowsFingerprint(transactionsBefore),
+                "transaction_transfer_create_changed_existing_row",
+              );
+              const beforeAggregates = transactionAggregates(transactionsBefore);
+              const createAggregates = transactionAggregates(afterCreate);
+              expect(
+                (createAggregates.accounts.get(sourceAccountId) ?? 0) -
+                  (beforeAggregates.accounts.get(sourceAccountId) ?? 0) ===
+                  cents(-102),
+                "transaction_transfer_source_delta_invalid",
+              );
+              expect(
+                (createAggregates.accounts.get(destinationAccountId) ?? 0) -
+                  (beforeAggregates.accounts.get(destinationAccountId) ?? 0) ===
+                  cents(100),
+                "transaction_transfer_destination_delta_invalid",
+              );
+              const total = (values: Map<number, number>): number =>
+                [...values.values()].reduce((sum, value) => sum + value, 0);
+              expect(
+                total(createAggregates.accounts) -
+                  total(beforeAggregates.accounts) ===
+                  cents(-2),
+                "transaction_transfer_net_delta_invalid",
+              );
+
+              const updatePayload = {
+                ...createPayload,
+                id: destinationId,
+                amount: 120,
+                transactionCost: -3,
+                date: "2098-03-11T12:00:00.000Z",
+                description: `${privateDescription} updated`,
+              };
+              const updateDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/transfers/dry-run/update",
+                { ...authedOptions, method: "POST", body: updatePayload },
+              );
+              expectStatus(updateDryRun.status, 200);
+              expectSafeTransactionTransferShape(
+                updateDryRun.json,
+                "update",
+                true,
+              );
+              const updateWrite = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/transfers/write/update",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...updatePayload,
+                    dryRunReviewed: true,
+                    confirmation:
+                      TRANSACTION_TRANSFER_UPDATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(updateWrite.status, 200);
+              expectSafeTransactionTransferShape(
+                updateWrite.json,
+                "update",
+                false,
+              );
+              expect(
+                updateWrite.json.sourceTransactionId === sourceId &&
+                  updateWrite.json.destinationTransactionId === destinationId &&
+                  updateWrite.json.rowsChanged === 2 &&
+                  updateWrite.json.transactionCountDelta === 0,
+                "transaction_transfer_update_summary_invalid",
+              );
+              const afterUpdate = await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              );
+              const updatedSource = afterUpdate.find(
+                (row) => row.id === sourceId,
+              );
+              const updatedDestination = afterUpdate.find(
+                (row) => row.id === destinationId,
+              );
+              expect(
+                afterUpdate.length === afterCreate.length &&
+                  updatedSource?.amount === -120 &&
+                  updatedSource.transactionCost === -3 &&
+                  updatedSource.transferPairId === destinationId &&
+                  updatedDestination?.amount === 120 &&
+                  updatedDestination.transferPairId === sourceId,
+                "transaction_transfer_update_storage_invalid",
+              );
+              const updateAggregates = transactionAggregates(afterUpdate);
+              expect(
+                (updateAggregates.accounts.get(sourceAccountId) ?? 0) -
+                  (createAggregates.accounts.get(sourceAccountId) ?? 0) ===
+                  cents(-21),
+                "transaction_transfer_source_update_delta_invalid",
+              );
+              expect(
+                (updateAggregates.accounts.get(destinationAccountId) ?? 0) -
+                  (createAggregates.accounts.get(destinationAccountId) ?? 0) ===
+                  cents(20),
+                "transaction_transfer_destination_update_delta_invalid",
+              );
+              expect(
+                total(updateAggregates.accounts) -
+                  total(createAggregates.accounts) ===
+                  cents(-1),
+                "transaction_transfer_net_update_delta_invalid",
+              );
+              for (const id of [sourceId, destinationId]) {
+                const detail = await requestJson(
+                  baseUrl,
+                  `/prototype/repositories/transactions/${id}`,
+                  authedOptions,
+                );
+                expectStatus(detail.status, 200);
+                const row = detail.json.transaction as Record<string, unknown>;
+                expect(
+                  row.id === id &&
+                    [sourceId, destinationId].includes(
+                      row.transferPairId as number,
+                    ),
+                  "transaction_transfer_selected_read_missing",
+                );
+              }
+              for (const table of relatedTables) {
+                expect(
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ) === relatedBefore.get(table),
+                  `${table}_changed_during_transaction_transfer_write`,
+                );
+              }
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    {
+      name: "transaction delete transfer repair and bulk write routes are not implemented",
+      run: async () => {
+        for (const action of ["delete", "transfer", "repair", "bulk"] as const) {
           const response = await requestJson(
             baseUrl,
             `/prototype/repositories/transactions/write/${action}`,
@@ -5171,6 +5741,7 @@ const main = async (): Promise<void> => {
     args.allowAccountWriteSmoke,
     args.allowTransactionBasicWriteSmoke,
     args.allowTransactionCostBudgetWriteSmoke,
+    args.allowTransactionTransferWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

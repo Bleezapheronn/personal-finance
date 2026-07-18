@@ -82,6 +82,13 @@ import {
   updateBasicTransactionInDisposableSqlite,
   type BasicTransactionWriteInput,
 } from "../repositories/http/transactionBasicWriteExperiment";
+import {
+  createTransferInDisposableSqlite,
+  isTransactionsTransferWriteExperimentEnabled,
+  transactionTransferWriteErrorCode,
+  updateTransferInDisposableSqlite,
+  type TransferWriteInput,
+} from "../repositories/http/transactionTransferWriteExperiment";
 
 interface DuplicateTransactionPrefill {
   transactionType: "expense" | "income" | "transfer";
@@ -296,6 +303,8 @@ const AddTransaction: React.FC = () => {
     isTransactionsBasicWriteExperimentEnabled();
   const transactionsCostBudgetWriteExperimentEnabled =
     isTransactionsCostBudgetWriteExperimentEnabled();
+  const transactionsTransferWriteExperimentEnabled =
+    isTransactionsTransferWriteExperimentEnabled();
   const transactionsSqliteWriteExperimentActive =
     selectedBackend === "http-readonly" &&
     transactionsBasicWriteExperimentEnabled;
@@ -304,6 +313,9 @@ const AddTransaction: React.FC = () => {
   const transactionsCostBudgetWriteExperimentActive =
     transactionsSqliteWriteExperimentActive &&
     transactionsCostBudgetWriteExperimentEnabled;
+  const transactionsTransferWriteExperimentActive =
+    transactionsSqliteWriteExperimentActive &&
+    transactionsTransferWriteExperimentEnabled;
 
   // Combined date and time into single datetime state
   const [transactionDateTime, setTransactionDateTime] = useState<string>("");
@@ -333,6 +345,7 @@ const AddTransaction: React.FC = () => {
   >(undefined);
   const [editingTransaction, setEditingTransaction] =
     useState<Transaction | null>(null);
+  const [editingTransferEligible, setEditingTransferEligible] = useState(false);
   const [transferRecipientId, setTransferRecipientId] = useState<
     number | undefined
   >(undefined);
@@ -563,10 +576,16 @@ const AddTransaction: React.FC = () => {
 
           if (txn) {
             setEditingTransaction(txn);
+            setEditingTransferEligible(false);
+            let transferPairForForm: Transaction | undefined;
 
             if (
               transactionsHttpBackendSelected &&
               !transactionsCostBudgetWriteExperimentActive &&
+              !(
+                transactionsTransferWriteExperimentActive &&
+                txn.isTransfer
+              ) &&
               !isBasicTransactionWriteEligible(txn)
             ) {
               setErrorMsg(
@@ -586,6 +605,21 @@ const AddTransaction: React.FC = () => {
               const pairedTxn = pairedSelectedTransaction
                 ? normalizeSelectedTransaction(pairedSelectedTransaction)
                 : undefined;
+              transferPairForForm = pairedTxn;
+              if (pairedTxn) {
+                try {
+                  const links = resolveTransferPairEditLinks(txn, pairedTxn);
+                  assertValidTransferPairRows(
+                    links.outgoingTransactionId,
+                    txn.amount < 0 ? txn : pairedTxn,
+                    links.incomingTransactionId,
+                    txn.amount < 0 ? pairedTxn : txn,
+                  );
+                  setEditingTransferEligible(true);
+                } catch {
+                  setEditingTransferEligible(false);
+                }
+              }
 
               // Determine which is outgoing and which is incoming
               if (txn.amount < 0) {
@@ -623,8 +657,17 @@ const AddTransaction: React.FC = () => {
 
             setAmount(Math.abs(txn.amount).toString());
             setTransactionCost(
-              txn.transactionCost
-                ? Math.abs(txn.transactionCost).toString()
+              txn.isTransfer &&
+                transferPairForForm &&
+                transactionsHttpBackendSelected
+                ? Math.abs(
+                    Number(
+                      (txn.amount < 0 ? txn : transferPairForForm)
+                        .transactionCost ?? 0,
+                    ),
+                  ).toString().replace(/^0$/, "")
+                : txn.transactionCost
+                  ? Math.abs(txn.transactionCost).toString()
                 : "",
             );
             setTransactionReference(txn.transactionReference || "");
@@ -663,6 +706,7 @@ const AddTransaction: React.FC = () => {
       setDescription(duplicatePrefill.description);
       setBudgetSnapshotId(undefined);
       setEditingTransaction(null);
+      setEditingTransferEligible(false);
     } else {
       // ADD MODE: Clear form
       setTransactionDateTime("");
@@ -682,6 +726,7 @@ const AddTransaction: React.FC = () => {
       setDescription("");
       setBudgetSnapshotId(undefined);
       setEditingTransaction(null);
+      setEditingTransferEligible(false);
     }
   }, [
     duplicatePrefill,
@@ -933,9 +978,79 @@ const AddTransaction: React.FC = () => {
           return;
         }
         if (transactionType === "transfer") {
-          setErrorMsg(
-            "Transfers are not supported by the basic SQLite write experiment.",
+          if (!transactionsTransferWriteExperimentActive) {
+            setErrorMsg(
+              "Transfers are not enabled for the SQLite write experiment.",
+            );
+            return;
+          }
+          if (isEditMode && !editingTransferEligible) {
+            setErrorMsg(
+              "This transfer pair is malformed or ambiguous and remains read-only.",
+            );
+            return;
+          }
+          const transferInput: TransferWriteInput = {
+            sourceAccountId: accountId!,
+            destinationAccountId: transferToAccountId!,
+            sourceRecipientId: recipientId!,
+            destinationRecipientId: transferRecipientId!,
+            date: selectedDateTime.toISOString(),
+            amount: Math.abs(numericAmountRaw),
+            transactionCost: numericCost ?? null,
+            originalAmount:
+              numericOriginalAmountRaw == null
+                ? null
+                : Math.abs(numericOriginalAmountRaw),
+            originalCurrency: origCurrency,
+            exchangeRate: numericExchangeRate,
+            transactionReference: txReference,
+            categoryId: categoryId!,
+            description,
+          };
+          const response =
+            isEditMode && id
+              ? await updateTransferInDisposableSqlite(
+                  Number(id),
+                  transferInput,
+                )
+              : await createTransferInDisposableSqlite(transferInput);
+          sqliteWriteConfirmed = true;
+          const sourceId = response.sourceTransactionId;
+          const destinationId = response.destinationTransactionId;
+          if (
+            typeof sourceId !== "number" ||
+            typeof destinationId !== "number"
+          ) {
+            throw new Error("transaction_write_refresh_failed");
+          }
+          const repository = getSelectedReadRepositories(
+            "http-readonly",
+          ).transactions;
+          const [sourceResult, destinationResult] = await Promise.all([
+            repository.getById(sourceId),
+            repository.getById(destinationId),
+          ]);
+          if (!sourceResult || !destinationResult) {
+            throw new Error("transaction_write_refresh_failed");
+          }
+          const source = normalizeSelectedTransaction(sourceResult);
+          const destination = normalizeSelectedTransaction(destinationResult);
+          assertValidTransferPairRows(
+            sourceId,
+            source,
+            destinationId,
+            destination,
           );
+          setSuccessToastMessage(
+            isEditMode
+              ? "Disposable SQLite transfer pair updated."
+              : "Disposable SQLite transfer pair created.",
+          );
+          setShowSuccessToast(true);
+          setTimeout(() => {
+            history.push("/transactions");
+          }, 500);
           return;
         }
         if (
@@ -1260,7 +1375,9 @@ const AddTransaction: React.FC = () => {
       }
       setErrorMsg(
         transactionsHttpBackendSelected
-          ? transactionBasicWriteErrorCode(error)
+          ? transactionType === "transfer"
+            ? transactionTransferWriteErrorCode(error)
+            : transactionBasicWriteErrorCode(error)
           : error instanceof Error
             ? error.message
             : `Failed to ${
@@ -1450,13 +1567,18 @@ const AddTransaction: React.FC = () => {
   const httpEditEligible = transactionsCostBudgetWriteExperimentActive
     ? costBudgetHttpEditEligible
     : basicHttpEditEligible;
+  const httpCurrentTypeEligible =
+    transactionType === "transfer"
+      ? transactionsTransferWriteExperimentActive &&
+        (!isEditMode || editingTransferEligible)
+      : httpEditEligible;
   const transactionSubmitDisabled =
     transactionsHttpBackendSelected &&
     (!transactionsSqliteWriteExperimentActive ||
-      transactionType === "transfer" ||
       (!transactionsCostBudgetWriteExperimentActive &&
+        transactionType !== "transfer" &&
         transactionCost.trim() !== "") ||
-      !httpEditEligible);
+      !httpCurrentTypeEligible);
 
   return (
     <IonPage>
@@ -1491,7 +1613,9 @@ const AddTransaction: React.FC = () => {
               }}
             >
               {transactionsSqliteWriteExperimentActive
-                ? transactionsCostBudgetWriteExperimentActive
+                ? transactionsTransferWriteExperimentActive
+                  ? "Transactions SQLite transfer experiment is active. Transfers are written as atomic reciprocal transaction pairs in disposable local SQLite. Dexie remains authoritative. Transfer delete and pair repair remain unsupported."
+                  : transactionsCostBudgetWriteExperimentActive
                   ? "Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Single-row income/expense transactions may include transaction costs and links to existing budget snapshots. Transfers and delete remain unsupported."
                   : "Basic Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Transfers, transaction costs, and budget-linked transactions are not supported. Create/update only; re-import SQLite before clean parity checks."
                 : "The HTTP transaction backend is selected, but the basic SQLite write experiment is disabled. No transaction write will be attempted."}
@@ -1538,7 +1662,8 @@ const AddTransaction: React.FC = () => {
                     <IonSegmentButton value="expense">
                       <IonLabel>Expense</IonLabel>
                     </IonSegmentButton>
-                    {!transactionsHttpBackendSelected && (
+                    {(!transactionsHttpBackendSelected ||
+                      transactionsTransferWriteExperimentActive) && (
                       <IonSegmentButton value="transfer">
                         <IonLabel>Transfer</IonLabel>
                       </IonSegmentButton>

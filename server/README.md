@@ -674,6 +674,48 @@ parity checks.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 
+## Experimental Paired Transfer Writes
+
+Paired transfer dry-runs and writes use separate protected routes:
+
+```text
+POST /prototype/repositories/transactions/transfers/dry-run/create
+POST /prototype/repositories/transactions/transfers/dry-run/update
+POST /prototype/repositories/transactions/transfers/write/create
+POST /prototype/repositories/transactions/transfers/write/update
+```
+
+Real writes require both
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true` and
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_TRANSFER_WRITES=true`. The transfer flag
+defaults to disabled. Create and update require their matching dry-run,
+`dryRunReviewed: true`, and the internal confirmation phrase.
+
+Each transfer is one atomic SQLite transaction containing exactly two
+transaction rows. The source amount is negative, the destination amount is the
+matching positive magnitude, both rows have reciprocal `transferPairId` values,
+and any negative `transactionCost` is stored on the source row only. Both rows
+share the current form's date, category, description/reference, and optional
+currency metadata. Accounts and recipients may differ. Transfers cannot carry
+budget or snapshot linkage.
+
+Update accepts one member ID, validates the complete reciprocal pair and any
+inbound references, preserves both IDs and pair links, and updates both rows
+atomically. The routes never mutate Account, lookup, Budget, or snapshot rows.
+Transfer delete, repair, bulk operations, dual-write, and Dexie writes are not
+implemented.
+
+Normal `smoke:api` remains non-mutating. Mutation testing is explicit:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-transaction-transfer-write-smoke
+```
+
+Run the server against an outside-repo disposable SQLite database with both
+backend flags enabled, preferably on a unique test port. The opt-in smoke
+creates and updates a pair and dirties that database. Re-import a separate
+SQLite database from the matching fresh backup before parity verification.
+
 Requests with no `Origin` header are allowed for local CLI use when the token is valid. Browser-style requests with an unexpected `Origin` are rejected. Allowed local development origins are:
 
 - `http://localhost:8100`

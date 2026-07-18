@@ -81,6 +81,7 @@ import {
   type TransactionBudgetReference,
   type TransactionBudgetSnapshotReference,
 } from "../repositories/http/transactionBasicWriteExperiment";
+import { isTransactionsTransferWriteExperimentEnabled } from "../repositories/http/transactionTransferWriteExperiment";
 import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
@@ -554,12 +555,17 @@ const Transactions: React.FC = () => {
     isTransactionsBasicWriteExperimentEnabled();
   const transactionsCostBudgetWriteExperimentEnabled =
     isTransactionsCostBudgetWriteExperimentEnabled();
+  const transactionsTransferWriteExperimentEnabled =
+    isTransactionsTransferWriteExperimentEnabled();
   const transactionsSqliteWriteExperimentActive =
     transactionsBasicWriteExperimentEnabled &&
     selectedBackend === "http-readonly";
   const transactionsCostBudgetWriteExperimentActive =
     transactionsSqliteWriteExperimentActive &&
     transactionsCostBudgetWriteExperimentEnabled;
+  const transactionsTransferWriteExperimentActive =
+    transactionsSqliteWriteExperimentActive &&
+    transactionsTransferWriteExperimentEnabled;
   const transactionsHttpSelectedReadActive =
     (transactionsReadExperimentEnabled ||
       transactionsBasicWriteExperimentEnabled) &&
@@ -664,6 +670,35 @@ const Transactions: React.FC = () => {
     );
   };
 
+  const isTransferWriteEligible = (transaction: Transaction): boolean => {
+    if (
+      !transactionsTransferWriteExperimentActive ||
+      transaction.id === undefined ||
+      transaction.transferPairId === undefined ||
+      transaction.transferPairId === transaction.id ||
+      transaction.isTransfer !== true
+    ) {
+      return false;
+    }
+    const pair = transactions?.find(
+      (candidate) => candidate.id === transaction.transferPairId,
+    );
+    return (
+      pair !== undefined &&
+      pair.isTransfer === true &&
+      pair.transferPairId === transaction.id &&
+      ((transaction.amount < 0 && pair.amount > 0) ||
+        (transaction.amount > 0 && pair.amount < 0)) &&
+      Math.abs(transaction.amount) === Math.abs(pair.amount) &&
+      transaction.budgetId == null &&
+      transaction.occurrenceDate == null &&
+      transaction.budgetSnapshotId == null &&
+      pair.budgetId == null &&
+      pair.occurrenceDate == null &&
+      pair.budgetSnapshotId == null
+    );
+  };
+
   // Handler to navigate to Transaction Details page with transaction ID
   const handleView = (id?: number) => {
     if (transactionsHttpSelectedReadActive) {
@@ -678,13 +713,15 @@ const Transactions: React.FC = () => {
 
   // Handler to navigate to Edit Transaction page
   const handleEdit = (transaction: Transaction) => {
-    const editEligible = transactionsCostBudgetWriteExperimentActive
-      ? isCostBudgetTransactionWriteEligible(
-          transaction,
-          costBudgetReferences.snapshots,
-          costBudgetReferences.budgets,
-        )
-      : isBasicTransactionWriteEligible(transaction);
+    const editEligible = transaction.isTransfer
+      ? isTransferWriteEligible(transaction)
+      : transactionsCostBudgetWriteExperimentActive
+        ? isCostBudgetTransactionWriteEligible(
+            transaction,
+            costBudgetReferences.snapshots,
+            costBudgetReferences.budgets,
+          )
+        : isBasicTransactionWriteEligible(transaction);
     if (
       transactionsHttpSelectedReadActive &&
       (!transactionsSqliteWriteExperimentActive || !editEligible)
@@ -692,7 +729,9 @@ const Transactions: React.FC = () => {
       setError(
         transactionsSqliteWriteExperimentActive
           ? transactionsCostBudgetWriteExperimentActive
-            ? "This transaction has unsupported or inconsistent cost or budget linkage and remains read-only."
+            ? transaction.isTransfer
+              ? "This transfer pair is malformed, ambiguous, or unsupported and remains read-only."
+              : "This transaction has unsupported or inconsistent cost or budget linkage and remains read-only."
             : "Advanced transaction editing is not available in the SQLite experiment."
           : "Transactions HTTP reads are active, but the basic write experiment is off.",
       );
@@ -1551,7 +1590,9 @@ const Transactions: React.FC = () => {
               >
                 <p style={{ marginTop: 0 }}>
                   {transactionsSqliteWriteExperimentActive
-                    ? transactionsCostBudgetWriteExperimentActive
+                    ? transactionsTransferWriteExperimentActive
+                      ? "Transactions SQLite transfer experiment is active. Transfers are written as atomic reciprocal transaction pairs in disposable local SQLite. Dexie remains authoritative. Transfer delete and pair repair remain unsupported."
+                      : transactionsCostBudgetWriteExperimentActive
                       ? "Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Single-row income/expense transactions may include transaction costs and links to existing budget snapshots. Transfers and delete remain unsupported."
                       : "Basic Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Transfers, transaction costs, and budget-linked transactions are not supported."
                     : transactionsHttpSelectedReadActive
@@ -2408,13 +2449,15 @@ const Transactions: React.FC = () => {
                               </IonRow>
                             )}
                             {transactionsSqliteWriteExperimentActive &&
-                              (transactionsCostBudgetWriteExperimentActive
-                                ? isCostBudgetTransactionWriteEligible(
-                                    txn,
-                                    costBudgetReferences.snapshots,
-                                    costBudgetReferences.budgets,
-                                  )
-                                : isBasicTransactionWriteEligible(txn)) && (
+                              (txn.isTransfer
+                                ? isTransferWriteEligible(txn)
+                                : transactionsCostBudgetWriteExperimentActive
+                                  ? isCostBudgetTransactionWriteEligible(
+                                      txn,
+                                      costBudgetReferences.snapshots,
+                                      costBudgetReferences.budgets,
+                                    )
+                                  : isBasicTransactionWriteEligible(txn)) && (
                                 <IonRow className="item-actions">
                                   <IonCol className="item-actions-container">
                                     <IonButton
@@ -2423,7 +2466,9 @@ const Transactions: React.FC = () => {
                                       style={{ marginRight: "0" }}
                                       onClick={() => handleEdit(txn)}
                                       title={
-                                        transactionsCostBudgetWriteExperimentActive
+                                        txn.isTransfer
+                                          ? "Edit atomic transfer pair in disposable SQLite"
+                                          : transactionsCostBudgetWriteExperimentActive
                                           ? "Edit transaction in disposable SQLite"
                                           : "Edit basic transaction in disposable SQLite"
                                       }

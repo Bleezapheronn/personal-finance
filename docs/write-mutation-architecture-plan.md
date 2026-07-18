@@ -233,18 +233,20 @@ Before any write code is implemented, the project needs explicit decisions for:
 
 - No additional write endpoints beyond the explicitly approved, flag-gated
   recipient operations, bucket/category/Account create/update operations, and
-  single-row transaction Phase 1/Phase 2 create/update operations.
+  transaction Phase 1/Phase 2 create/update and atomic paired-transfer
+  create/update operations.
 - No broad repository write adapters.
 - No dual-write.
 - No background sync.
 - No automatic Dexie-to-SQLite mutation sync.
 - No budget snapshot lifecycle mutation through HTTP.
-- No transaction transfer mutation through HTTP.
+- No transfer delete, pair repair, bulk transfer mutation, or conversion
+  between ordinary and transfer transactions through HTTP.
 - No permanent switch to SQLite authority.
 - No writes without a tested restore path.
 - No no-op write methods in HTTP mode.
 - No write UI connected to HTTP outside the explicit dev-only Recipients,
-  Buckets/Categories, Accounts, and basic Transactions experiments.
+  Buckets/Categories, Accounts, and Transactions experiments.
 - No `.env`, token, SQLite, backup, export, log, or report files in Git.
 
 ## Proposed Safe Sequence

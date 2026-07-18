@@ -907,3 +907,35 @@ separate explicit modes; the Phase 2 mode uses
 `--allow-transaction-cost-budget-write-smoke`. Mutation smoke dirties its
 disposable SQLite database. Re-import a fresh matching backup into a separate
 SQLite database before running parity verification.
+
+## Transaction Transfer Write Experiment
+
+The transfer form has a separate dev-only write gate:
+
+```text
+VITE_PERSONAL_FINANCE_TRANSACTIONS_TRANSFER_WRITE_EXPERIMENT=true
+```
+
+It is active only with the `http-readonly` backend and the existing basic
+transaction write experiment. The server independently requires both
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true` and
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_TRANSFER_WRITES=true`. Restart Vite after
+changing frontend values and use a matching API test port.
+
+When enabled, create and eligible edit operations use the existing transfer
+form, run a transfer-specific dry-run, and write exactly two reciprocal rows in
+one SQLite transaction. The source row stores the negative transfer magnitude
+and any negative fee; the destination stores the matching positive magnitude
+without a duplicate fee. The UI re-reads both returned IDs and validates their
+reciprocal links before reporting success.
+
+Transfers remain unlinked from budgets and snapshots. No Account or related
+lookup row is mutated. Transfer delete, duplicate, pair repair, import/export,
+bulk operations, Dexie writes, and dual-write remain unavailable in HTTP mode.
+With the transfer flag absent, existing single-row behavior is unchanged and
+transfers remain read-only.
+
+The explicit `--allow-transaction-transfer-write-smoke` mode verifies atomic
+create/update, pair integrity, exact account-derived and net effects, and
+related-table fingerprints. It dirties disposable SQLite. Use a separate fresh
+import for parity checks and never commit the database, token, logs, or reports.
