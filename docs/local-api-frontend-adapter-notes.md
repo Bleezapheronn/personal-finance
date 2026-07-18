@@ -25,6 +25,7 @@ VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS=true
 VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS=true
 VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT=true
 VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true
+VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT=true
 ```
 
 `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND` supports:
@@ -82,6 +83,31 @@ in HTTP mode. No Dexie write or dual-write occurs. Restart Vite after changing
 the frontend flag, and re-import disposable SQLite after successful writes
 before clean parity checks.
 
+`VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT=true` enables the dev-only
+Accounts SQLite create/update experiment only when the selected backend is
+`http-readonly`. The write flag also activates the Account list's selected HTTP
+read source so successful writes can be refreshed. The server independently
+requires:
+
+```text
+PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES=true
+```
+
+The page runs the matching dry-run before each real write, waits for
+server-confirmed mutation, and then reloads Accounts from the HTTP selected-read
+source. Default Dexie behavior is unchanged. HTTP mode supports only the
+current non-image create/update fields: name, currency, `isCredit`, and optional
+credit limit. Images are omitted and preserved on update; active-state,
+delete, merge, reference reassignment, transactions, balances, and payment
+methods remain unavailable and unchanged. Changes to currency, `isCredit`, or
+credit limit are financially significant for display/interpretation but do not
+trigger transaction or aggregate recalculation.
+
+No Dexie write or dual-write occurs. Successful writes dirty disposable
+SQLite, so re-import from a fresh matching backup before parity checks. Restart
+Vite after changing the frontend flag, and use a distinct test port to avoid a
+stale API process.
+
 Browser calls use the custom `x-personal-finance-token` header, which triggers a
 CORS preflight request. The local API server must be running with the Vite dev
 origin allowed. The prototype server allows these common Vite origins by
@@ -106,13 +132,14 @@ The scaffold uses `fetch` and sends the token with the server's existing
 
 No broad write adapter is implemented. Normal app behavior still defaults to
 Dexie; local API use is limited to diagnostics, explicit flag-gated read
-experiments, and the dev-only Recipients SQLite write experiment.
+experiments, and the explicit dev-only Recipients, Buckets/Categories, and
+Accounts SQLite write experiments.
 
 The selected-read `http-readonly` facade has no write support. Future consumers
 must not silently no-op writes; write attempts through the selected-read facade
-in HTTP-readonly mode should fail loudly. The dev-only Recipients write
-experiment uses a separate, narrow helper and is not a broad write repository.
-Dexie remains authoritative.
+in HTTP-readonly mode should fail loudly. Each dev-only write experiment uses a
+separate, narrow helper and is not a broad write repository. Dexie remains
+authoritative.
 
 ## Selected Read Facade
 

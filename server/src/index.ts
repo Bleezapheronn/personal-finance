@@ -2,6 +2,7 @@ import Fastify, { type FastifyReply } from "fastify";
 import {
   ALLOWED_ORIGINS,
   API_VERSION,
+  areAccountWritesEnabled,
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
@@ -68,6 +69,18 @@ import {
   BucketCategoryWriteRequestError,
   validateBucketCategoryWritePayload,
 } from "./lib/bucketCategoryWrite.js";
+import {
+  accountDryRun,
+  accountDryRunRequestErrorResponse,
+  AccountDryRunRequestError,
+} from "./lib/accountDryRun.js";
+import {
+  accountRealWrite,
+  accountWriteDisabledResponse,
+  accountWriteRequestErrorResponse,
+  AccountWriteRequestError,
+  validateAccountWritePayload,
+} from "./lib/accountWrite.js";
 import {
   getBudgetById,
   getBudgetSnapshotById,
@@ -1149,6 +1162,122 @@ for (const config of bucketCategoryRouteConfigs) {
       },
     );
   }
+}
+
+for (const action of ["create", "update"] as const) {
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/accounts/dry-run/${action}`,
+    async (request, reply) => {
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `account_${action}_dry_run_failed`,
+        });
+      }
+
+      if (!opened.ok) {
+        return reply.code(503).send({
+          ok: false,
+          code: opened.code,
+        });
+      }
+
+      try {
+        const response = accountDryRun(opened.db, request.body, action);
+        if (response.code === "account_not_found") {
+          return reply.code(404).send(response);
+        }
+        return response.ok ? response : reply.code(400).send(response);
+      } catch (error) {
+        if (error instanceof AccountDryRunRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(accountDryRunRequestErrorResponse(action, error.code));
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `account_${action}_dry_run_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/accounts/write/${action}`,
+    async (request, reply) => {
+      try {
+        validateAccountWritePayload(request.body, action);
+      } catch (error) {
+        if (error instanceof AccountWriteRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(accountWriteRequestErrorResponse(action, error.code));
+        }
+        return reply
+          .code(400)
+          .send(
+            accountWriteRequestErrorResponse(
+              action,
+              `account_${action}_write_invalid`,
+            ),
+          );
+      }
+
+      if (!areAccountWritesEnabled()) {
+        return reply.code(403).send(accountWriteDisabledResponse(action));
+      }
+
+      let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+      try {
+        opened = openConfiguredWritableDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `account_${action}_write_failed`,
+        });
+      }
+
+      if (!opened.ok) {
+        return reply.code(503).send({
+          ok: false,
+          code: opened.code,
+        });
+      }
+
+      try {
+        const response = accountRealWrite(opened.db, request.body, action);
+        if (response.code === "account_not_found") {
+          return reply.code(404).send(response);
+        }
+        return response.ok ? response : reply.code(400).send(response);
+      } catch (error) {
+        if (error instanceof AccountWriteRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(accountWriteRequestErrorResponse(action, error.code));
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `account_${action}_write_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
 }
 
 server.post<{ Body: unknown }>(

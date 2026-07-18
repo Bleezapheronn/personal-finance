@@ -22,6 +22,18 @@ interface AddAccountModalProps {
   onClose: () => void;
   onAccountAdded: (account: Account) => void;
   editingAccount?: Account | null;
+  onSave?: (
+    values: AccountFormValues,
+    editingAccount?: Account | null,
+  ) => Promise<void>;
+  imageEditingEnabled?: boolean;
+}
+
+export interface AccountFormValues {
+  name: string;
+  currency: string;
+  isCredit: boolean;
+  creditLimit?: number;
 }
 
 const CURRENCY_OPTIONS = ["KES", "USD", "EUR", "GBP"];
@@ -31,6 +43,8 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
   onClose,
   onAccountAdded,
   editingAccount,
+  onSave,
+  imageEditingEnabled = true,
 }) => {
   const [accountName, setAccountName] = useState("");
   const [currency, setCurrency] = useState("KES");
@@ -132,7 +146,18 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
       setLoading(true);
       const now = new Date();
 
-      if (editingAccount?.id) {
+      if (onSave) {
+        await onSave(
+          {
+            name: accountName.trim(),
+            currency: currency || "KES",
+            isCredit,
+            creditLimit:
+              isCredit && creditLimit ? parseFloat(creditLimit) : undefined,
+          },
+          editingAccount,
+        );
+      } else if (editingAccount?.id) {
         // UPDATE MODE
         const updateData: Partial<Account> = {
           name: accountName.trim(),
@@ -177,7 +202,11 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
       onClose();
     } catch (error) {
       console.error("Error saving account:", error);
-      setErrorMsg("Failed to save account");
+      setErrorMsg(
+        onSave && error instanceof Error
+          ? error.message
+          : "Failed to save account",
+      );
     } finally {
       setLoading(false);
     }
@@ -310,28 +339,30 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
           )}
 
           {/* Image Upload */}
-          <IonRow>
-            <IonCol>
-              <div className="form-input-wrapper">
-                <label className="form-label">Account Image (optional)</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={onFileChange}
-                  disabled={loading}
-                  style={{
-                    padding: "12px",
-                    border: "1px solid var(--ion-color-medium)",
-                    borderRadius: "4px",
-                    backgroundColor: "var(--ion-background-color)",
-                  }}
-                />
-              </div>
-            </IonCol>
-          </IonRow>
+          {imageEditingEnabled && (
+            <IonRow>
+              <IonCol>
+                <div className="form-input-wrapper">
+                  <label className="form-label">Account Image (optional)</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={onFileChange}
+                    disabled={loading}
+                    style={{
+                      padding: "12px",
+                      border: "1px solid var(--ion-color-medium)",
+                      borderRadius: "4px",
+                      backgroundColor: "var(--ion-background-color)",
+                    }}
+                  />
+                </div>
+              </IonCol>
+            </IonRow>
+          )}
 
           {/* Image Preview with Remove Button */}
-          {previewUrl && (
+          {imageEditingEnabled && previewUrl && (
             <IonRow>
               <IonCol>
                 <div

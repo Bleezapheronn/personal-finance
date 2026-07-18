@@ -16,6 +16,10 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /prototype/repositories/budget-snapshots/:id`
 - `GET /prototype/repositories/accounts`
 - `GET /prototype/repositories/accounts/:id`
+- `POST /prototype/repositories/accounts/dry-run/create`
+- `POST /prototype/repositories/accounts/dry-run/update`
+- `POST /prototype/repositories/accounts/write/create` (experimental, disabled by default)
+- `POST /prototype/repositories/accounts/write/update` (experimental, disabled by default)
 - `GET /prototype/repositories/buckets`
 - `GET /prototype/repositories/buckets/:id`
 - `GET /prototype/repositories/categories`
@@ -36,11 +40,11 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `POST /prototype/repositories/categories/write/update` (experimental, disabled by default)
 
 The backend normally opens configured disposable SQLite read-only for prototype
-diagnostics. Explicit, disabled-by-default experiments exist for recipient
-writes and bucket/category create/update writes. The browser IndexedDB database
-remains authoritative. Narrow dev-only UI helpers exist for the Recipients and
-Buckets/Categories experiments; no broad write repository, dual-write, or
-SQLite authority migration exists.
+diagnostics. Explicit, disabled-by-default experiments exist for recipient,
+bucket/category, and account create/update writes. The browser IndexedDB
+database remains authoritative. Narrow dev-only UI helpers exist for these
+experiments; no broad write repository, dual-write, or SQLite authority
+migration exists.
 
 ## Safety
 
@@ -623,6 +627,50 @@ Run it only against disposable SQLite with the server write flag enabled. A
 successful run creates and updates one bucket and one category and therefore
 dirties SQLite. Re-import the database from a fresh backup before parity
 verification.
+
+## Experimental Account Writes
+
+Account create/update dry-runs and real writes are available at:
+
+```text
+POST /prototype/repositories/accounts/dry-run/create
+POST /prototype/repositories/accounts/dry-run/update
+POST /prototype/repositories/accounts/write/create
+POST /prototype/repositories/accounts/write/update
+```
+
+Dry-runs are non-mutating. Real writes are disabled unless the server process
+has this exact flag:
+
+```text
+PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES=true
+```
+
+All routes use the existing token and origin guards, reject unexpected fields,
+and return redacted summaries. Create mirrors the current non-image account
+form fields: trimmed required name, nonblank currency defaulting to `KES`,
+`isCredit: false` by default, optional non-negative credit limit, `isActive:
+true`, and matching creation/update timestamps. Update changes only name,
+currency, `isCredit`, credit limit, and `updatedAt`; it preserves ID,
+`createdAt`, active state, description, and image columns.
+
+Currency and credit-account changes are reported as financially significant
+warnings. They do not authorize transaction reinterpretation or related-row
+mutation. The endpoints do not insert or update transactions, payment methods,
+budgets, budget snapshots, balances, references, images, or any other lookup
+table. Delete, merge, active-state writes, image writes, reconciliation, and
+reference migration are not implemented for Accounts.
+
+Normal `smoke:api` remains non-mutating. Account mutation smoke is explicit:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-account-write-smoke
+```
+
+Run it only against disposable SQLite with the Account write flag enabled,
+preferably on a distinct test port. A successful run creates and updates one
+Account and dirties SQLite. Re-import from a fresh matching backup before clean
+parity checks.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 

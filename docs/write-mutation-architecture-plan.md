@@ -10,9 +10,9 @@ read parity is not write approval. Dexie / IndexedDB remains authoritative.
 SQLite remains disposable until an explicit authority migration is designed,
 approved, implemented, backed up, and verified. Frontend HTTP repositories
 remain read-only. The server-side real-write experiments are the flag-gated
-recipient operations and bucket/category create/update operations; no
-additional write endpoint should be added without a separate per-domain design
-and approval.
+recipient operations plus bucket/category and Account create/update operations;
+no additional write endpoint should be added without a separate per-domain
+design and approval.
 
 Current read baseline:
 
@@ -40,7 +40,7 @@ Until a future write phase is explicitly approved:
   import, restore, repair, sync, or mutate financial data.
 - No frontend repository may silently no-op write methods in HTTP mode.
 - No screen may send mutations to HTTP except the explicitly flag-gated,
-  dev-only Recipients and Buckets/Categories experiments.
+  dev-only Recipients, Buckets/Categories, and Accounts experiments.
 - No budget snapshot lifecycle behavior may move to HTTP.
 
 ## Write Domains
@@ -106,6 +106,17 @@ wiring. The server flag is
 off. The HTTP UI path performs dry-run first and never mutates Dexie. Active
 state, reorder, delete, cascade, transaction/budget/snapshot reference changes,
 dual-write, and authority migration remain outside the approved boundary.
+
+Accounts now have a separate accelerated, flag-gated create/update experiment.
+The server flag is `PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES=true`; the frontend
+flag is `VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT=true`. Both default
+off, and the frontend HTTP path runs dry-run first. Create/update cover only
+name, currency, credit classification, and optional credit limit. Account
+images, description, active state, delete, merge, transaction/account
+references, legacy payment-method links, reconciliation, balances, financial
+aggregates, dual-write, and authority migration remain outside the boundary.
+Currency and `isCredit` changes are surfaced as financially significant but do
+not mutate or reinterpret related records.
 
 ### Transaction Writes
 
@@ -206,7 +217,7 @@ Before any write code is implemented, the project needs explicit decisions for:
 ## Not Allowed Yet
 
 - No additional write endpoints beyond the explicitly approved, flag-gated
-  recipient operations and bucket/category create/update operations.
+  recipient operations and bucket/category/Account create/update operations.
 - No broad repository write adapters.
 - No dual-write.
 - No background sync.
@@ -216,8 +227,8 @@ Before any write code is implemented, the project needs explicit decisions for:
 - No permanent switch to SQLite authority.
 - No writes without a tested restore path.
 - No no-op write methods in HTTP mode.
-- No write UI connected to HTTP outside the explicit dev-only Recipients and
-  Buckets/Categories experiments.
+- No write UI connected to HTTP outside the explicit dev-only Recipients,
+  Buckets/Categories, and Accounts experiments.
 - No `.env`, token, SQLite, backup, export, log, or report files in Git.
 
 ## Proposed Safe Sequence

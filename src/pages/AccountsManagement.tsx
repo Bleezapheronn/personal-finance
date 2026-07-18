@@ -54,7 +54,10 @@ import {
   warningOutline,
 } from "ionicons/icons";
 import { db } from "../db";
-import { AddAccountModal } from "../components/AddAccountModal";
+import {
+  AddAccountModal,
+  type AccountFormValues,
+} from "../components/AddAccountModal";
 import { accountRepository, transactionRepository } from "../repositories";
 import {
   getRepositoryBackend,
@@ -74,6 +77,12 @@ import {
   sampledIds,
   stringValue,
 } from "../utils/devPreview";
+import {
+  accountWriteErrorCode,
+  createAccountInDisposableSqlite,
+  isAccountsWriteExperimentEnabled,
+  updateAccountInDisposableSqlite,
+} from "../repositories/http/accountWriteExperiment";
 
 import type { Account } from "../db";
 
@@ -177,8 +186,14 @@ const AccountsManagement: React.FC = () => {
 
   const selectedBackend = getRepositoryBackend();
   const accountsReadExperimentEnabled = isAccountsReadExperimentEnabled();
+  const accountsWriteExperimentEnabled = isAccountsWriteExperimentEnabled();
+  const accountsSqliteWriteExperimentActive =
+    accountsWriteExperimentEnabled && selectedBackend === "http-readonly";
   const accountsReadExperimentHttpReadonly =
-    accountsReadExperimentEnabled && selectedBackend === "http-readonly";
+    (accountsReadExperimentEnabled || accountsWriteExperimentEnabled) &&
+    selectedBackend === "http-readonly";
+  const accountsHttpReadonlyWithoutWrites =
+    accountsReadExperimentHttpReadonly && !accountsSqliteWriteExperimentActive;
 
   const showReadExperimentWriteDisabledToast = () => {
     setToastMessage("Switch back to Dexie to edit accounts");
@@ -259,7 +274,7 @@ const AccountsManagement: React.FC = () => {
    * handleAccountSaved - Called when account is added/updated via modal
    */
   const handleAccountSaved = async (isEdit: boolean) => {
-    if (accountsReadExperimentHttpReadonly) {
+    if (accountsHttpReadonlyWithoutWrites) {
       showReadExperimentWriteDisabledToast();
       return;
     }
@@ -276,13 +291,35 @@ const AccountsManagement: React.FC = () => {
    * handleEditAccount - Opens modal with account data
    */
   const handleEditAccount = (account: Account) => {
-    if (accountsReadExperimentHttpReadonly) {
+    if (accountsHttpReadonlyWithoutWrites) {
       showReadExperimentWriteDisabledToast();
       return;
     }
 
     setEditingAccount(account);
     setShowAddAccountModal(true);
+  };
+
+  const handleSqliteAccountSave = async (
+    values: AccountFormValues,
+    currentAccount?: Account | null,
+  ) => {
+    try {
+      if (currentAccount?.id) {
+        await updateAccountInDisposableSqlite(currentAccount.id, values);
+        setToastMessage("Account updated in disposable SQLite");
+      } else {
+        await createAccountInDisposableSqlite(values);
+        setToastMessage("Account created in disposable SQLite");
+      }
+      await fetchAccounts();
+      setShowToast(true);
+    } catch (error) {
+      const code = accountWriteErrorCode(error);
+      setToastMessage(`Account SQLite write failed: ${code}`);
+      setShowToast(true);
+      throw new Error(`Account SQLite write failed: ${code}`);
+    }
   };
 
   /**
@@ -568,7 +605,7 @@ const AccountsManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
-        {accountsReadExperimentEnabled && (
+        {(accountsReadExperimentEnabled || accountsWriteExperimentEnabled) && (
           <IonCard>
             <IonCardContent>
               <IonText
@@ -578,16 +615,18 @@ const AccountsManagement: React.FC = () => {
               >
                 <p>
                   <IonIcon icon={warningOutline} />{" "}
-                  {accountsReadExperimentHttpReadonly
-                    ? "Accounts read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie to edit."
+                  {accountsSqliteWriteExperimentActive
+                    ? "Accounts SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
+                    : accountsReadExperimentHttpReadonly
+                      ? "Accounts read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie to edit."
                     : "Accounts read experiment flag is active with the Dexie backend. Existing Dexie write behavior remains available."}
                 </p>
                 {accountsReadExperimentHttpReadonly && (
                   <p>
-                    This is a list-only experiment. Transaction-derived account
-                    usage checks remain on the existing Dexie path. Account
-                    images/icons are omitted in this read experiment; switch
-                    back to Dexie for the full Accounts management display.
+                    Account images/icons are omitted in the HTTP path.
+                    Create/update does not mutate transactions, balances,
+                    payment methods, references, active state, or images.
+                    Delete and active-state actions remain unavailable.
                   </p>
                 )}
                 {accountsReadExperimentHttpReadonly &&
@@ -691,7 +730,8 @@ const AccountsManagement: React.FC = () => {
                               </p>
                             )}
                           </IonCol>
-                          {!accountsReadExperimentHttpReadonly && (
+                          {(!accountsReadExperimentHttpReadonly ||
+                            accountsSqliteWriteExperimentActive) && (
                             <IonCol size="auto">
                               <IonButton
                                 fill="clear"
@@ -702,36 +742,40 @@ const AccountsManagement: React.FC = () => {
                               >
                                 <IonIcon icon={createOutline} />
                               </IonButton>
-                              <IonButton
-                                fill="clear"
-                                size="small"
-                                title={
-                                  isInactive
-                                    ? "Activate account"
-                                    : "Deactivate account"
-                                }
-                                onClick={() =>
-                                  handleToggleAccountActive(account)
-                                }
-                                color={isInactive ? "medium" : "success"}
-                              >
-                                <IonIcon
-                                  icon={
-                                    isInactive
-                                      ? closeCircleOutline
-                                      : checkmarkCircleOutline
-                                  }
-                                />
-                              </IonButton>
+                              {!accountsReadExperimentHttpReadonly && (
+                                <>
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    title={
+                                      isInactive
+                                        ? "Activate account"
+                                        : "Deactivate account"
+                                    }
+                                    onClick={() =>
+                                      handleToggleAccountActive(account)
+                                    }
+                                    color={isInactive ? "medium" : "success"}
+                                  >
+                                    <IonIcon
+                                      icon={
+                                        isInactive
+                                          ? closeCircleOutline
+                                          : checkmarkCircleOutline
+                                      }
+                                    />
+                                  </IonButton>
 
-                              <IonButton
-                                fill="clear"
-                                size="small"
-                                color="danger"
-                                onClick={() => initiateDeleteAccount(account)}
-                              >
-                                <IonIcon icon={trashOutline} />
-                              </IonButton>
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    color="danger"
+                                    onClick={() => initiateDeleteAccount(account)}
+                                  >
+                                    <IonIcon icon={trashOutline} />
+                                  </IonButton>
+                                </>
+                              )}
                             </IonCol>
                           )}
                         </IonRow>
@@ -813,7 +857,8 @@ const AccountsManagement: React.FC = () => {
         />
 
         {/* MODALS */}
-        {!accountsReadExperimentHttpReadonly && (
+        {(!accountsReadExperimentHttpReadonly ||
+          accountsSqliteWriteExperimentActive) && (
           <AddAccountModal
             isOpen={showAddAccountModal}
             onClose={() => {
@@ -822,11 +867,18 @@ const AccountsManagement: React.FC = () => {
             }}
             onAccountAdded={() => handleAccountSaved(!!editingAccount)}
             editingAccount={editingAccount}
+            onSave={
+              accountsSqliteWriteExperimentActive
+                ? handleSqliteAccountSave
+                : undefined
+            }
+            imageEditingEnabled={!accountsSqliteWriteExperimentActive}
           />
         )}
 
         {/* FAB BUTTON FOR ADDING ACCOUNTS */}
-        {!accountsReadExperimentHttpReadonly && (
+        {(!accountsReadExperimentHttpReadonly ||
+          accountsSqliteWriteExperimentActive) && (
           <IonFab vertical="bottom" horizontal="end" slot="fixed">
             <IonFabButton
               onClick={() => {

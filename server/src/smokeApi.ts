@@ -13,6 +13,8 @@ const BUCKET_CREATE_WRITE_CONFIRMATION = "create bucket in disposable sqlite";
 const BUCKET_UPDATE_WRITE_CONFIRMATION = "update bucket in disposable sqlite";
 const CATEGORY_CREATE_WRITE_CONFIRMATION = "create category in disposable sqlite";
 const CATEGORY_UPDATE_WRITE_CONFIRMATION = "update category in disposable sqlite";
+const ACCOUNT_CREATE_WRITE_CONFIRMATION = "create account in disposable sqlite";
+const ACCOUNT_UPDATE_WRITE_CONFIRMATION = "update account in disposable sqlite";
 
 interface SmokeArgs {
   baseUrl: string;
@@ -23,6 +25,7 @@ interface SmokeArgs {
   allowRecipientDeactivateWriteSmoke: boolean;
   allowRecipientCreateUpdateWriteSmoke: boolean;
   allowBucketCategoryWriteSmoke: boolean;
+  allowAccountWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -96,6 +99,8 @@ Options:
                          Opt in to disposable SQLite recipient create/update write smoke.
   --allow-bucket-category-write-smoke
                          Opt in to disposable SQLite bucket/category create/update write smoke.
+  --allow-account-write-smoke
+                         Opt in to disposable SQLite account create/update write smoke.
   --help                 Show this help text.
 `;
 
@@ -106,6 +111,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowRecipientDeactivateWriteSmoke: false,
     allowRecipientCreateUpdateWriteSmoke: false,
     allowBucketCategoryWriteSmoke: false,
+    allowAccountWriteSmoke: false,
     help: false,
   };
 
@@ -158,6 +164,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-bucket-category-write-smoke") {
       args.allowBucketCategoryWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-account-write-smoke") {
+      args.allowAccountWriteSmoke = true;
       continue;
     }
 
@@ -420,9 +431,38 @@ const expectSafeBucketCategoryShape = (
   expect(safety.rawRowsIncluded === false, "bucket_category_raw_rows_reported");
 };
 
+const expectSafeAccountShape = (
+  json: ResponseJson,
+  action: "create" | "update",
+  dryRun: boolean,
+): void => {
+  expect(json.entity === "account", "unexpected_account_entity");
+  expect(json.action === action, "unexpected_account_action");
+  if (dryRun) {
+    expect(json.dryRun === true, "account_dry_run_flag_missing");
+    expect(json.wouldMutate === false, "account_dry_run_would_mutate");
+  } else {
+    expect(json.dryRunRequired === true, "account_dry_run_required_missing");
+    expect(json.realWrite === true, "account_real_write_flag_missing");
+    expect(typeof json.sqliteMutated === "boolean", "account_mutation_flag_missing");
+    expect(typeof json.rowsChanged === "number", "account_rows_changed_missing");
+  }
+  expect(typeof json.normalizedFieldPresence === "object", "account_fields_missing");
+  expect(typeof json.duplicateSummary === "object", "account_duplicates_missing");
+  expect(typeof json.timestampBehavior === "object", "account_timestamps_missing");
+  expect(typeof json.financialSignificance === "object", "account_financial_summary_missing");
+  expect(typeof json.affectedSummary === "object", "account_affected_missing");
+  expect(typeof json.safety === "object", "account_safety_missing");
+  const safety = json.safety as Record<string, unknown>;
+  expect(safety.dexieMutated === false, "account_dexie_mutation_reported");
+  expect(safety.filesWritten === false, "account_file_write_reported");
+  expect(safety.relatedRecordsMutated === false, "account_related_mutation_reported");
+  expect(safety.rawRowsIncluded === false, "account_raw_rows_reported");
+};
+
 const detailRow = (
   json: ResponseJson,
-  key: "bucket" | "category",
+  key: "account" | "bucket" | "category",
 ): Record<string, unknown> => {
   const row = json[key];
   expect(
@@ -490,6 +530,7 @@ const buildChecks = (
   allowRecipientDeactivateWriteSmoke: boolean,
   allowRecipientCreateUpdateWriteSmoke: boolean,
   allowBucketCategoryWriteSmoke: boolean,
+  allowAccountWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -507,6 +548,7 @@ const buildChecks = (
   let createdRecipientId: number | undefined;
   let createUpdateSmokeSequence = Date.now();
   const bucketCategorySmokeSequence = Date.now();
+  const accountSmokeSequence = Date.now();
   const sampledLookupIds = new Map<string, number>();
   const lookupResources = [
     "accounts",
@@ -1332,6 +1374,277 @@ const buildChecks = (
                 listResponseFingerprint(categoryAfter.json) ===
                   listResponseFingerprint(categoryBefore.json),
                 "disabled_category_write_changed_rows",
+              );
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    {
+      name: "account dry-run and write routes enforce protection and validation",
+      run: async () => {
+        for (const mode of ["dry-run", "write"] as const) {
+          for (const action of ["create", "update"] as const) {
+            const route = `/prototype/repositories/accounts/${mode}/${action}`;
+            const unauthorized = await requestJson(baseUrl, route, {
+              method: "POST",
+              body: {},
+            });
+            expectStatus(unauthorized.status, 401);
+
+            const unexpected = await requestJson(baseUrl, route, {
+              ...authedOptions,
+              method: "POST",
+              body: { unexpected: "account-sensitive-value-must-not-echo" },
+            });
+            expectStatus(unexpected.status, 400);
+            expect(
+              unexpected.json.code === "unexpected_payload_field",
+              "account_unexpected_field_code",
+            );
+            expectNoSensitiveEcho(unexpected.json, [
+              "account-sensitive-value-must-not-echo",
+            ]);
+          }
+        }
+
+        const badOrigin = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/dry-run/create",
+          {
+            token,
+            origin: "http://unexpected-origin.invalid",
+            method: "POST",
+            body: {
+              name: "Origin Rejection Account",
+              currency: "KES",
+              isCredit: false,
+            },
+          },
+        );
+        expectStatus(badOrigin.status, 403);
+
+        const missingName = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/dry-run/create",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { currency: "KES", isCredit: false },
+          },
+        );
+        expectStatus(missingName.status, 400);
+        expect(
+          missingName.json.code === "name_invalid" ||
+            missingName.json.code === "name_required",
+          "account_missing_name_code",
+        );
+
+        const invalidCreditLimit = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/dry-run/create",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              name: "Invalid Credit Account",
+              currency: "KES",
+              isCredit: true,
+              creditLimit: -1,
+            },
+          },
+        );
+        expectStatus(invalidCreditLimit.status, 400);
+        expect(
+          invalidCreditLimit.json.code === "creditLimit_invalid",
+          "account_credit_limit_validation_code",
+        );
+
+        const unknownUpdate = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/dry-run/update",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              id: 2147483647,
+              name: "Unknown Account",
+              currency: "KES",
+              isCredit: false,
+            },
+          },
+        );
+        expectStatus(unknownUpdate.status, 404);
+        expect(
+          unknownUpdate.json.code === "account_not_found",
+          "account_unknown_update_code",
+        );
+      },
+    },
+    {
+      name: "account create and update dry-runs are redacted and non-mutating",
+      run: async () => {
+        const accountsBefore = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts?limit=500",
+          authedOptions,
+        );
+        const transactionsBefore = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions?limit=200",
+          authedOptions,
+        );
+        expectStatus(accountsBefore.status, 200);
+        expectStatus(transactionsBefore.status, 200);
+        const name = `Account Dry Run ${accountSmokeSequence}`;
+        const createDryRun = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/dry-run/create",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              name,
+              currency: "KES",
+              isCredit: true,
+              creditLimit: 100,
+            },
+          },
+        );
+        expectStatus(createDryRun.status, 200);
+        expectSafeAccountShape(createDryRun.json, "create", true);
+        expectNoSensitiveEcho(createDryRun.json, [name]);
+
+        const accountId = optionalIdFromListResponse(accountsBefore.json);
+        if (accountId !== undefined) {
+          const detail = await requestJson(
+            baseUrl,
+            `/prototype/repositories/accounts/${accountId}`,
+            authedOptions,
+          );
+          expectStatus(detail.status, 200);
+          const account = detailRow(detail.json, "account");
+          const updateName = `Account Update Dry Run ${accountSmokeSequence}`;
+          const updateDryRun = await requestJson(
+            baseUrl,
+            "/prototype/repositories/accounts/dry-run/update",
+            {
+              ...authedOptions,
+              method: "POST",
+              body: {
+                id: accountId,
+                name: updateName,
+                currency:
+                  typeof account.currency === "string"
+                    ? account.currency
+                    : "KES",
+                isCredit:
+                  account.isCredit === true || account.isCredit === 1,
+                creditLimit:
+                  typeof account.creditLimit === "number"
+                    ? account.creditLimit
+                    : undefined,
+              },
+            },
+          );
+          expectStatus(updateDryRun.status, 200);
+          expectSafeAccountShape(updateDryRun.json, "update", true);
+          expectNoSensitiveEcho(updateDryRun.json, [updateName]);
+        }
+
+        const accountsAfter = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts?limit=500",
+          authedOptions,
+        );
+        const transactionsAfter = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions?limit=200",
+          authedOptions,
+        );
+        expect(
+          countFromListResponse(accountsAfter.json) ===
+            countFromListResponse(accountsBefore.json) &&
+            listResponseFingerprint(accountsAfter.json) ===
+              listResponseFingerprint(accountsBefore.json),
+          "account_dry_run_mutated_accounts",
+        );
+        expect(
+          countFromListResponse(transactionsAfter.json) ===
+            countFromListResponse(transactionsBefore.json) &&
+            listResponseFingerprint(transactionsAfter.json) ===
+              listResponseFingerprint(transactionsBefore.json),
+          "account_dry_run_mutated_transactions",
+        );
+      },
+    },
+    ...(!allowAccountWriteSmoke
+      ? [
+          {
+            name: "account writes are disabled and non-mutating by default",
+            run: async () => {
+              const accountsBefore = await requestJson(
+                baseUrl,
+                "/prototype/repositories/accounts?limit=500",
+                authedOptions,
+              );
+              expectStatus(accountsBefore.status, 200);
+              const accountId = optionalIdFromListResponse(accountsBefore.json);
+              const cases = [
+                {
+                  action: "create",
+                  body: {
+                    name: "Disabled Account Create",
+                    currency: "KES",
+                    isCredit: false,
+                    dryRunReviewed: true,
+                    confirmation: ACCOUNT_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+                ...(accountId === undefined
+                  ? []
+                  : [
+                      {
+                        action: "update",
+                        body: {
+                          id: accountId,
+                          name: "Disabled Account Update",
+                          currency: "KES",
+                          isCredit: false,
+                          dryRunReviewed: true,
+                          confirmation: ACCOUNT_UPDATE_WRITE_CONFIRMATION,
+                        },
+                      },
+                    ]),
+              ];
+
+              for (const testCase of cases) {
+                const write = await requestJson(
+                  baseUrl,
+                  `/prototype/repositories/accounts/write/${testCase.action}`,
+                  { ...authedOptions, method: "POST", body: testCase.body },
+                );
+                expectStatus(write.status, 403);
+                expect(
+                  write.json.code === "account_writes_disabled",
+                  "account_disabled_code_missing",
+                );
+                expect(write.json.sqliteMutated === false, "disabled_account_write_mutated");
+                expectNoSensitiveEcho(write.json, [
+                  String(testCase.body.name),
+                ]);
+              }
+
+              const accountsAfter = await requestJson(
+                baseUrl,
+                "/prototype/repositories/accounts?limit=500",
+                authedOptions,
+              );
+              expect(
+                countFromListResponse(accountsAfter.json) ===
+                  countFromListResponse(accountsBefore.json) &&
+                  listResponseFingerprint(accountsAfter.json) ===
+                    listResponseFingerprint(accountsBefore.json),
+                "disabled_account_write_changed_rows",
               );
             },
           } satisfies SmokeCheck,
@@ -3242,6 +3555,222 @@ const buildChecks = (
           } satisfies SmokeCheck,
         ]
       : []),
+    ...(allowAccountWriteSmoke
+      ? [
+          {
+            name: "account opt-in smoke mutates disposable account rows only",
+            run: async () => {
+              const read = (pathname: string) =>
+                requestJson(baseUrl, pathname, authedOptions);
+              const accountsBefore = await read(
+                "/prototype/repositories/accounts?limit=500",
+              );
+              const transactionsBefore = await read(
+                "/prototype/repositories/transactions?limit=200",
+              );
+              const paymentMethodsBefore = await read(
+                "/prototype/sqlite/tables/paymentMethods?limit=200",
+              );
+              const budgetsBefore = await read(
+                "/prototype/repositories/budgets?limit=500",
+              );
+              const snapshotsBefore = await read(
+                "/prototype/repositories/budget-snapshots?limit=500",
+              );
+              for (const response of [
+                accountsBefore,
+                transactionsBefore,
+                paymentMethodsBefore,
+                budgetsBefore,
+                snapshotsBefore,
+              ]) {
+                expectStatus(response.status, 200);
+              }
+
+              const name = `SQLite Account Smoke ${accountSmokeSequence}`;
+              const updatedName = `${name} Updated`;
+              const createPayload = {
+                name,
+                currency: "KES",
+                isCredit: false,
+              };
+              const createDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/accounts/dry-run/create",
+                { ...authedOptions, method: "POST", body: createPayload },
+              );
+              expectStatus(createDryRun.status, 200);
+              expectSafeAccountShape(createDryRun.json, "create", true);
+              expectNoSensitiveEcho(createDryRun.json, [name]);
+
+              const createWrite = await requestJson(
+                baseUrl,
+                "/prototype/repositories/accounts/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...createPayload,
+                    dryRunReviewed: true,
+                    confirmation: ACCOUNT_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(createWrite.status, 200);
+              expectSafeAccountShape(createWrite.json, "create", false);
+              expect(createWrite.json.sqliteMutated === true, "account_create_did_not_mutate");
+              expect(createWrite.json.rowsChanged === 1, "account_create_wrong_row_count");
+              expectNoSensitiveEcho(createWrite.json, [name]);
+              const accountId = createWrite.json.targetId;
+              expect(typeof accountId === "number", "account_create_target_id_missing");
+
+              const createdDetail = await read(
+                `/prototype/repositories/accounts/${accountId}`,
+              );
+              expectStatus(createdDetail.status, 200);
+              const createdAccount = detailRow(createdDetail.json, "account");
+              expect(createdAccount.name === name, "created_account_not_readable");
+
+              const updatePayload = {
+                id: accountId,
+                name: updatedName,
+                currency: "USD",
+                isCredit: true,
+                creditLimit: 250,
+              };
+              const updateDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/accounts/dry-run/update",
+                { ...authedOptions, method: "POST", body: updatePayload },
+              );
+              expectStatus(updateDryRun.status, 200);
+              expectSafeAccountShape(updateDryRun.json, "update", true);
+              expectNoSensitiveEcho(updateDryRun.json, [updatedName]);
+
+              const financialSummary =
+                updateDryRun.json.financialSignificance as Record<
+                  string,
+                  unknown
+                >;
+              expect(
+                financialSummary.currencyWouldChange === true &&
+                  financialSummary.creditClassificationWouldChange === true &&
+                  financialSummary.balancesWouldChange === false &&
+                  financialSummary.transactionsWouldChange === false,
+                "account_financial_significance_summary_invalid",
+              );
+
+              const updateWrite = await requestJson(
+                baseUrl,
+                "/prototype/repositories/accounts/write/update",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...updatePayload,
+                    dryRunReviewed: true,
+                    confirmation: ACCOUNT_UPDATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(updateWrite.status, 200);
+              expectSafeAccountShape(updateWrite.json, "update", false);
+              expect(updateWrite.json.rowsChanged === 1, "account_update_wrong_row_count");
+              expectNoSensitiveEcho(updateWrite.json, [updatedName]);
+
+              const updatedDetail = await read(
+                `/prototype/repositories/accounts/${accountId}`,
+              );
+              expectStatus(updatedDetail.status, 200);
+              const updatedAccount = detailRow(updatedDetail.json, "account");
+              expect(updatedAccount.name === updatedName, "updated_account_not_readable");
+              expect(updatedAccount.currency === "USD", "updated_account_currency_missing");
+              expect(
+                updatedAccount.isCredit === 1 || updatedAccount.isCredit === true,
+                "updated_account_credit_classification_missing",
+              );
+              expect(updatedAccount.creditLimit === 250, "updated_account_credit_limit_missing");
+              for (const field of [
+                "id",
+                "description",
+                "imageMimeType",
+                "isActive",
+                "createdAt",
+              ]) {
+                expect(
+                  JSON.stringify(updatedAccount[field]) ===
+                    JSON.stringify(createdAccount[field]),
+                  `account_update_changed_preserved_${field}`,
+                );
+              }
+              expect(
+                updatedAccount.updatedAt !== createdAccount.updatedAt,
+                "account_update_timestamp_unchanged",
+              );
+
+              const accountsAfter = await read(
+                "/prototype/repositories/accounts?limit=500",
+              );
+              expect(
+                countFromListResponse(accountsAfter.json) ===
+                  countFromListResponse(accountsBefore.json) + 1,
+                "account_count_did_not_increase_once",
+              );
+
+              for (const [pathname, before, code] of [
+                [
+                  "/prototype/repositories/transactions?limit=200",
+                  transactionsBefore,
+                  "transactions",
+                ],
+                [
+                  "/prototype/sqlite/tables/paymentMethods?limit=200",
+                  paymentMethodsBefore,
+                  "payment_methods",
+                ],
+                ["/prototype/repositories/budgets?limit=500", budgetsBefore, "budgets"],
+                [
+                  "/prototype/repositories/budget-snapshots?limit=500",
+                  snapshotsBefore,
+                  "budget_snapshots",
+                ],
+              ] as const) {
+                const after = await read(pathname);
+                expectStatus(after.status, 200);
+                const beforeCount =
+                  typeof before.json.count === "number"
+                    ? before.json.count
+                    : before.json.rowCount;
+                const afterCount =
+                  typeof after.json.count === "number"
+                    ? after.json.count
+                    : after.json.rowCount;
+                expect(afterCount === beforeCount, `${code}_count_changed`);
+                expect(
+                  listResponseFingerprint(after.json) ===
+                    listResponseFingerprint(before.json),
+                  `${code}_content_changed`,
+                );
+              }
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    {
+      name: "account delete and merge dry-run/write routes are not implemented",
+      run: async () => {
+        for (const mode of ["dry-run", "write"] as const) {
+          for (const action of ["delete", "merge"] as const) {
+            const { status } = await requestJson(
+              baseUrl,
+              `/prototype/repositories/accounts/${mode}/${action}`,
+              { ...authedOptions, method: "POST", body: { id: 1 } },
+            );
+            expectStatus(status, 404);
+          }
+        }
+      },
+    },
     {
       name: "bucket/category delete dry-run and write routes are not implemented",
       run: async () => {
@@ -3333,6 +3862,7 @@ const main = async (): Promise<void> => {
     args.allowRecipientDeactivateWriteSmoke,
     args.allowRecipientCreateUpdateWriteSmoke,
     args.allowBucketCategoryWriteSmoke,
+    args.allowAccountWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);
