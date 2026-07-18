@@ -823,9 +823,13 @@ POST /prototype/repositories/transactions/write/update
 ```
 
 Real writes remain disabled unless the server process has
-`PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`. The frontend has no
-transaction write adapter or UI wiring. Existing pages continue to use Dexie
-for writes.
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`. Dev-only frontend
+wiring is separately disabled unless
+`VITE_PERSONAL_FINANCE_TRANSACTIONS_BASIC_WRITE_EXPERIMENT=true`. The UI write
+experiment is active only when that frontend flag is exactly `true` and
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`. Restart Vite after
+changing frontend environment values. With either condition absent, the
+experiment does not replace a Dexie write.
 
 Phase 1 accepts only one ordinary income or expense row with a nonzero,
 correctly signed amount and existing account, category, category bucket, and
@@ -840,6 +844,22 @@ them only by the signed transaction amount because Phase 1 costs are null or
 zero. The endpoints do not mutate accounts, lookups, budgets, snapshots,
 related transactions, Dexie, or files.
 
+When active, the Transactions list and form show an explicit disposable
+SQLite warning. Create and eligible update operations use the existing local
+form validation, preserve expense-negative and income-positive signs, run the
+matching dry-run before the real write, and confirm the changed target through
+selected HTTP reads before returning to the selected-read list. They do not
+optimistically patch transaction, account-balance, or report state. If the
+server confirms a write but the selected-read refresh fails, the UI reports
+that SQLite changed and requires a manual reload without retrying the write.
+
+Transfer creation/editing, nonzero transaction-cost entry, budget or snapshot
+linkage, delete, duplicate, SMS import, CSV import/export, bulk operations, and
+advanced existing transaction editing remain unavailable in this HTTP mode.
+Default Dexie transaction behavior is unchanged. Successful basic writes can
+affect balances and reports only through their transaction data; no Account,
+report, budget, or snapshot row is mutated.
+
 Normal `smoke:api` remains non-mutating. Successful transaction mutation smoke
 is explicit:
 
@@ -849,6 +869,8 @@ npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token 
 
 That mode creates and updates one expense and one income in disposable SQLite,
 checks exact account/month aggregate deltas, and leaves the database dirty.
-Re-import from a fresh matching backup before parity verification. Transfers,
-costs, budget linkage, delete, bulk operations, frontend writes, dual-write,
-and authority migration remain deferred.
+Use a distinct local API port for browser write tests. The server process must
+have its backend write flag enabled independently of the Vite flag. Re-import
+SQLite from a fresh matching backup before clean parity verification.
+Transfers, costs, budget linkage, delete, bulk operations, dual-write, and
+authority migration remain deferred.

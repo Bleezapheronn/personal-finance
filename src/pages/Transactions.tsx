@@ -73,6 +73,10 @@ import {
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import {
+  isBasicTransactionWriteEligible,
+  isTransactionsBasicWriteExperimentEnabled,
+} from "../repositories/http/transactionBasicWriteExperiment";
 import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
@@ -472,8 +476,15 @@ const Transactions: React.FC = () => {
   const selectedBackend = getRepositoryBackend();
   const transactionsReadExperimentEnabled =
     isTransactionsReadExperimentEnabled();
-  const transactionsReadExperimentHttpReadonly =
-    transactionsReadExperimentEnabled && selectedBackend === "http-readonly";
+  const transactionsBasicWriteExperimentEnabled =
+    isTransactionsBasicWriteExperimentEnabled();
+  const transactionsSqliteWriteExperimentActive =
+    transactionsBasicWriteExperimentEnabled &&
+    selectedBackend === "http-readonly";
+  const transactionsHttpSelectedReadActive =
+    (transactionsReadExperimentEnabled ||
+      transactionsBasicWriteExperimentEnabled) &&
+    selectedBackend === "http-readonly";
 
   const fetchTransactions = async () => {
     setLoading(true);
@@ -486,7 +497,7 @@ const Transactions: React.FC = () => {
       let accs: Account[];
       let experimentLoad: TransactionsReadExperimentLoadResult | null = null;
 
-      if (transactionsReadExperimentHttpReadonly) {
+      if (transactionsHttpSelectedReadActive) {
         const repositories = getSelectedReadRepositories(selectedBackend);
         const [transactionLoad, lookupRows] = await Promise.all([
           loadSelectedReadTransactionExperimentRows(repositories),
@@ -565,13 +576,13 @@ const Transactions: React.FC = () => {
 
   const showTransactionsReadExperimentActionDisabled = () => {
     setError(
-      "Transactions read experiment is active. Switch back to Dexie to manage transactions.",
+      "Transactions HTTP experiment is active. This action remains available only in Dexie.",
     );
   };
 
   // Handler to navigate to Transaction Details page with transaction ID
   const handleView = (id?: number) => {
-    if (transactionsReadExperimentHttpReadonly) {
+    if (transactionsHttpSelectedReadActive) {
       showTransactionsReadExperimentActionDisabled();
       return;
     }
@@ -582,19 +593,27 @@ const Transactions: React.FC = () => {
   };
 
   // Handler to navigate to Edit Transaction page
-  const handleEdit = (id?: number) => {
-    if (transactionsReadExperimentHttpReadonly) {
-      showTransactionsReadExperimentActionDisabled();
+  const handleEdit = (transaction: Transaction) => {
+    if (
+      transactionsHttpSelectedReadActive &&
+      (!transactionsSqliteWriteExperimentActive ||
+        !isBasicTransactionWriteEligible(transaction))
+    ) {
+      setError(
+        transactionsSqliteWriteExperimentActive
+          ? "Advanced transaction editing is not available in the SQLite experiment."
+          : "Transactions HTTP reads are active, but the basic write experiment is off.",
+      );
       return;
     }
 
-    if (id !== undefined) {
-      history.push(`/edit/${id}`);
+    if (transaction.id !== undefined) {
+      history.push(`/edit/${transaction.id}`);
     }
   };
 
   const handleDuplicate = async (txn: Transaction) => {
-    if (transactionsReadExperimentHttpReadonly) {
+    if (transactionsHttpSelectedReadActive) {
       showTransactionsReadExperimentActionDisabled();
       return;
     }
@@ -658,7 +677,7 @@ const Transactions: React.FC = () => {
   // Handler to delete a transaction with confirmation
   const handleDeleteClick = async (id?: number) => {
     if (id === undefined) return;
-    if (transactionsReadExperimentHttpReadonly) {
+    if (transactionsHttpSelectedReadActive) {
       showTransactionsReadExperimentActionDisabled();
       return;
     }
@@ -741,7 +760,7 @@ const Transactions: React.FC = () => {
 
   const handleConfirmDelete = async () => {
     if (transactionToDelete === undefined) return;
-    if (transactionsReadExperimentHttpReadonly) {
+    if (transactionsHttpSelectedReadActive) {
       showTransactionsReadExperimentActionDisabled();
       setShowDeleteConfirm(false);
       setTransactionToDelete(undefined);
@@ -1342,7 +1361,7 @@ const Transactions: React.FC = () => {
           </IonButtons>
           <IonTitle>Transactions</IonTitle>
           <IonButtons slot="end">
-            {!transactionsReadExperimentHttpReadonly && (
+            {!transactionsHttpSelectedReadActive && (
               <>
                 <IonButton
                   onClick={async () => {
@@ -1429,31 +1448,41 @@ const Transactions: React.FC = () => {
         {loading && <IonSpinner name="crescent" />}
         {error && <IonText color="danger">{error}</IonText>}
 
-        {transactionsReadExperimentEnabled && (
+        {(transactionsReadExperimentEnabled ||
+          transactionsBasicWriteExperimentEnabled) && (
           <IonCard style={{ margin: 0, marginBottom: "16px" }}>
             <IonCardContent>
               <IonText
                 color={
-                  transactionsReadExperimentHttpReadonly ? "warning" : "medium"
+                  transactionsHttpSelectedReadActive ? "warning" : "medium"
                 }
               >
                 <p style={{ marginTop: 0 }}>
-                  {transactionsReadExperimentHttpReadonly
-                    ? "Transactions read experiment is active. List is loaded through selected-read `http-readonly`; detail, edit, delete, duplicate, transfer, import, and export actions are disabled. Switch back to Dexie to manage transactions."
-                    : "Transactions read experiment flag is active with the Dexie backend. Existing Dexie behavior remains available."}
+                  {transactionsSqliteWriteExperimentActive
+                    ? "Basic Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Transfers, transaction costs, and budget-linked transactions are not supported."
+                    : transactionsHttpSelectedReadActive
+                      ? "Transactions read experiment is active. The selected-read list is HTTP read-only and transaction writes are disabled."
+                      : "Transactions experiment flag is active with the Dexie backend. Existing Dexie behavior remains available."}
                 </p>
                 <p style={{ marginBottom: 0, color: "#666", fontSize: "0.85rem" }}>
                   Backend: {selectedBackend}
-                  {transactionsReadExperimentHttpReadonly &&
+                  {transactionsHttpSelectedReadActive &&
                     transactionsReadExperimentLoad &&
                     `; loaded ${transactionsReadExperimentLoad.transactions.length} transaction rows across ${transactionsReadExperimentLoad.pagesLoaded} page(s)`}
-                  {transactionsReadExperimentHttpReadonly &&
+                  {transactionsHttpSelectedReadActive &&
                     transactionsReadExperimentLoad?.reportedCount !== undefined &&
                     ` of ${transactionsReadExperimentLoad.reportedCount} reported`}
-                  {transactionsReadExperimentHttpReadonly &&
+                  {transactionsHttpSelectedReadActive &&
                     transactionsReadExperimentLoad?.truncated &&
                     ". This experiment is capped; refresh the matching SQLite baseline before using this as a migration signal."}
                 </p>
+                {transactionsSqliteWriteExperimentActive && (
+                  <p style={{ marginBottom: 0, color: "#666", fontSize: "0.85rem" }}>
+                    Create/update only. No Dexie write occurs. Re-import SQLite
+                    before clean parity checks. Advanced transactions are
+                    read-only.
+                  </p>
+                )}
               </IonText>
             </IonCardContent>
           </IonCard>
@@ -2248,7 +2277,7 @@ const Transactions: React.FC = () => {
                             </div>
                             <p style={{ margin: "0" }}>&nbsp;</p>
                             {/* Edit/Delete buttons */}
-                            {!transactionsReadExperimentHttpReadonly && (
+                            {!transactionsHttpSelectedReadActive && (
                               <IonRow className="item-actions">
                                 <IonCol className="item-actions-container">
                                   <IonButton
@@ -2264,7 +2293,7 @@ const Transactions: React.FC = () => {
                                     fill="clear"
                                     size="small"
                                     style={{ marginRight: "0" }}
-                                    onClick={() => handleEdit(txn.id)}
+                                    onClick={() => handleEdit(txn)}
                                     title="Edit Transaction"
                                   >
                                     <IonIcon slot="end" icon={createOutline} />
@@ -2282,6 +2311,22 @@ const Transactions: React.FC = () => {
                                 </IonCol>
                               </IonRow>
                             )}
+                            {transactionsSqliteWriteExperimentActive &&
+                              isBasicTransactionWriteEligible(txn) && (
+                                <IonRow className="item-actions">
+                                  <IonCol className="item-actions-container">
+                                    <IonButton
+                                      fill="clear"
+                                      size="small"
+                                      style={{ marginRight: "0" }}
+                                      onClick={() => handleEdit(txn)}
+                                      title="Edit basic transaction in disposable SQLite"
+                                    >
+                                      <IonIcon slot="end" icon={createOutline} />
+                                    </IonButton>
+                                  </IonCol>
+                                </IonRow>
+                              )}
                           </IonCol>
                         </IonRow>
                       </IonGrid>
@@ -2327,7 +2372,7 @@ const Transactions: React.FC = () => {
           </>
         )}
 
-        {!transactionsReadExperimentHttpReadonly && (
+        {!transactionsHttpSelectedReadActive && (
           <ImportModal
             isOpen={showImportModal}
             onDidDismiss={() => setShowImportModal(false)}
@@ -2341,7 +2386,8 @@ const Transactions: React.FC = () => {
       </IonContent>
 
       {/* FAB BUTTON FOR ADDING TRANSACTIONS */}
-      {!transactionsReadExperimentHttpReadonly && (
+      {(!transactionsHttpSelectedReadActive ||
+        transactionsSqliteWriteExperimentActive) && (
         <IonFab vertical="bottom" horizontal="end" slot="fixed">
           <IonFabButton
             onClick={() => history.push("/add")}

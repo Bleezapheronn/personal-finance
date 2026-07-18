@@ -120,11 +120,14 @@ not mutate or reinterpret related records.
 
 ### Transaction Writes
 
-Phase 1 implements backend-only dry-run and disposable SQLite write endpoints
-for basic single-row income and expense create/update operations. The endpoints
-are disabled by default behind
-`PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`, have no frontend
-adapter or UI integration, and leave Dexie authoritative.
+Phase 1 implements dry-run and disposable SQLite write endpoints plus narrow
+dev-only UI wiring for basic single-row income and expense create/update
+operations. The server endpoints are disabled by default behind
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`. The UI path is
+separately disabled by default behind
+`VITE_PERSONAL_FINANCE_TRANSACTIONS_BASIC_WRITE_EXPERIMENT=true` and runs only
+with the `http-readonly` backend. Every UI write runs the dry-run first,
+confirms the result through selected reads, and leaves Dexie authoritative.
 
 Eligible rows have a correctly signed nonzero amount, an existing account,
 category, category bucket, and recipient, and no transfer pairing, nonzero
@@ -137,9 +140,12 @@ behavior.
 
 Transfers, paired rows, nonzero `transactionCost`, budget and snapshot
 linkage, delete, duplicate, bulk writes, CSV/import/export, SMS import,
-recurring behavior, frontend writes, dual-write, and authority migration remain
-deferred. Those operations require separate plans that preserve transfer-pair
-reciprocity and `budgetSnapshotId` as the canonical budget linkage.
+recurring behavior, broad frontend write adapters, dual-write, and authority
+migration remain deferred. The UI does not manually patch account balances or
+report state; derived values can change only through the selected transaction
+data after refresh. These deferred operations require separate plans that
+preserve transfer-pair reciprocity and `budgetSnapshotId` as the canonical
+budget linkage.
 
 ### Budget Writes
 
@@ -231,7 +237,7 @@ Before any write code is implemented, the project needs explicit decisions for:
 - No writes without a tested restore path.
 - No no-op write methods in HTTP mode.
 - No write UI connected to HTTP outside the explicit dev-only Recipients,
-  Buckets/Categories, and Accounts experiments.
+  Buckets/Categories, Accounts, and basic Transactions experiments.
 - No `.env`, token, SQLite, backup, export, log, or report files in Git.
 
 ## Proposed Safe Sequence

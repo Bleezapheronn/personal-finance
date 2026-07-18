@@ -58,6 +58,24 @@ import {
   recipientRepository,
   smsImportTemplateRepository,
 } from "../repositories";
+import { getRepositoryBackend } from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import type {
+  AccountDto,
+  ApiListResponse,
+  BucketDto,
+  CategoryDto,
+  RecipientDto,
+  TransactionDto,
+} from "../repositories/http/types";
+import {
+  createBasicTransactionInDisposableSqlite,
+  isBasicTransactionWriteEligible,
+  isTransactionsBasicWriteExperimentEnabled,
+  transactionBasicWriteErrorCode,
+  updateBasicTransactionInDisposableSqlite,
+  type BasicTransactionWriteInput,
+} from "../repositories/http/transactionBasicWriteExperiment";
 
 interface DuplicateTransactionPrefill {
   transactionType: "expense" | "income" | "transfer";
@@ -82,12 +100,114 @@ interface AddTransactionLocationState {
 type TransferContentPayload = Omit<Transaction, "id" | "transferPairId">;
 type TransferUpdatePatch = TransferContentPayload & { transferPairId: number };
 
+const selectedRows = <Row,>(
+  result: Row[] | ApiListResponse<Row>,
+): Row[] => (Array.isArray(result) ? result : result.rows);
+
+const selectedBoolean = (value: boolean | number): boolean =>
+  value === true || value === 1;
+
+const selectedDate = (value: Date | string): Date =>
+  value instanceof Date ? value : new Date(value);
+
+const normalizeSelectedAccount = (account: Account | AccountDto): Account => ({
+  id: account.id,
+  name: account.name,
+  description: account.description ?? undefined,
+  currency: account.currency ?? undefined,
+  isActive: selectedBoolean(account.isActive),
+  isCredit: selectedBoolean(account.isCredit),
+  creditLimit: account.creditLimit ?? undefined,
+  createdAt: selectedDate(account.createdAt),
+  updatedAt: selectedDate(account.updatedAt),
+});
+
+const normalizeSelectedBucket = (bucket: Bucket | BucketDto): Bucket => ({
+  id: bucket.id,
+  name: bucket.name ?? undefined,
+  description: bucket.description ?? undefined,
+  minPercentage: bucket.minPercentage,
+  maxPercentage: bucket.maxPercentage,
+  minFixedAmount: bucket.minFixedAmount ?? undefined,
+  isActive: selectedBoolean(bucket.isActive),
+  displayOrder: bucket.displayOrder,
+  excludeFromReports: selectedBoolean(bucket.excludeFromReports),
+  createdAt: selectedDate(bucket.createdAt),
+  updatedAt: selectedDate(bucket.updatedAt),
+});
+
+const normalizeSelectedCategory = (
+  category: Category | CategoryDto,
+): Category => ({
+  id: category.id,
+  name: category.name ?? undefined,
+  bucketId: category.bucketId,
+  description: category.description ?? undefined,
+  isActive: selectedBoolean(category.isActive),
+  createdAt: selectedDate(category.createdAt),
+  updatedAt: selectedDate(category.updatedAt),
+});
+
+const normalizeSelectedRecipient = (
+  recipient: Recipient | RecipientDto,
+): Recipient => ({
+  id: recipient.id,
+  name: recipient.name,
+  aliases: recipient.aliases ?? undefined,
+  email: recipient.email ?? undefined,
+  phone: recipient.phone ?? undefined,
+  tillNumber: recipient.tillNumber ?? undefined,
+  paybill: recipient.paybill ?? undefined,
+  accountNumber: recipient.accountNumber ?? undefined,
+  description: recipient.description ?? undefined,
+  isActive: selectedBoolean(recipient.isActive),
+  createdAt: selectedDate(recipient.createdAt),
+  updatedAt: selectedDate(recipient.updatedAt),
+});
+
+const normalizeSelectedTransaction = (
+  transaction: Transaction | TransactionDto,
+): Transaction => ({
+  id: transaction.id,
+  categoryId: transaction.categoryId,
+  paymentChannelId: transaction.paymentChannelId ?? undefined,
+  accountId: transaction.accountId ?? undefined,
+  recipientId: transaction.recipientId,
+  date: selectedDate(transaction.date),
+  amount: transaction.amount,
+  originalAmount: transaction.originalAmount ?? undefined,
+  originalCurrency: transaction.originalCurrency ?? undefined,
+  exchangeRate: transaction.exchangeRate ?? undefined,
+  transactionReference: transaction.transactionReference ?? undefined,
+  transactionCost: transaction.transactionCost ?? undefined,
+  description: transaction.description ?? undefined,
+  transferPairId: transaction.transferPairId ?? undefined,
+  isTransfer:
+    transaction.isTransfer == null
+      ? undefined
+      : selectedBoolean(transaction.isTransfer),
+  budgetId: transaction.budgetId ?? undefined,
+  occurrenceDate:
+    transaction.occurrenceDate == null
+      ? undefined
+      : selectedDate(transaction.occurrenceDate),
+  budgetSnapshotId: transaction.budgetSnapshotId ?? undefined,
+});
+
 const AddTransaction: React.FC = () => {
   const history = useHistory();
   const location = useLocation<AddTransactionLocationState>();
   const { id } = useParams<{ id?: string }>();
   const isEditMode = Boolean(id);
   const duplicatePrefill = location.state?.duplicatePrefill;
+  const selectedBackend = getRepositoryBackend();
+  const transactionsBasicWriteExperimentEnabled =
+    isTransactionsBasicWriteExperimentEnabled();
+  const transactionsSqliteWriteExperimentActive =
+    selectedBackend === "http-readonly" &&
+    transactionsBasicWriteExperimentEnabled;
+  const transactionsHttpBackendSelected =
+    selectedBackend === "http-readonly";
 
   // Combined date and time into single datetime state
   const [transactionDateTime, setTransactionDateTime] = useState<string>("");
@@ -187,6 +307,58 @@ const AddTransaction: React.FC = () => {
   // Helper function to load all lookup data
   const loadLookupData = async () => {
     try {
+      if (transactionsHttpBackendSelected) {
+        const repositories = getSelectedReadRepositories("http-readonly");
+        const [bucketResult, categoryResult, accountResult, recipientResult] =
+          await Promise.all([
+            repositories.buckets.list({ limit: 5000 }),
+            repositories.categories.list({ limit: 5000 }),
+            repositories.accounts.list({ limit: 5000 }),
+            repositories.recipients.list({ limit: 5000 }),
+          ]);
+        const selectedBuckets = selectedRows<Bucket | BucketDto>(
+          bucketResult,
+        ).map(normalizeSelectedBucket);
+        const selectedCategories = selectedRows<Category | CategoryDto>(
+          categoryResult,
+        ).map(normalizeSelectedCategory);
+        const selectedAccounts = selectedRows<Account | AccountDto>(
+          accountResult,
+        ).map(normalizeSelectedAccount);
+        const selectedRecipients = selectedRows<Recipient | RecipientDto>(
+          recipientResult,
+        ).map(normalizeSelectedRecipient);
+
+        const activeAccounts = isEditMode
+          ? selectedAccounts
+          : selectedAccounts.filter((account) => account.isActive !== false);
+        const activeBuckets = isEditMode
+          ? selectedBuckets
+          : selectedBuckets.filter((bucket) => bucket.isActive !== false);
+        const activeCategories = isEditMode
+          ? selectedCategories
+          : selectedCategories.filter((category) => {
+              const bucket = selectedBuckets.find(
+                (candidate) => candidate.id === category.bucketId,
+              );
+              return (
+                category.isActive !== false && bucket?.isActive !== false
+              );
+            });
+        const activeRecipients = isEditMode
+          ? selectedRecipients
+          : selectedRecipients.filter(
+              (recipient) => recipient.isActive !== false,
+            );
+
+        setBuckets(activeBuckets);
+        setSortedCategories(activeCategories);
+        setSortedAccounts(activeAccounts);
+        setSortedRecipients(activeRecipients);
+        setSmsTemplates([]);
+        return;
+      }
+
       const [b, c, a, r, allTemplates] = await Promise.all([
         categoryRepository.listBuckets(),
         categoryRepository.listCategories(),
@@ -257,15 +429,39 @@ const AddTransaction: React.FC = () => {
     if (isEditMode && id) {
       const loadTransaction = async () => {
         try {
-          const txn = await db.transactions.get(Number(id));
+          const selectedTransaction = transactionsHttpBackendSelected
+            ? await getSelectedReadRepositories(
+                "http-readonly",
+              ).transactions.getById(Number(id))
+            : await db.transactions.get(Number(id));
+          const txn = selectedTransaction
+            ? normalizeSelectedTransaction(selectedTransaction)
+            : undefined;
 
           if (txn) {
             setEditingTransaction(txn);
 
+            if (
+              transactionsHttpBackendSelected &&
+              !isBasicTransactionWriteEligible(txn)
+            ) {
+              setErrorMsg(
+                "This transaction is not eligible for the basic SQLite write experiment.",
+              );
+            }
+
             // Check if this is a transfer transaction
             if (txn.isTransfer && txn.transferPairId) {
               setTransactionType("transfer");
-              const pairedTxn = await db.transactions.get(txn.transferPairId);
+              const pairedSelectedTransaction =
+                transactionsHttpBackendSelected
+                  ? await getSelectedReadRepositories(
+                      "http-readonly",
+                    ).transactions.getById(txn.transferPairId)
+                  : await db.transactions.get(txn.transferPairId);
+              const pairedTxn = pairedSelectedTransaction
+                ? normalizeSelectedTransaction(pairedSelectedTransaction)
+                : undefined;
 
               // Determine which is outgoing and which is incoming
               if (txn.amount < 0) {
@@ -323,7 +519,7 @@ const AddTransaction: React.FC = () => {
       };
 
       loadTransaction();
-    } else if (duplicatePrefill) {
+    } else if (duplicatePrefill && !transactionsHttpBackendSelected) {
       // ADD MODE + DUPLICATE PREFILL
       setTransactionDateTime("");
       setTransactionType(duplicatePrefill.transactionType);
@@ -360,13 +556,25 @@ const AddTransaction: React.FC = () => {
       setDescription("");
       setEditingTransaction(null);
     }
-  }, [duplicatePrefill, id, isEditMode]);
+  }, [
+    duplicatePrefill,
+    id,
+    isEditMode,
+    transactionsHttpBackendSelected,
+  ]);
 
   // Load descriptions sorted by frequency when component mounts
   useEffect(() => {
     let isMounted = true;
 
     const loadDescriptions = async () => {
+      if (transactionsHttpBackendSelected) {
+        if (isMounted) {
+          setDescriptionSuggestions([]);
+        }
+        return;
+      }
+
       const transactions = await db.transactions.toArray();
 
       const descriptionCounts = new Map<string, number>();
@@ -390,7 +598,7 @@ const AddTransaction: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, []); // No cleanup, could set state on unmounted component
+  }, [transactionsHttpBackendSelected]);
 
   // Close suggestions when clicking outside
   useEffect(() => {
@@ -586,7 +794,95 @@ const AddTransaction: React.FC = () => {
       ? parseFloat(exchangeRate)
       : undefined;
 
+    let sqliteWriteConfirmed = false;
+
     try {
+      if (transactionsHttpBackendSelected) {
+        if (!transactionsSqliteWriteExperimentActive) {
+          setErrorMsg(
+            "Transaction writes are disabled for the selected HTTP backend.",
+          );
+          return;
+        }
+        if (transactionType === "transfer") {
+          setErrorMsg(
+            "Transfers are not supported by the basic SQLite write experiment.",
+          );
+          return;
+        }
+        if (transactionCost.trim() !== "") {
+          setErrorMsg(
+            "Transaction costs are not supported by the basic SQLite write experiment.",
+          );
+          return;
+        }
+        if (
+          isEditMode &&
+          (!editingTransaction ||
+            !isBasicTransactionWriteEligible(editingTransaction))
+        ) {
+          setErrorMsg(
+            "This transaction is not eligible for the basic SQLite write experiment.",
+          );
+          return;
+        }
+
+        const numericAmount =
+          transactionType === "expense"
+            ? -Math.abs(numericAmountRaw)
+            : Math.abs(numericAmountRaw);
+        const numericOriginalAmount =
+          numericOriginalAmountRaw == null
+            ? undefined
+            : transactionType === "expense"
+              ? -Math.abs(numericOriginalAmountRaw)
+              : Math.abs(numericOriginalAmountRaw);
+        const input: BasicTransactionWriteInput = {
+          classification: transactionType,
+          date: selectedDateTime.toISOString(),
+          amount: numericAmount,
+          originalAmount: numericOriginalAmount,
+          originalCurrency: origCurrency,
+          exchangeRate: numericExchangeRate,
+          transactionReference: txReference,
+          categoryId: categoryId!,
+          accountId: accountId!,
+          recipientId: recipientId!,
+          description,
+          transactionCost: null,
+        };
+        const response =
+          isEditMode && id
+            ? await updateBasicTransactionInDisposableSqlite(
+                Number(id),
+                input,
+              )
+            : await createBasicTransactionInDisposableSqlite(input);
+        sqliteWriteConfirmed = true;
+
+        const targetId = response.targetId;
+        if (typeof targetId !== "number") {
+          throw new Error("transaction_write_refresh_failed");
+        }
+        const refreshed = await getSelectedReadRepositories(
+          "http-readonly",
+        ).transactions.getById(targetId);
+        if (!refreshed) {
+          throw new Error("transaction_write_refresh_failed");
+        }
+
+        setSuccessToastMessage(
+          isEditMode
+            ? "Disposable SQLite transaction updated."
+            : "Disposable SQLite transaction created.",
+        );
+        setShowSuccessToast(true);
+        setTimeout(() => {
+          history.push("/transactions");
+        }, 500);
+        return;
+      }
+
       if (transactionType === "transfer") {
         // Outgoing transaction
         const outgoingTx: TransferContentPayload = {
@@ -789,18 +1085,27 @@ const AddTransaction: React.FC = () => {
       }
     } catch (error) {
       console.error("Error adding transaction:", error);
+      if (sqliteWriteConfirmed) {
+        setErrorMsg(
+          "SQLite was changed, but selected-read refresh failed. Reload the Transactions page manually; do not retry this write.",
+        );
+        return;
+      }
       setErrorMsg(
-        error instanceof Error
-          ? error.message
-          : `Failed to ${
-              isEditMode ? "update" : "add"
-            } transaction. Please try again.`,
+        transactionsHttpBackendSelected
+          ? transactionBasicWriteErrorCode(error)
+          : error instanceof Error
+            ? error.message
+            : `Failed to ${
+                isEditMode ? "update" : "add"
+              } transaction. Please try again.`,
       );
     }
   };
 
   const populateFromLastTransaction = async (description: string) => {
     if (!description || !description.trim()) return;
+    if (transactionsHttpBackendSelected) return;
     try {
       const txs = await db.transactions
         .where("description")
@@ -963,6 +1268,17 @@ const AddTransaction: React.FC = () => {
     }
   }, [transactionDateTime, fieldErrors.date, fieldErrors.time]);
 
+  const basicHttpEditEligible =
+    !isEditMode ||
+    (editingTransaction !== null &&
+      isBasicTransactionWriteEligible(editingTransaction));
+  const transactionSubmitDisabled =
+    transactionsHttpBackendSelected &&
+    (!transactionsSqliteWriteExperimentActive ||
+      transactionType === "transfer" ||
+      transactionCost.trim() !== "" ||
+      !basicHttpEditEligible);
+
   return (
     <IonPage>
       <IonHeader>
@@ -974,14 +1290,33 @@ const AddTransaction: React.FC = () => {
             {isEditMode ? "Edit Transaction" : "Add Transaction"}
           </IonTitle>
           <IonButtons slot="end">
-            <IonButton onClick={() => setShowSmsImportModal(true)}>
-              <IonIcon icon={documentTextOutline} />
-              Import SMS
-            </IonButton>
+            {!transactionsHttpBackendSelected && (
+              <IonButton onClick={() => setShowSmsImportModal(true)}>
+                <IonIcon icon={documentTextOutline} />
+                Import SMS
+              </IonButton>
+            )}
           </IonButtons>
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
+        {transactionsHttpBackendSelected && (
+          <IonText color="warning">
+            <p
+              style={{
+                padding: "12px",
+                backgroundColor: "var(--ion-color-warning-tint)",
+                borderRadius: "4px",
+                marginBottom: "16px",
+                color: "#1a1a1a",
+              }}
+            >
+              {transactionsSqliteWriteExperimentActive
+                ? "Basic Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Transfers, transaction costs, and budget-linked transactions are not supported. Create/update only; re-import SQLite before clean parity checks."
+                : "The HTTP transaction backend is selected, but the basic SQLite write experiment is disabled. No transaction write will be attempted."}
+            </p>
+          </IonText>
+        )}
         {isEditMode && editingTransaction?.isTransfer && (
           <IonText color="warning">
             <p
@@ -1010,7 +1345,11 @@ const AddTransaction: React.FC = () => {
                         e.detail.value as "expense" | "income" | "transfer",
                       )
                     }
-                    disabled={isEditMode && editingTransaction?.isTransfer}
+                    disabled={
+                      (isEditMode && editingTransaction?.isTransfer) ||
+                      (transactionsHttpBackendSelected &&
+                        !basicHttpEditEligible)
+                    }
                   >
                     <IonSegmentButton value="income">
                       <IonLabel>Income</IonLabel>
@@ -1018,9 +1357,11 @@ const AddTransaction: React.FC = () => {
                     <IonSegmentButton value="expense">
                       <IonLabel>Expense</IonLabel>
                     </IonSegmentButton>
-                    <IonSegmentButton value="transfer">
-                      <IonLabel>Transfer</IonLabel>
-                    </IonSegmentButton>
+                    {!transactionsHttpBackendSelected && (
+                      <IonSegmentButton value="transfer">
+                        <IonLabel>Transfer</IonLabel>
+                      </IonSegmentButton>
+                    )}
                   </IonSegment>
                 </IonItem>
               </IonCol>
@@ -1209,20 +1550,22 @@ const AddTransaction: React.FC = () => {
                       )}
                     </div>
                   </IonCol>
-                  <IonCol size="1">
-                    <IonButton
-                      style={{ marginTop: "23px" }}
-                      color="primary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowRecipientModal(true);
-                      }}
-                      aria-label="Add Payer"
-                      title="Add Payer"
-                    >
-                      <IonIcon icon={addOutline} />
-                    </IonButton>
-                  </IonCol>
+                  {!transactionsHttpBackendSelected && (
+                    <IonCol size="1">
+                      <IonButton
+                        style={{ marginTop: "23px" }}
+                        color="primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowRecipientModal(true);
+                        }}
+                        aria-label="Add Payer"
+                        title="Add Payer"
+                      >
+                        <IonIcon icon={addOutline} />
+                      </IonButton>
+                    </IonCol>
+                  )}
                 </IonRow>
 
                 {/* Recipient */}
@@ -1262,20 +1605,22 @@ const AddTransaction: React.FC = () => {
                       )}
                     </div>
                   </IonCol>
-                  <IonCol size="1">
-                    <IonButton
-                      style={{ marginTop: "23px" }}
-                      color="primary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowRecipientModal(true);
-                      }}
-                      aria-label="Add Recipient"
-                      title="Add Recipient"
-                    >
-                      <IonIcon icon={addOutline} />
-                    </IonButton>
-                  </IonCol>
+                  {!transactionsHttpBackendSelected && (
+                    <IonCol size="1">
+                      <IonButton
+                        style={{ marginTop: "23px" }}
+                        color="primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowRecipientModal(true);
+                        }}
+                        aria-label="Add Recipient"
+                        title="Add Recipient"
+                      >
+                        <IonIcon icon={addOutline} />
+                      </IonButton>
+                    </IonCol>
+                  )}
                 </IonRow>
 
                 {/* Category */}
@@ -1320,20 +1665,22 @@ const AddTransaction: React.FC = () => {
                       )}
                     </div>
                   </IonCol>
-                  <IonCol size="1">
-                    <IonButton
-                      style={{ marginTop: "23px" }}
-                      color="primary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowCategoryModal(true);
-                      }}
-                      aria-label="Add Category"
-                      title="Add Category"
-                    >
-                      <IonIcon icon={addOutline} />
-                    </IonButton>
-                  </IonCol>
+                  {!transactionsHttpBackendSelected && (
+                    <IonCol size="1">
+                      <IonButton
+                        style={{ marginTop: "23px" }}
+                        color="primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowCategoryModal(true);
+                        }}
+                        aria-label="Add Category"
+                        title="Add Category"
+                      >
+                        <IonIcon icon={addOutline} />
+                      </IonButton>
+                    </IonCol>
+                  )}
                 </IonRow>
 
                 {/* FROM Account - CHANGED from Payment Method */}
@@ -1467,28 +1814,30 @@ const AddTransaction: React.FC = () => {
                       </IonText>
                     )}
                   </IonCol>
-                  <IonCol size="1">
-                    <IonButton
-                      style={{ marginTop: "23px" }}
-                      color="primary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowRecipientModal(true);
-                      }}
-                      aria-label={
-                        transactionType === "expense"
-                          ? "Add Recipient"
-                          : "Add Payer"
-                      }
-                      title={
-                        transactionType === "expense"
-                          ? "Add Recipient"
-                          : "Add Payer"
-                      }
-                    >
-                      <IonIcon icon={addOutline} />
-                    </IonButton>
-                  </IonCol>
+                  {!transactionsHttpBackendSelected && (
+                    <IonCol size="1">
+                      <IonButton
+                        style={{ marginTop: "23px" }}
+                        color="primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowRecipientModal(true);
+                        }}
+                        aria-label={
+                          transactionType === "expense"
+                            ? "Add Recipient"
+                            : "Add Payer"
+                        }
+                        title={
+                          transactionType === "expense"
+                            ? "Add Recipient"
+                            : "Add Payer"
+                        }
+                      >
+                        <IonIcon icon={addOutline} />
+                      </IonButton>
+                    </IonCol>
+                  )}
                 </IonRow>
 
                 {/* Category */}
@@ -1533,20 +1882,22 @@ const AddTransaction: React.FC = () => {
                       )}
                     </div>
                   </IonCol>
-                  <IonCol size="1">
-                    <IonButton
-                      style={{ marginTop: "23px" }}
-                      color="primary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowCategoryModal(true);
-                      }}
-                      aria-label="Add Category"
-                      title="Add Category"
-                    >
-                      <IonIcon icon={addOutline} />
-                    </IonButton>
-                  </IonCol>
+                  {!transactionsHttpBackendSelected && (
+                    <IonCol size="1">
+                      <IonButton
+                        style={{ marginTop: "23px" }}
+                        color="primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowCategoryModal(true);
+                        }}
+                        aria-label="Add Category"
+                        title="Add Category"
+                      >
+                        <IonIcon icon={addOutline} />
+                      </IonButton>
+                    </IonCol>
+                  )}
                 </IonRow>
 
                 {/* Account - CHANGED from Payment Method */}
@@ -1617,22 +1968,24 @@ const AddTransaction: React.FC = () => {
                 </div>
               </IonCol>
 
-              <IonCol size="3">
-                <div className="form-input-wrapper">
-                  <label className="form-label">
-                    Transaction Cost (optional)
-                  </label>
-                  <IonInput
-                    className="form-input"
-                    placeholder="e.g. 13.00"
-                    type="number"
-                    value={transactionCost}
-                    onIonChange={(e) => setTransactionCost(e.detail.value!)}
-                    inputMode="decimal"
-                    step="0.01"
-                  />
-                </div>
-              </IonCol>
+              {!transactionsHttpBackendSelected && (
+                <IonCol size="3">
+                  <div className="form-input-wrapper">
+                    <label className="form-label">
+                      Transaction Cost (optional)
+                    </label>
+                    <IonInput
+                      className="form-input"
+                      placeholder="e.g. 13.00"
+                      type="number"
+                      value={transactionCost}
+                      onIonChange={(e) => setTransactionCost(e.detail.value!)}
+                      inputMode="decimal"
+                      step="0.01"
+                    />
+                  </div>
+                </IonCol>
+              )}
             </IonRow>
 
             {/* Original Amount, Currency, Exchange Rate */}
@@ -1699,6 +2052,7 @@ const AddTransaction: React.FC = () => {
                   expand="block"
                   color="primary"
                   className="ion-margin-top"
+                  disabled={transactionSubmitDisabled}
                 >
                   {isEditMode ? "Update Transaction" : "Add Transaction"}
                 </IonButton>
@@ -1709,37 +2063,43 @@ const AddTransaction: React.FC = () => {
       </IonContent>
 
       {/* Modal: Add Recipient */}
-      <AddRecipientModal
-        isOpen={showRecipientModal}
-        onClose={() => setShowRecipientModal(false)}
-        onRecipientAdded={(recipient) => {
-          setSortedRecipients((prev) => [recipient, ...prev]);
-          setRecipientId(recipient.id);
-        }}
-      />
+      {!transactionsHttpBackendSelected && (
+        <AddRecipientModal
+          isOpen={showRecipientModal}
+          onClose={() => setShowRecipientModal(false)}
+          onRecipientAdded={(recipient) => {
+            setSortedRecipients((prev) => [recipient, ...prev]);
+            setRecipientId(recipient.id);
+          }}
+        />
+      )}
 
       {/* Modal: Add Category */}
-      <AddCategoryModal
-        isOpen={showCategoryModal}
-        onClose={() => setShowCategoryModal(false)}
-        onCategoryAdded={(category) => {
-          setSortedCategories((prev) => [category, ...prev]);
-          setCategoryId(category.id);
-        }}
-        buckets={buckets}
-      />
+      {!transactionsHttpBackendSelected && (
+        <AddCategoryModal
+          isOpen={showCategoryModal}
+          onClose={() => setShowCategoryModal(false)}
+          onCategoryAdded={(category) => {
+            setSortedCategories((prev) => [category, ...prev]);
+            setCategoryId(category.id);
+          }}
+          buckets={buckets}
+        />
+      )}
 
       {/* REMOVED: Modal: Add Payment Method */}
 
       {/* Modal: Import SMS */}
-      <SmsImportModal
-        isOpen={showSmsImportModal}
-        onClose={() => setShowSmsImportModal(false)}
-        onImport={handleSmsImport}
-        smsTemplates={smsTemplates}
-        accounts={sortedAccounts}
-        accountId={accountId}
-      />
+      {!transactionsHttpBackendSelected && (
+        <SmsImportModal
+          isOpen={showSmsImportModal}
+          onClose={() => setShowSmsImportModal(false)}
+          onImport={handleSmsImport}
+          smsTemplates={smsTemplates}
+          accounts={sortedAccounts}
+          accountId={accountId}
+        />
+      )}
 
       {/* TOAST NOTIFICATIONS */}
       <IonToast
