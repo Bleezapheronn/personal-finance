@@ -26,8 +26,21 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `POST /prototype/repositories/recipients/write/update` (experimental, disabled by default)
 - `POST /prototype/repositories/recipients/write/activate` (experimental, disabled by default)
 - `POST /prototype/repositories/recipients/write/deactivate` (experimental, disabled by default)
+- `POST /prototype/repositories/buckets/dry-run/create`
+- `POST /prototype/repositories/buckets/dry-run/update`
+- `POST /prototype/repositories/buckets/write/create` (experimental, disabled by default)
+- `POST /prototype/repositories/buckets/write/update` (experimental, disabled by default)
+- `POST /prototype/repositories/categories/dry-run/create`
+- `POST /prototype/repositories/categories/dry-run/update`
+- `POST /prototype/repositories/categories/write/create` (experimental, disabled by default)
+- `POST /prototype/repositories/categories/write/update` (experimental, disabled by default)
 
-The backend can optionally open a configured disposable SQLite database read-only for prototype diagnostics. It does not replace Dexie / IndexedDB. The browser IndexedDB database remains authoritative. The only experimental write endpoints are the disabled-by-default recipient create/update and activate/deactivate endpoints, which mutate disposable SQLite only when explicitly enabled. No frontend write path, write adapter, dual-write, or SQLite authority migration exists.
+The backend normally opens configured disposable SQLite read-only for prototype
+diagnostics. Explicit, disabled-by-default experiments exist for recipient
+writes and bucket/category create/update writes. The browser IndexedDB database
+remains authoritative. Narrow dev-only UI helpers exist for the Recipients and
+Buckets/Categories experiments; no broad write repository, dual-write, or
+SQLite authority migration exists.
 
 ## Safety
 
@@ -552,8 +565,64 @@ npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token 
 Run that opt-in smoke only against a disposable SQLite database imported from a
 fresh backup. After a successful write smoke, delete/re-import the SQLite
 database from the backup before using it as a clean parity baseline again.
-Delete, merge, frontend write adapters, UI integration, dual-write, and
+Delete, merge, broad frontend write adapters, dual-write, and
 transaction recipient-reference mutation remain future work.
+
+## Experimental Bucket And Category Writes
+
+Bucket and category create/update dry-runs and real writes are available at:
+
+```text
+POST /prototype/repositories/buckets/dry-run/create
+POST /prototype/repositories/buckets/dry-run/update
+POST /prototype/repositories/buckets/write/create
+POST /prototype/repositories/buckets/write/update
+POST /prototype/repositories/categories/dry-run/create
+POST /prototype/repositories/categories/dry-run/update
+POST /prototype/repositories/categories/write/create
+POST /prototype/repositories/categories/write/update
+```
+
+Dry-runs are non-mutating. Real writes are disabled unless the server process
+has this exact flag:
+
+```text
+PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true
+```
+
+All routes use the existing token and origin guards. Requests reject unknown
+fields and return redacted summaries. Duplicate names are reported as
+informational counts because the current Dexie forms do not block duplicate
+bucket or category names.
+
+Bucket create mirrors the management form: trimmed required name, optional
+description, percentages defaulting to `0` and `100`, optional non-negative
+fixed amount, `isActive: true`, `excludeFromReports: false` by default, and
+`displayOrder` equal to the current bucket count. Bucket update changes only
+the form-editable fields and `updatedAt`; it preserves `id`, `createdAt`,
+`isActive`, and `displayOrder`.
+
+Category create requires an existing bucket, defaults `isActive` to true, and
+sets both timestamps. Category update changes only name, bucket link,
+description, and `updatedAt`; it preserves `id`, `createdAt`, and `isActive`.
+No active-state, reorder, delete, merge, or cascade route is included.
+
+Bucket percentage, fixed-amount, display-order, and `excludeFromReports`
+semantics affect reports and budgeting. Category bucket links affect report
+grouping and income-bucket classification. The endpoints return informational
+warnings for this boundary but never update transactions, budgets, budget
+snapshots, or foreign keys.
+
+Normal `smoke:api` remains non-mutating. The mutation smoke is explicit:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-bucket-category-write-smoke
+```
+
+Run it only against disposable SQLite with the server write flag enabled. A
+successful run creates and updates one bucket and one category and therefore
+dirties SQLite. Re-import the database from a fresh backup before parity
+verification.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 

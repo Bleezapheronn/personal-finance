@@ -25,6 +25,16 @@ interface AddCategoryModalProps {
   buckets: Bucket[];
   preSelectedBucketId?: number;
   editingCategory?: Category;
+  onSaveCategory?: (
+    input: CategoryFormValues,
+    editingCategory?: Category,
+  ) => Promise<void>;
+}
+
+export interface CategoryFormValues {
+  name: string;
+  bucketId: number;
+  description?: string;
 }
 
 export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
@@ -34,6 +44,7 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
   buckets,
   preSelectedBucketId,
   editingCategory,
+  onSaveCategory,
 }) => {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -76,6 +87,19 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
     }
 
     try {
+      const formValues: CategoryFormValues = {
+        name: name.trim(),
+        bucketId,
+        description: description.trim() || undefined,
+      };
+
+      if (onSaveCategory) {
+        await onSaveCategory(formValues, editingCategory);
+        resetForm();
+        onClose();
+        return;
+      }
+
       const now = new Date();
 
       if (editingCategory?.id) {
@@ -115,7 +139,11 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
       onClose();
     } catch (err) {
       console.error(err);
-      setAlertMessage("Failed to save category");
+      setAlertMessage(
+        onSaveCategory && err instanceof Error
+          ? err.message
+          : "Failed to save category",
+      );
     }
   };
 

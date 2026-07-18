@@ -2,6 +2,7 @@ import Fastify, { type FastifyReply } from "fastify";
 import {
   ALLOWED_ORIGINS,
   API_VERSION,
+  areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
   getServerPort,
@@ -54,6 +55,19 @@ import {
   validateRecipientUpdateWritePayload,
   updateRecipientRealWrite,
 } from "./lib/recipientWrite.js";
+import {
+  bucketCategoryDryRunRequestErrorResponse,
+  BucketCategoryDryRunRequestError,
+  bucketDryRun,
+  categoryDryRun,
+} from "./lib/bucketCategoryDryRun.js";
+import {
+  bucketCategoryRealWrite,
+  bucketCategoryWriteDisabledResponse,
+  bucketCategoryWriteRequestErrorResponse,
+  BucketCategoryWriteRequestError,
+  validateBucketCategoryWritePayload,
+} from "./lib/bucketCategoryWrite.js";
 import {
   getBudgetById,
   getBudgetSnapshotById,
@@ -982,6 +996,160 @@ server.get<{ Params: { id: string } }>(
     }
   },
 );
+
+const bucketCategoryRouteConfigs = [
+  {
+    entity: "bucket",
+    resource: "buckets",
+    dryRun: bucketDryRun,
+  },
+  {
+    entity: "category",
+    resource: "categories",
+    dryRun: categoryDryRun,
+  },
+] as const;
+
+for (const config of bucketCategoryRouteConfigs) {
+  for (const action of ["create", "update"] as const) {
+    server.post<{ Body: unknown }>(
+      `/prototype/repositories/${config.resource}/dry-run/${action}`,
+      async (request, reply) => {
+        let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+        try {
+          opened = openConfiguredReadOnlyDatabase();
+        } catch (error) {
+          const statusCode = sqliteUnavailableStatusCode(error);
+          return reply.code(statusCode).send({
+            ok: false,
+            code:
+              statusCode === 503
+                ? "sqlite_unavailable"
+                : `${config.entity}_${action}_dry_run_failed`,
+          });
+        }
+
+        if (!opened.ok) {
+          return reply.code(503).send({
+            ok: false,
+            code: opened.code,
+          });
+        }
+
+        try {
+          const response = config.dryRun(opened.db, request.body, action);
+          return response.ok ? response : reply.code(400).send(response);
+        } catch (error) {
+          if (error instanceof BucketCategoryDryRunRequestError) {
+            return reply.code(error.statusCode).send(
+              bucketCategoryDryRunRequestErrorResponse(
+                config.entity,
+                action,
+                error.code,
+              ),
+            );
+          }
+
+          return reply.code(500).send({
+            ok: false,
+            code: `${config.entity}_${action}_dry_run_failed`,
+          });
+        } finally {
+          opened.db.close();
+        }
+      },
+    );
+
+    server.post<{ Body: unknown }>(
+      `/prototype/repositories/${config.resource}/write/${action}`,
+      async (request, reply) => {
+        try {
+          validateBucketCategoryWritePayload(
+            request.body,
+            config.entity,
+            action,
+          );
+        } catch (error) {
+          if (error instanceof BucketCategoryWriteRequestError) {
+            return reply.code(error.statusCode).send(
+              bucketCategoryWriteRequestErrorResponse(
+                config.entity,
+                action,
+                error.code,
+              ),
+            );
+          }
+          return reply.code(400).send(
+            bucketCategoryWriteRequestErrorResponse(
+              config.entity,
+              action,
+              `${config.entity}_${action}_write_invalid`,
+            ),
+          );
+        }
+
+        if (!areBucketCategoryWritesEnabled()) {
+          return reply
+            .code(403)
+            .send(bucketCategoryWriteDisabledResponse(config.entity, action));
+        }
+
+        let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+        try {
+          opened = openConfiguredWritableDatabase();
+        } catch (error) {
+          const statusCode = sqliteUnavailableStatusCode(error);
+          return reply.code(statusCode).send({
+            ok: false,
+            code:
+              statusCode === 503
+                ? "sqlite_unavailable"
+                : `${config.entity}_${action}_write_failed`,
+          });
+        }
+
+        if (!opened.ok) {
+          return reply.code(503).send({
+            ok: false,
+            code: opened.code,
+          });
+        }
+
+        try {
+          const response = bucketCategoryRealWrite(
+            opened.db,
+            request.body,
+            config.entity,
+            action,
+          );
+          if (
+            response.code === "bucket_not_found" ||
+            response.code === "category_not_found"
+          ) {
+            return reply.code(404).send(response);
+          }
+          return response.ok ? response : reply.code(400).send(response);
+        } catch (error) {
+          if (error instanceof BucketCategoryWriteRequestError) {
+            return reply.code(error.statusCode).send(
+              bucketCategoryWriteRequestErrorResponse(
+                config.entity,
+                action,
+                error.code,
+              ),
+            );
+          }
+          return reply.code(500).send({
+            ok: false,
+            code: `${config.entity}_${action}_write_failed`,
+          });
+        } finally {
+          opened.db.close();
+        }
+      },
+    );
+  }
+}
 
 server.post<{ Body: unknown }>(
   "/prototype/repositories/recipients/dry-run/create",

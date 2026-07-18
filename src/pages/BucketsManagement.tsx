@@ -45,7 +45,10 @@ import {
   warningOutline,
 } from "ionicons/icons";
 import { db, Bucket, Category } from "../db";
-import { AddCategoryModal } from "../components/AddCategoryModal";
+import {
+  AddCategoryModal,
+  type CategoryFormValues,
+} from "../components/AddCategoryModal";
 import { getRepositoryBackend, type RepositoryBackend } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { categoryRepository, transactionRepository } from "../repositories";
@@ -61,6 +64,15 @@ import {
   sampledIds,
   stringValue,
 } from "../utils/devPreview";
+import {
+  bucketCategoryWriteErrorCode,
+  createBucketInDisposableSqlite,
+  createCategoryInDisposableSqlite,
+  isBucketsCategoriesWriteExperimentEnabled,
+  type BucketWriteInput,
+  updateBucketInDisposableSqlite,
+  updateCategoryInDisposableSqlite,
+} from "../repositories/http/bucketCategoryWriteExperiment";
 
 /**
  * BucketsManagement
@@ -229,13 +241,39 @@ const BucketsManagement: React.FC = () => {
   const selectedBackend = getRepositoryBackend();
   const bucketsCategoriesReadExperimentEnabled =
     isBucketsCategoriesReadExperimentEnabled();
-  const bucketsCategoriesReadExperimentHttpReadonly =
-    bucketsCategoriesReadExperimentEnabled &&
+  const bucketsCategoriesWriteExperimentEnabled =
+    isBucketsCategoriesWriteExperimentEnabled();
+  const bucketsCategoriesSqliteWriteExperimentActive =
+    bucketsCategoriesWriteExperimentEnabled &&
     selectedBackend === "http-readonly";
+  const bucketsCategoriesReadExperimentHttpReadonly =
+    (bucketsCategoriesReadExperimentEnabled ||
+      bucketsCategoriesWriteExperimentEnabled) &&
+    selectedBackend === "http-readonly";
+  const bucketsCategoriesHttpReadonlyWithoutWrites =
+    bucketsCategoriesReadExperimentHttpReadonly &&
+    !bucketsCategoriesSqliteWriteExperimentActive;
 
   const showReadExperimentWriteDisabledToast = () => {
-    setToastMessage("Switch back to Dexie to edit buckets and categories");
+    setToastMessage(
+      "Enable the Buckets/Categories write experiment or switch back to Dexie",
+    );
     setShowToast(true);
+  };
+
+  const safeBucketCategoryWriteMessage = (error: unknown): string => {
+    const code = bucketCategoryWriteErrorCode(error);
+    if (code === "bucket_category_writes_disabled") {
+      return "Server Buckets/Categories write flag is off.";
+    }
+    if (
+      code === "local_api_base_url_missing" ||
+      code === "local_api_token_missing" ||
+      code === "local_api_request_failed"
+    ) {
+      return "Local API is unavailable or not configured.";
+    }
+    return `Bucket/category write failed: ${code}`;
   };
 
   useEffect(() => {
@@ -335,7 +373,7 @@ const BucketsManagement: React.FC = () => {
     v === undefined || (v >= 0 && v <= 100);
 
   const saveBucket = async () => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
+    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
       showReadExperimentWriteDisabledToast();
       return;
     }
@@ -364,7 +402,23 @@ const BucketsManagement: React.FC = () => {
     const isEditMode = bucketId !== null; // Capture this BEFORE resetting
 
     try {
-      if (isEditMode) {
+      if (bucketsCategoriesSqliteWriteExperimentActive) {
+        const input: BucketWriteInput = {
+          name: name.trim(),
+          description: description.trim() || undefined,
+          minPercentage: minPercentage ?? 0,
+          maxPercentage: maxPercentage ?? 100,
+          minFixedAmount,
+          excludeFromReports,
+        };
+        if (isEditMode) {
+          await updateBucketInDisposableSqlite(bucketId!, input);
+          setToastMessage("Bucket updated in disposable SQLite");
+        } else {
+          await createBucketInDisposableSqlite(input);
+          setToastMessage("Bucket created in disposable SQLite");
+        }
+      } else if (isEditMode) {
         // UPDATE MODE: Keep existing displayOrder
         await db.buckets.update(bucketId!, {
           name: name.trim(),
@@ -411,13 +465,17 @@ const BucketsManagement: React.FC = () => {
       handleCloseBucketModal();
     } catch (err) {
       console.error(err);
-      setToastMessage("Failed to save bucket");
+      setToastMessage(
+        bucketsCategoriesSqliteWriteExperimentActive
+          ? safeBucketCategoryWriteMessage(err)
+          : "Failed to save bucket",
+      );
       setShowToast(true);
     }
   };
 
   const editBucket = (b: Bucket) => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
+    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
       showReadExperimentWriteDisabledToast();
       return;
     }
@@ -482,7 +540,7 @@ const BucketsManagement: React.FC = () => {
   };
 
   const handleCategoryAdded = async (isEdit: boolean = false) => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
+    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
       showReadExperimentWriteDisabledToast();
       return;
     }
@@ -494,6 +552,28 @@ const BucketsManagement: React.FC = () => {
     );
     setShowToast(true);
     await fetchCategories();
+  };
+
+  const handleSqliteCategorySave = async (
+    input: CategoryFormValues,
+    currentCategory?: Category,
+  ) => {
+    try {
+      if (currentCategory?.id) {
+        await updateCategoryInDisposableSqlite(currentCategory.id, input);
+        setToastMessage("Category updated in disposable SQLite");
+      } else {
+        await createCategoryInDisposableSqlite(input);
+        setToastMessage("Category created in disposable SQLite");
+      }
+      await fetchCategories();
+      setShowToast(true);
+    } catch (error) {
+      const message = safeBucketCategoryWriteMessage(error);
+      setToastMessage(message);
+      setShowToast(true);
+      throw new Error(message);
+    }
   };
 
   const handleCloseCategoryModal = () => {
@@ -638,7 +718,7 @@ const BucketsManagement: React.FC = () => {
   };
 
   const handleOpenBucketModal = () => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
+    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
       showReadExperimentWriteDisabledToast();
       return;
     }
@@ -653,7 +733,7 @@ const BucketsManagement: React.FC = () => {
   };
 
   const handleSaveBucket = async () => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
+    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
       showReadExperimentWriteDisabledToast();
       return;
     }
@@ -879,7 +959,8 @@ const BucketsManagement: React.FC = () => {
 
       <IonContent className="ion-padding">
         {/* FAB button for adding buckets */}
-        {!bucketsCategoriesReadExperimentHttpReadonly && (
+        {(!bucketsCategoriesReadExperimentHttpReadonly ||
+          bucketsCategoriesSqliteWriteExperimentActive) && (
           <IonFab vertical="bottom" horizontal="end" slot="fixed">
             <IonFabButton onClick={handleOpenBucketModal} title="Add Bucket">
               <IonIcon icon={add} />
@@ -982,7 +1063,8 @@ const BucketsManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
-        {bucketsCategoriesReadExperimentEnabled && (
+        {(bucketsCategoriesReadExperimentEnabled ||
+          bucketsCategoriesWriteExperimentEnabled) && (
           <IonCard
             style={{
               marginBottom: "16px",
@@ -1011,12 +1093,16 @@ const BucketsManagement: React.FC = () => {
                       fontWeight: 600,
                     }}
                   >
-                    {bucketsCategoriesReadExperimentHttpReadonly
-                      ? "Buckets/Categories read experiment is active. List is loaded through selected-read `http-readonly`; writes and reorder actions are disabled. Switch back to Dexie to edit."
-                      : "Buckets/Categories read experiment flag is active with the Dexie backend. Existing Dexie write and reorder behavior remains available."}
+                    {bucketsCategoriesSqliteWriteExperimentActive
+                      ? "Buckets and Categories SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
+                      : bucketsCategoriesReadExperimentHttpReadonly
+                        ? "Buckets/Categories read experiment is active. List is loaded through selected-read `http-readonly`; writes and reorder actions are disabled. Switch back to Dexie to edit."
+                      : "Buckets/Categories experiment flag is active with the Dexie backend. Existing Dexie write and reorder behavior remains available."}
                   </p>
                   <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
                     Backend: {selectedBackend}
+                    {bucketsCategoriesSqliteWriteExperimentActive &&
+                      "; create/update only; active-state, delete, and reorder actions remain unavailable."}
                     {bucketsCategoriesReadExperimentHttpReadonly &&
                       bucketsReadExperimentCount !== undefined &&
                       bucketsReadExperimentCount > buckets.length &&
@@ -1082,7 +1168,8 @@ const BucketsManagement: React.FC = () => {
                         </IonCol>
 
                         {/* Buttons on the right */}
-                        {!bucketsCategoriesReadExperimentHttpReadonly && (
+                        {(!bucketsCategoriesReadExperimentHttpReadonly ||
+                          bucketsCategoriesSqliteWriteExperimentActive) && (
                           <IonCol size="auto">
                             <IonButton
                               fill="clear"
@@ -1115,47 +1202,51 @@ const BucketsManagement: React.FC = () => {
                               <IonIcon icon={createOutline} />
                             </IonButton>
 
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              color={b.isActive ? "success" : "medium"}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleBucketActive(b);
-                              }}
-                              aria-label={
-                                b.isActive
-                                  ? `Deactivate ${b.name}`
-                                  : `Activate ${b.name}`
-                              }
-                              title={
-                                b.isActive
-                                  ? "Active (click to deactivate)"
-                                  : "Inactive (click to activate)"
-                              }
-                            >
-                              <IonIcon
-                                icon={
-                                  b.isActive
-                                    ? checkmarkCircleOutline
-                                    : closeCircleOutline
-                                }
-                              />
-                            </IonButton>
+                            {!bucketsCategoriesReadExperimentHttpReadonly && (
+                              <>
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  color={b.isActive ? "success" : "medium"}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleBucketActive(b);
+                                  }}
+                                  aria-label={
+                                    b.isActive
+                                      ? `Deactivate ${b.name}`
+                                      : `Activate ${b.name}`
+                                  }
+                                  title={
+                                    b.isActive
+                                      ? "Active (click to deactivate)"
+                                      : "Inactive (click to activate)"
+                                  }
+                                >
+                                  <IonIcon
+                                    icon={
+                                      b.isActive
+                                        ? checkmarkCircleOutline
+                                        : closeCircleOutline
+                                    }
+                                  />
+                                </IonButton>
 
-                            <IonButton
-                              fill="clear"
-                              size="small"
-                              color="danger"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                initiateBucketDelete(b);
-                              }}
-                              aria-label={`Delete ${b.name}`}
-                              title="Delete"
-                            >
-                              <IonIcon icon={trashOutline} />
-                            </IonButton>
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  color="danger"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    initiateBucketDelete(b);
+                                  }}
+                                  aria-label={`Delete ${b.name}`}
+                                  title="Delete"
+                                >
+                                  <IonIcon icon={trashOutline} />
+                                </IonButton>
+                              </>
+                            )}
                           </IonCol>
                         )}
                       </IonRow>
@@ -1186,7 +1277,8 @@ const BucketsManagement: React.FC = () => {
                                 )}
                               </IonLabel>
 
-                              {!bucketsCategoriesReadExperimentHttpReadonly && (
+                              {(!bucketsCategoriesReadExperimentHttpReadonly ||
+                                bucketsCategoriesSqliteWriteExperimentActive) && (
                                 <>
                                   <IonButton
                                     slot="end"
@@ -1201,40 +1293,44 @@ const BucketsManagement: React.FC = () => {
                                   >
                                     <IonIcon icon={createOutline} />
                                   </IonButton>
-                                  <IonButton
-                                    slot="end"
-                                    color={c.isActive ? "success" : "medium"}
-                                    fill="clear"
-                                    onClick={() => toggleCategoryActive(c)}
-                                    aria-label={
-                                      c.isActive
-                                        ? `Deactivate ${c.name}`
-                                        : `Activate ${c.name}`
-                                    }
-                                    title={
-                                      c.isActive
-                                        ? "Active (click to deactivate)"
-                                        : "Inactive (click to activate)"
-                                    }
-                                  >
-                                    <IonIcon
-                                      icon={
-                                        c.isActive
-                                          ? checkmarkCircleOutline
-                                          : closeCircleOutline
-                                      }
-                                    />
-                                  </IonButton>
-                                  <IonButton
-                                    slot="end"
-                                    color="danger"
-                                    fill="clear"
-                                    onClick={() => initiateCategoryDelete(c)}
-                                    aria-label={`Delete category ${c.name}`}
-                                    title="Delete"
-                                  >
-                                    <IonIcon icon={trashOutline} />
-                                  </IonButton>
+                                  {!bucketsCategoriesReadExperimentHttpReadonly && (
+                                    <>
+                                      <IonButton
+                                        slot="end"
+                                        color={c.isActive ? "success" : "medium"}
+                                        fill="clear"
+                                        onClick={() => toggleCategoryActive(c)}
+                                        aria-label={
+                                          c.isActive
+                                            ? `Deactivate ${c.name}`
+                                            : `Activate ${c.name}`
+                                        }
+                                        title={
+                                          c.isActive
+                                            ? "Active (click to deactivate)"
+                                            : "Inactive (click to activate)"
+                                        }
+                                      >
+                                        <IonIcon
+                                          icon={
+                                            c.isActive
+                                              ? checkmarkCircleOutline
+                                              : closeCircleOutline
+                                          }
+                                        />
+                                      </IonButton>
+                                      <IonButton
+                                        slot="end"
+                                        color="danger"
+                                        fill="clear"
+                                        onClick={() => initiateCategoryDelete(c)}
+                                        aria-label={`Delete category ${c.name}`}
+                                        title="Delete"
+                                      >
+                                        <IonIcon icon={trashOutline} />
+                                      </IonButton>
+                                    </>
+                                  )}
                                 </>
                               )}
                             </IonItem>
@@ -1250,7 +1346,8 @@ const BucketsManagement: React.FC = () => {
         </IonAccordionGroup>
 
         {/* Bucket Modal */}
-        {!bucketsCategoriesReadExperimentHttpReadonly && (
+        {(!bucketsCategoriesReadExperimentHttpReadonly ||
+          bucketsCategoriesSqliteWriteExperimentActive) && (
           <IonModal
             isOpen={showBucketModal}
             onDidDismiss={handleCloseBucketModal}
@@ -1375,7 +1472,8 @@ const BucketsManagement: React.FC = () => {
         )}
 
         {/* Replace inline category form with AddCategoryModal component */}
-        {!bucketsCategoriesReadExperimentHttpReadonly && (
+        {(!bucketsCategoriesReadExperimentHttpReadonly ||
+          bucketsCategoriesSqliteWriteExperimentActive) && (
           <AddCategoryModal
             isOpen={showCategoryModal}
             onClose={handleCloseCategoryModal}
@@ -1383,6 +1481,11 @@ const BucketsManagement: React.FC = () => {
             buckets={buckets}
             preSelectedBucketId={selectedCategoryBucket}
             editingCategory={editingCategory}
+            onSaveCategory={
+              bucketsCategoriesSqliteWriteExperimentActive
+                ? handleSqliteCategorySave
+                : undefined
+            }
           />
         )}
 

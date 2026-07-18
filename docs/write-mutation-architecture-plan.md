@@ -9,8 +9,8 @@ The read-path experiment phase is complete enough to define the next boundary:
 read parity is not write approval. Dexie / IndexedDB remains authoritative.
 SQLite remains disposable until an explicit authority migration is designed,
 approved, implemented, backed up, and verified. Frontend HTTP repositories
-remain read-only. The only server-side real-write experiments are the
-flag-gated recipient create/update and activate/deactivate endpoints; no
+remain read-only. The server-side real-write experiments are the flag-gated
+recipient operations and bucket/category create/update operations; no
 additional write endpoint should be added without a separate per-domain design
 and approval.
 
@@ -35,11 +35,12 @@ Until a future write phase is explicitly approved:
 - SQLite remains disposable.
 - Frontend HTTP repositories remain read-only.
 - Read parity diagnostics do not authorize writes.
-- Except for the explicitly approved recipient create/update and
-  activate/deactivate experiments, no API route may create, update, delete,
+- Except for the explicitly approved recipient and bucket/category
+  create/update experiments, no API route may create, update, delete,
   import, restore, repair, sync, or mutate financial data.
 - No frontend repository may silently no-op write methods in HTTP mode.
-- No screen may send mutations to HTTP.
+- No screen may send mutations to HTTP except the explicitly flag-gated,
+  dev-only Recipients and Buckets/Categories experiments.
 - No budget snapshot lifecycle behavior may move to HTTP.
 
 ## Write Domains
@@ -89,12 +90,22 @@ flag-gated, SQLite-only experiment. Recipient deactivate is implemented as a
 flag-gated, SQLite-only experiment. Recipient create and update are implemented
 as a separate flag-gated, SQLite-only experiment behind
 `PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES=true`. Recipient
-delete, merge, frontend write adapters, UI integration, dual-write, transaction
-recipient-reference mutation, and authority migration remain future work.
+delete, merge, broad frontend write adapters, UI integration outside the
+explicit dev-only experiment, dual-write, transaction recipient-reference
+mutation, and authority migration remain future work.
 
 The consolidated status for the completed Recipients dry-run and real-write
 endpoint layer is
 [recipients-real-write-implementation-summary.md](recipients-real-write-implementation-summary.md).
+
+Buckets and Categories now have a separate accelerated, flag-gated experiment:
+create/update dry-runs, SQLite-only real writes, and dev-only management UI
+wiring. The server flag is
+`PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true`; the frontend flag is
+`VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true`. Both default
+off. The HTTP UI path performs dry-run first and never mutates Dexie. Active
+state, reorder, delete, cascade, transaction/budget/snapshot reference changes,
+dual-write, and authority migration remain outside the approved boundary.
 
 ### Transaction Writes
 
@@ -195,8 +206,8 @@ Before any write code is implemented, the project needs explicit decisions for:
 ## Not Allowed Yet
 
 - No additional write endpoints beyond the explicitly approved, flag-gated
-  recipient create/update and activate/deactivate experiments.
-- No repository write adapters.
+  recipient operations and bucket/category create/update operations.
+- No broad repository write adapters.
 - No dual-write.
 - No background sync.
 - No automatic Dexie-to-SQLite mutation sync.
@@ -205,7 +216,8 @@ Before any write code is implemented, the project needs explicit decisions for:
 - No permanent switch to SQLite authority.
 - No writes without a tested restore path.
 - No no-op write methods in HTTP mode.
-- No write UI connected to HTTP.
+- No write UI connected to HTTP outside the explicit dev-only Recipients and
+  Buckets/Categories experiments.
 - No `.env`, token, SQLite, backup, export, log, or report files in Git.
 
 ## Proposed Safe Sequence

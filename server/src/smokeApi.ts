@@ -9,6 +9,10 @@ const RECIPIENT_ACTIVATE_WRITE_CONFIRMATION = "activate recipient in disposable 
 const RECIPIENT_DEACTIVATE_WRITE_CONFIRMATION = "deactivate recipient in disposable sqlite";
 const RECIPIENT_CREATE_WRITE_CONFIRMATION = "create recipient in disposable sqlite";
 const RECIPIENT_UPDATE_WRITE_CONFIRMATION = "update recipient in disposable sqlite";
+const BUCKET_CREATE_WRITE_CONFIRMATION = "create bucket in disposable sqlite";
+const BUCKET_UPDATE_WRITE_CONFIRMATION = "update bucket in disposable sqlite";
+const CATEGORY_CREATE_WRITE_CONFIRMATION = "create category in disposable sqlite";
+const CATEGORY_UPDATE_WRITE_CONFIRMATION = "update category in disposable sqlite";
 
 interface SmokeArgs {
   baseUrl: string;
@@ -18,6 +22,7 @@ interface SmokeArgs {
   allowRecipientActivateWriteSmoke: boolean;
   allowRecipientDeactivateWriteSmoke: boolean;
   allowRecipientCreateUpdateWriteSmoke: boolean;
+  allowBucketCategoryWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -41,6 +46,7 @@ interface ResponseJson {
   mode?: unknown;
   readonly?: unknown;
   action?: unknown;
+  entity?: unknown;
   dryRun?: unknown;
   wouldMutate?: unknown;
   dryRunRequired?: unknown;
@@ -48,6 +54,7 @@ interface ResponseJson {
   sqliteMutated?: unknown;
   rowsChanged?: unknown;
   targetIdPresent?: unknown;
+  targetId?: unknown;
   validationErrors?: unknown;
   warnings?: unknown;
   normalizedFieldPresence?: unknown;
@@ -87,6 +94,8 @@ Options:
                          Opt in to one disposable SQLite recipient deactivate write smoke.
   --allow-recipient-create-update-write-smoke
                          Opt in to disposable SQLite recipient create/update write smoke.
+  --allow-bucket-category-write-smoke
+                         Opt in to disposable SQLite bucket/category create/update write smoke.
   --help                 Show this help text.
 `;
 
@@ -96,6 +105,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowRecipientActivateWriteSmoke: false,
     allowRecipientDeactivateWriteSmoke: false,
     allowRecipientCreateUpdateWriteSmoke: false,
+    allowBucketCategoryWriteSmoke: false,
     help: false,
   };
 
@@ -143,6 +153,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-recipient-create-update-write-smoke") {
       args.allowRecipientCreateUpdateWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-bucket-category-write-smoke") {
+      args.allowBucketCategoryWriteSmoke = true;
       continue;
     }
 
@@ -373,6 +388,50 @@ const expectSafeCreateUpdateWriteShape = (
   expect(safety.rawRowsIncluded === false, "create_update_write_raw_rows_reported");
 };
 
+const expectSafeBucketCategoryShape = (
+  json: ResponseJson,
+  entity: "bucket" | "category",
+  action: "create" | "update",
+  dryRun: boolean,
+): void => {
+  expect(json.entity === entity, "unexpected_bucket_category_entity");
+  expect(json.action === action, "unexpected_bucket_category_action");
+  if (dryRun) {
+    expect(json.dryRun === true, "bucket_category_dry_run_flag_missing");
+    expect(json.wouldMutate === false, "bucket_category_dry_run_would_mutate");
+  } else {
+    expect(json.dryRunRequired === true, "bucket_category_dry_run_required_missing");
+    expect(json.realWrite === true, "bucket_category_real_write_flag_missing");
+    expect(
+      typeof json.sqliteMutated === "boolean",
+      "bucket_category_sqlite_mutated_flag_missing",
+    );
+    expect(typeof json.rowsChanged === "number", "bucket_category_rows_changed_missing");
+  }
+  expect(typeof json.normalizedFieldPresence === "object", "bucket_category_fields_missing");
+  expect(typeof json.duplicateSummary === "object", "bucket_category_duplicates_missing");
+  expect(typeof json.timestampBehavior === "object", "bucket_category_timestamps_missing");
+  expect(typeof json.affectedSummary === "object", "bucket_category_affected_missing");
+  expect(typeof json.safety === "object", "bucket_category_safety_missing");
+  const safety = json.safety as Record<string, unknown>;
+  expect(safety.dexieMutated === false, "bucket_category_dexie_mutation_reported");
+  expect(safety.filesWritten === false, "bucket_category_file_write_reported");
+  expect(safety.relatedRecordsMutated === false, "bucket_category_related_mutation_reported");
+  expect(safety.rawRowsIncluded === false, "bucket_category_raw_rows_reported");
+};
+
+const detailRow = (
+  json: ResponseJson,
+  key: "bucket" | "category",
+): Record<string, unknown> => {
+  const row = json[key];
+  expect(
+    typeof row === "object" && row !== null && !Array.isArray(row),
+    `${key}_detail_missing`,
+  );
+  return row as Record<string, unknown>;
+};
+
 const recipientDetail = (json: ResponseJson): Record<string, unknown> => {
   const recipient = json.recipient;
   expect(
@@ -430,6 +489,7 @@ const buildChecks = (
   allowRecipientActivateWriteSmoke: boolean,
   allowRecipientDeactivateWriteSmoke: boolean,
   allowRecipientCreateUpdateWriteSmoke: boolean,
+  allowBucketCategoryWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -446,6 +506,7 @@ const buildChecks = (
   let inactiveRecipientId: number | undefined;
   let createdRecipientId: number | undefined;
   let createUpdateSmokeSequence = Date.now();
+  const bucketCategorySmokeSequence = Date.now();
   const sampledLookupIds = new Map<string, number>();
   const lookupResources = [
     "accounts",
@@ -973,6 +1034,309 @@ const buildChecks = (
         expect(json.code === "accountId_invalid", "unexpected_invalid_sms_template_lookup_query_response");
       },
     },
+    {
+      name: "bucket/category dry-run and write routes require token",
+      run: async () => {
+        for (const resource of ["buckets", "categories"] as const) {
+          for (const mode of ["dry-run", "write"] as const) {
+            for (const action of ["create", "update"] as const) {
+              const { status, json } = await requestJson(
+                baseUrl,
+                `/prototype/repositories/${resource}/${mode}/${action}`,
+                { method: "POST", body: {} },
+              );
+              expectStatus(status, 401);
+              expect(json.error === "unauthorized", "bucket_category_route_not_protected");
+            }
+          }
+        }
+      },
+    },
+    {
+      name: "bucket/category dry-run and write routes reject bad origin",
+      run: async () => {
+        for (const resource of ["buckets", "categories"] as const) {
+          for (const mode of ["dry-run", "write"] as const) {
+            for (const action of ["create", "update"] as const) {
+              const { status, json } = await requestJson(
+                baseUrl,
+                `/prototype/repositories/${resource}/${mode}/${action}`,
+                {
+                  method: "POST",
+                  token,
+                  origin: "http://unexpected-origin.invalid",
+                  body: {},
+                },
+              );
+              expectStatus(status, 403);
+              expect(json.error === "forbidden_origin", "bucket_category_bad_origin_allowed");
+            }
+          }
+        }
+      },
+    },
+    {
+      name: "bucket/category routes reject invalid and unexpected payloads safely",
+      run: async () => {
+        for (const resource of ["buckets", "categories"] as const) {
+          for (const mode of ["dry-run", "write"] as const) {
+            for (const action of ["create", "update"] as const) {
+              const route = `/prototype/repositories/${resource}/${mode}/${action}`;
+              const invalidResponse = await requestJson(baseUrl, route, {
+                ...authedOptions,
+                method: "POST",
+                body: [],
+              });
+              expectStatus(invalidResponse.status, 400);
+              expect(
+                invalidResponse.json.code === "payload_must_be_object",
+                "bucket_category_invalid_payload_code",
+              );
+
+              const unexpectedResponse = await requestJson(baseUrl, route, {
+                ...authedOptions,
+                method: "POST",
+                body: { unexpected: "unexpected-value-must-not-echo" },
+              });
+              expectStatus(unexpectedResponse.status, 400);
+              expect(
+                unexpectedResponse.json.code === "unexpected_payload_field",
+                "bucket_category_unexpected_field_code",
+              );
+              expectNoSensitiveEcho(unexpectedResponse.json, [
+                "unexpected-value-must-not-echo",
+              ]);
+            }
+          }
+        }
+      },
+    },
+    {
+      name: "bucket/category dry-runs validate without mutation",
+      run: async () => {
+        const bucketBefore = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets?limit=500",
+          authedOptions,
+        );
+        const categoryBefore = await requestJson(
+          baseUrl,
+          "/prototype/repositories/categories?limit=500",
+          authedOptions,
+        );
+        expectStatus(bucketBefore.status, 200);
+        expectStatus(categoryBefore.status, 200);
+        const bucketId = optionalIdFromListResponse(bucketBefore.json);
+        const categoryId = optionalIdFromListResponse(categoryBefore.json);
+        const bucketName = `Bucket Dry Run ${bucketCategorySmokeSequence}`;
+        const categoryName = `Category Dry Run ${bucketCategorySmokeSequence}`;
+
+        const cases: Array<{
+          entity: "bucket" | "category";
+          resource: "buckets" | "categories";
+          action: "create" | "update";
+          body: Record<string, unknown>;
+          sensitive: string;
+        }> = [
+          {
+            entity: "bucket",
+            resource: "buckets",
+            action: "create",
+            body: {
+              name: bucketName,
+              minPercentage: 0,
+              maxPercentage: 100,
+              excludeFromReports: false,
+            },
+            sensitive: bucketName,
+          },
+          ...(bucketId === undefined
+            ? []
+            : [{
+                entity: "bucket" as const,
+                resource: "buckets" as const,
+                action: "update" as const,
+                body: {
+                  id: bucketId,
+                  name: bucketName,
+                  minPercentage: 0,
+                  maxPercentage: 100,
+                  excludeFromReports: false,
+                },
+                sensitive: bucketName,
+              }]),
+          {
+            entity: "category",
+            resource: "categories",
+            action: "create",
+            body: {
+              name: categoryName,
+              bucketId: bucketId ?? 1,
+            },
+            sensitive: categoryName,
+          },
+          ...(categoryId === undefined
+            ? []
+            : [{
+                entity: "category" as const,
+                resource: "categories" as const,
+                action: "update" as const,
+                body: {
+                  id: categoryId,
+                  name: categoryName,
+                  bucketId: bucketId ?? 1,
+                },
+                sensitive: categoryName,
+              }]),
+        ];
+
+        for (const testCase of cases) {
+          const response = await requestJson(
+            baseUrl,
+            `/prototype/repositories/${testCase.resource}/dry-run/${testCase.action}`,
+            { ...authedOptions, method: "POST", body: testCase.body },
+          );
+          expectStatus(response.status, 200);
+          expectSafeBucketCategoryShape(
+            response.json,
+            testCase.entity,
+            testCase.action,
+            true,
+          );
+          expectNoSensitiveEcho(response.json, [testCase.sensitive]);
+        }
+
+        const bucketAfter = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets?limit=500",
+          authedOptions,
+        );
+        const categoryAfter = await requestJson(
+          baseUrl,
+          "/prototype/repositories/categories?limit=500",
+          authedOptions,
+        );
+        expect(
+          countFromListResponse(bucketAfter.json) === countFromListResponse(bucketBefore.json) &&
+            listResponseFingerprint(bucketAfter.json) === listResponseFingerprint(bucketBefore.json),
+          "bucket_dry_run_mutated_rows",
+        );
+        expect(
+          countFromListResponse(categoryAfter.json) === countFromListResponse(categoryBefore.json) &&
+            listResponseFingerprint(categoryAfter.json) ===
+              listResponseFingerprint(categoryBefore.json),
+          "category_dry_run_mutated_rows",
+        );
+      },
+    },
+    ...(!allowBucketCategoryWriteSmoke
+      ? [
+          {
+            name: "bucket/category writes are disabled and non-mutating by default",
+            run: async () => {
+              const bucketBefore = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets?limit=500",
+                authedOptions,
+              );
+              const categoryBefore = await requestJson(
+                baseUrl,
+                "/prototype/repositories/categories?limit=500",
+                authedOptions,
+              );
+              const bucketId = optionalIdFromListResponse(bucketBefore.json);
+              const categoryId = optionalIdFromListResponse(categoryBefore.json);
+              const cases = [
+                {
+                  resource: "buckets",
+                  action: "create",
+                  body: {
+                    name: "Disabled Bucket Create",
+                    minPercentage: 0,
+                    maxPercentage: 100,
+                    excludeFromReports: false,
+                    dryRunReviewed: true,
+                    confirmation: BUCKET_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+                ...(bucketId === undefined
+                  ? []
+                  : [{
+                      resource: "buckets",
+                      action: "update",
+                      body: {
+                        id: bucketId,
+                        name: "Disabled Bucket Update",
+                        minPercentage: 0,
+                        maxPercentage: 100,
+                        excludeFromReports: false,
+                        dryRunReviewed: true,
+                        confirmation: BUCKET_UPDATE_WRITE_CONFIRMATION,
+                      },
+                    }]),
+                {
+                  resource: "categories",
+                  action: "create",
+                  body: {
+                    name: "Disabled Category Create",
+                    bucketId: bucketId ?? 1,
+                    dryRunReviewed: true,
+                    confirmation: CATEGORY_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+                ...(categoryId === undefined
+                  ? []
+                  : [{
+                      resource: "categories",
+                      action: "update",
+                      body: {
+                        id: categoryId,
+                        name: "Disabled Category Update",
+                        bucketId: bucketId ?? 1,
+                        dryRunReviewed: true,
+                        confirmation: CATEGORY_UPDATE_WRITE_CONFIRMATION,
+                      },
+                    }]),
+              ];
+
+              for (const testCase of cases) {
+                const response = await requestJson(
+                  baseUrl,
+                  `/prototype/repositories/${testCase.resource}/write/${testCase.action}`,
+                  { ...authedOptions, method: "POST", body: testCase.body },
+                );
+                expectStatus(response.status, 403);
+                expect(
+                  response.json.code === "bucket_category_writes_disabled",
+                  "bucket_category_disabled_code_missing",
+                );
+                expect(response.json.sqliteMutated === false, "disabled_write_mutated");
+              }
+
+              const bucketAfter = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets?limit=500",
+                authedOptions,
+              );
+              const categoryAfter = await requestJson(
+                baseUrl,
+                "/prototype/repositories/categories?limit=500",
+                authedOptions,
+              );
+              expect(
+                listResponseFingerprint(bucketAfter.json) ===
+                  listResponseFingerprint(bucketBefore.json),
+                "disabled_bucket_write_changed_rows",
+              );
+              expect(
+                listResponseFingerprint(categoryAfter.json) ===
+                  listResponseFingerprint(categoryBefore.json),
+                "disabled_category_write_changed_rows",
+              );
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
     {
       name: "recipient create dry-run fails without token",
       run: async () => {
@@ -2560,6 +2924,339 @@ const buildChecks = (
           },
         ]
       : []),
+    ...(allowBucketCategoryWriteSmoke
+      ? [
+          {
+            name: "bucket/category opt-in smoke mutates disposable rows only",
+            run: async () => {
+              const readList = (pathname: string) =>
+                requestJson(baseUrl, pathname, authedOptions);
+              const bucketsBefore = await readList(
+                "/prototype/repositories/buckets?limit=500",
+              );
+              const categoriesBefore = await readList(
+                "/prototype/repositories/categories?limit=500",
+              );
+              const transactionsBefore = await readList(
+                "/prototype/repositories/transactions?limit=200",
+              );
+              const budgetsBefore = await readList(
+                "/prototype/repositories/budgets?limit=500",
+              );
+              const snapshotsBefore = await readList(
+                "/prototype/repositories/budget-snapshots?limit=500",
+              );
+              for (const response of [
+                bucketsBefore,
+                categoriesBefore,
+                transactionsBefore,
+                budgetsBefore,
+                snapshotsBefore,
+              ]) {
+                expectStatus(response.status, 200);
+              }
+
+              const bucketName = `SQLite Bucket Smoke ${bucketCategorySmokeSequence}`;
+              const bucketUpdatedName = `${bucketName} Updated`;
+              const bucketPayload = {
+                name: bucketName,
+                description: "Disposable smoke bucket",
+                minPercentage: 5,
+                maxPercentage: 40,
+                minFixedAmount: 1,
+                excludeFromReports: false,
+              };
+              const bucketDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/dry-run/create",
+                { ...authedOptions, method: "POST", body: bucketPayload },
+              );
+              expectStatus(bucketDryRun.status, 200);
+              expectSafeBucketCategoryShape(bucketDryRun.json, "bucket", "create", true);
+              expectNoSensitiveEcho(bucketDryRun.json, [
+                bucketName,
+                bucketPayload.description,
+              ]);
+
+              const bucketWrite = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...bucketPayload,
+                    dryRunReviewed: true,
+                    confirmation: BUCKET_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(bucketWrite.status, 200);
+              expectSafeBucketCategoryShape(bucketWrite.json, "bucket", "create", false);
+              expect(bucketWrite.json.sqliteMutated === true, "bucket_create_did_not_mutate");
+              expect(bucketWrite.json.rowsChanged === 1, "bucket_create_wrong_row_count");
+              expectNoSensitiveEcho(bucketWrite.json, [
+                bucketName,
+                bucketPayload.description,
+              ]);
+              const bucketId = bucketWrite.json.targetId;
+              expect(typeof bucketId === "number", "bucket_create_target_id_missing");
+
+              const bucketDetailBeforeUpdate = await requestJson(
+                baseUrl,
+                `/prototype/repositories/buckets/${bucketId}`,
+                authedOptions,
+              );
+              expectStatus(bucketDetailBeforeUpdate.status, 200);
+              const createdBucket = detailRow(bucketDetailBeforeUpdate.json, "bucket");
+              expect(createdBucket.name === bucketName, "created_bucket_not_readable");
+
+              const bucketUpdatePayload = {
+                id: bucketId,
+                name: bucketUpdatedName,
+                description: "Disposable smoke bucket updated",
+                minPercentage: 10,
+                maxPercentage: 50,
+                minFixedAmount: 2,
+                excludeFromReports: false,
+              };
+              const bucketUpdateDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/dry-run/update",
+                { ...authedOptions, method: "POST", body: bucketUpdatePayload },
+              );
+              expectStatus(bucketUpdateDryRun.status, 200);
+              expectSafeBucketCategoryShape(
+                bucketUpdateDryRun.json,
+                "bucket",
+                "update",
+                true,
+              );
+              expectNoSensitiveEcho(bucketUpdateDryRun.json, [
+                bucketUpdatedName,
+                bucketUpdatePayload.description,
+              ]);
+
+              const bucketUpdate = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/write/update",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...bucketUpdatePayload,
+                    dryRunReviewed: true,
+                    confirmation: BUCKET_UPDATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(bucketUpdate.status, 200);
+              expectSafeBucketCategoryShape(bucketUpdate.json, "bucket", "update", false);
+              expect(bucketUpdate.json.rowsChanged === 1, "bucket_update_wrong_row_count");
+              expectNoSensitiveEcho(bucketUpdate.json, [
+                bucketUpdatedName,
+                bucketUpdatePayload.description,
+              ]);
+
+              const bucketDetailAfterUpdate = await requestJson(
+                baseUrl,
+                `/prototype/repositories/buckets/${bucketId}`,
+                authedOptions,
+              );
+              expectStatus(bucketDetailAfterUpdate.status, 200);
+              const updatedBucket = detailRow(bucketDetailAfterUpdate.json, "bucket");
+              expect(updatedBucket.name === bucketUpdatedName, "updated_bucket_not_readable");
+              for (const field of ["id", "isActive", "displayOrder", "createdAt"]) {
+                expect(
+                  JSON.stringify(updatedBucket[field]) ===
+                    JSON.stringify(createdBucket[field]),
+                  `bucket_update_changed_immutable_${field}`,
+                );
+              }
+
+              const categoryName = `SQLite Category Smoke ${bucketCategorySmokeSequence}`;
+              const categoryUpdatedName = `${categoryName} Updated`;
+              const categoryPayload = {
+                name: categoryName,
+                bucketId,
+                description: "Disposable smoke category",
+              };
+              const categoryDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/categories/dry-run/create",
+                { ...authedOptions, method: "POST", body: categoryPayload },
+              );
+              expectStatus(categoryDryRun.status, 200);
+              expectSafeBucketCategoryShape(categoryDryRun.json, "category", "create", true);
+              expectNoSensitiveEcho(categoryDryRun.json, [
+                categoryName,
+                categoryPayload.description,
+              ]);
+
+              const categoryWrite = await requestJson(
+                baseUrl,
+                "/prototype/repositories/categories/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...categoryPayload,
+                    dryRunReviewed: true,
+                    confirmation: CATEGORY_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(categoryWrite.status, 200);
+              expectSafeBucketCategoryShape(categoryWrite.json, "category", "create", false);
+              expect(categoryWrite.json.rowsChanged === 1, "category_create_wrong_row_count");
+              expectNoSensitiveEcho(categoryWrite.json, [
+                categoryName,
+                categoryPayload.description,
+              ]);
+              const categoryId = categoryWrite.json.targetId;
+              expect(typeof categoryId === "number", "category_create_target_id_missing");
+
+              const categoryDetailBeforeUpdate = await requestJson(
+                baseUrl,
+                `/prototype/repositories/categories/${categoryId}`,
+                authedOptions,
+              );
+              expectStatus(categoryDetailBeforeUpdate.status, 200);
+              const createdCategory = detailRow(
+                categoryDetailBeforeUpdate.json,
+                "category",
+              );
+              expect(createdCategory.name === categoryName, "created_category_not_readable");
+
+              const categoryUpdatePayload = {
+                id: categoryId,
+                name: categoryUpdatedName,
+                bucketId,
+                description: "Disposable smoke category updated",
+              };
+              const categoryUpdateDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/categories/dry-run/update",
+                { ...authedOptions, method: "POST", body: categoryUpdatePayload },
+              );
+              expectStatus(categoryUpdateDryRun.status, 200);
+              expectSafeBucketCategoryShape(
+                categoryUpdateDryRun.json,
+                "category",
+                "update",
+                true,
+              );
+
+              const categoryUpdate = await requestJson(
+                baseUrl,
+                "/prototype/repositories/categories/write/update",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...categoryUpdatePayload,
+                    dryRunReviewed: true,
+                    confirmation: CATEGORY_UPDATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(categoryUpdate.status, 200);
+              expectSafeBucketCategoryShape(
+                categoryUpdate.json,
+                "category",
+                "update",
+                false,
+              );
+              expect(categoryUpdate.json.rowsChanged === 1, "category_update_wrong_row_count");
+              expectNoSensitiveEcho(categoryUpdate.json, [
+                categoryUpdatedName,
+                categoryUpdatePayload.description,
+              ]);
+
+              const categoryDetailAfterUpdate = await requestJson(
+                baseUrl,
+                `/prototype/repositories/categories/${categoryId}`,
+                authedOptions,
+              );
+              expectStatus(categoryDetailAfterUpdate.status, 200);
+              const updatedCategory = detailRow(
+                categoryDetailAfterUpdate.json,
+                "category",
+              );
+              expect(
+                updatedCategory.name === categoryUpdatedName,
+                "updated_category_not_readable",
+              );
+              for (const field of ["id", "isActive", "createdAt"]) {
+                expect(
+                  JSON.stringify(updatedCategory[field]) ===
+                    JSON.stringify(createdCategory[field]),
+                  `category_update_changed_immutable_${field}`,
+                );
+              }
+
+              const bucketsAfter = await readList(
+                "/prototype/repositories/buckets?limit=500",
+              );
+              const categoriesAfter = await readList(
+                "/prototype/repositories/categories?limit=500",
+              );
+              expect(
+                countFromListResponse(bucketsAfter.json) ===
+                  countFromListResponse(bucketsBefore.json) + 1,
+                "bucket_count_did_not_increase_once",
+              );
+              expect(
+                countFromListResponse(categoriesAfter.json) ===
+                  countFromListResponse(categoriesBefore.json) + 1,
+                "category_count_did_not_increase_once",
+              );
+
+              for (const [pathname, before, code] of [
+                [
+                  "/prototype/repositories/transactions?limit=200",
+                  transactionsBefore,
+                  "transactions",
+                ],
+                ["/prototype/repositories/budgets?limit=500", budgetsBefore, "budgets"],
+                [
+                  "/prototype/repositories/budget-snapshots?limit=500",
+                  snapshotsBefore,
+                  "budget_snapshots",
+                ],
+              ] as const) {
+                const after = await readList(pathname);
+                expectStatus(after.status, 200);
+                expect(
+                  countFromListResponse(after.json) ===
+                    countFromListResponse(before.json),
+                  `${code}_count_changed`,
+                );
+                expect(
+                  listResponseFingerprint(after.json) ===
+                    listResponseFingerprint(before.json),
+                  `${code}_content_changed`,
+                );
+              }
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    {
+      name: "bucket/category delete dry-run and write routes are not implemented",
+      run: async () => {
+        for (const resource of ["buckets", "categories"] as const) {
+          for (const mode of ["dry-run", "write"] as const) {
+            const { status } = await requestJson(
+              baseUrl,
+              `/prototype/repositories/${resource}/${mode}/delete`,
+              { ...authedOptions, method: "POST", body: { id: 1 } },
+            );
+            expectStatus(status, 404);
+          }
+        }
+      },
+    },
     {
       name: "recipient delete dry-run is not implemented",
       run: async () => {
@@ -2635,6 +3332,7 @@ const main = async (): Promise<void> => {
     args.allowRecipientActivateWriteSmoke,
     args.allowRecipientDeactivateWriteSmoke,
     args.allowRecipientCreateUpdateWriteSmoke,
+    args.allowBucketCategoryWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

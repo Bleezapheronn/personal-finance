@@ -24,6 +24,7 @@ VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN=<local prototype token>
 VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS=true
 VITE_PERSONAL_FINANCE_SHOW_SELECTED_READ_PREVIEWS=true
 VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT=true
+VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true
 ```
 
 `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND` supports:
@@ -65,6 +66,21 @@ The Recipients write experiment is SQLite-only and disposable. Dexie remains
 authoritative, no dual-write occurs, and delete/merge remain unavailable.
 Successful writes dirty the disposable SQLite database; re-import SQLite from a
 fresh backup before clean parity checks.
+
+`VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true` enables the
+dev-only Buckets/Categories SQLite create/update experiment only when the
+selected backend is `http-readonly`. The server independently requires:
+
+```text
+PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true
+```
+
+The page submits a non-mutating dry-run before each write and refreshes from
+the selected HTTP read source after server-confirmed success. Bucket/category
+active-state controls, delete, cascade, and bucket reorder remain unavailable
+in HTTP mode. No Dexie write or dual-write occurs. Restart Vite after changing
+the frontend flag, and re-import disposable SQLite after successful writes
+before clean parity checks.
 
 Browser calls use the custom `x-personal-finance-token` header, which triggers a
 CORS preflight request. The local API server must be running with the Vite dev
@@ -515,6 +531,17 @@ category names, descriptions, raw rows, tokens, or SQLite paths. This
 diagnostic does not replace the normal gates: use a fresh backup, matching
 SQLite import, restarted API server, `verify:sqlite`, `smoke:api`, and
 `npm run check:local-api-safety` before trusting Dexie-vs-HTTP results.
+
+The separate
+`VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true` flag enables
+create/update controls only when the selected backend is `http-readonly`.
+Every operation runs its matching dry-run first, then the confirmed SQLite
+write, then reloads the selected HTTP lists. A strong banner states that
+SQLite is disposable and Dexie remains authoritative. The experiment includes
+bucket and category create/update only; active-state actions, delete, cascade,
+foreign-key rewrites, and bucket reorder stay unavailable. Bucket report
+settings and category bucket links can affect report and budget interpretation,
+but no existing transaction, budget, or budget snapshot is rewritten.
 
 ## Recipients Read Experiment
 
