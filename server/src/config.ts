@@ -16,6 +16,8 @@ export const BUCKET_CATEGORY_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES" as const;
 export const ACCOUNT_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES" as const;
+export const TRANSACTION_BASIC_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES" as const;
 
 export const ALLOWED_ORIGINS = new Set([
   "http://localhost:8100",
@@ -58,3 +60,6 @@ export const areBucketCategoryWritesEnabled = (): boolean =>
 
 export const areAccountWritesEnabled = (): boolean =>
   process.env[ACCOUNT_WRITES_ENV_VAR] === "true";
+
+export const areTransactionBasicWritesEnabled = (): boolean =>
+  process.env[TRANSACTION_BASIC_WRITES_ENV_VAR] === "true";

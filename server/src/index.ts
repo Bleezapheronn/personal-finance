@@ -6,6 +6,7 @@ import {
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
+  areTransactionBasicWritesEnabled,
   getServerPort,
   getSqlitePath,
   READONLY_MODE,
@@ -96,6 +97,18 @@ import {
   listTransactions,
   type TransactionFilters,
 } from "./lib/transactions.js";
+import {
+  transactionBasicDryRun,
+  transactionBasicDryRunRequestErrorResponse,
+  TransactionBasicDryRunRequestError,
+} from "./lib/transactionBasicDryRun.js";
+import {
+  transactionBasicRealWrite,
+  transactionBasicWriteDisabledResponse,
+  transactionBasicWriteRequestErrorResponse,
+  TransactionBasicWriteRequestError,
+  validateTransactionBasicWritePayload,
+} from "./lib/transactionBasicWrite.js";
 import { readOrCreateToken } from "./tokenStore.js";
 
 const server = Fastify({
@@ -1272,6 +1285,138 @@ for (const action of ["create", "update"] as const) {
         return reply.code(500).send({
           ok: false,
           code: `account_${action}_write_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+}
+
+for (const action of ["create", "update"] as const) {
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/transactions/dry-run/${action}`,
+    async (request, reply) => {
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `transaction_${action}_dry_run_failed`,
+        });
+      }
+
+      if (!opened.ok) {
+        return reply.code(503).send({
+          ok: false,
+          code: opened.code,
+        });
+      }
+
+      try {
+        const response = transactionBasicDryRun(
+          opened.db,
+          request.body,
+          action,
+        );
+        if (response.code === "transaction_not_found") {
+          return reply.code(404).send(response);
+        }
+        return response.ok ? response : reply.code(400).send(response);
+      } catch (error) {
+        if (error instanceof TransactionBasicDryRunRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(
+              transactionBasicDryRunRequestErrorResponse(action, error.code),
+            );
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `transaction_${action}_dry_run_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/transactions/write/${action}`,
+    async (request, reply) => {
+      try {
+        validateTransactionBasicWritePayload(request.body, action);
+      } catch (error) {
+        if (error instanceof TransactionBasicWriteRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(
+              transactionBasicWriteRequestErrorResponse(action, error.code),
+            );
+        }
+        return reply
+          .code(400)
+          .send(
+            transactionBasicWriteRequestErrorResponse(
+              action,
+              `transaction_${action}_write_invalid`,
+            ),
+          );
+      }
+
+      if (!areTransactionBasicWritesEnabled()) {
+        return reply
+          .code(403)
+          .send(transactionBasicWriteDisabledResponse(action));
+      }
+
+      let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+      try {
+        opened = openConfiguredWritableDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `transaction_${action}_write_failed`,
+        });
+      }
+
+      if (!opened.ok) {
+        return reply.code(503).send({
+          ok: false,
+          code: opened.code,
+        });
+      }
+
+      try {
+        const response = transactionBasicRealWrite(
+          opened.db,
+          request.body,
+          action,
+        );
+        if (response.code === "transaction_not_found") {
+          return reply.code(404).send(response);
+        }
+        return response.ok ? response : reply.code(400).send(response);
+      } catch (error) {
+        if (error instanceof TransactionBasicWriteRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(
+              transactionBasicWriteRequestErrorResponse(action, error.code),
+            );
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `transaction_${action}_write_failed`,
         });
       } finally {
         opened.db.close();

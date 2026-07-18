@@ -693,3 +693,62 @@ actual responses:
 
 Preflight does not require the token, but protected `GET` requests still do.
 The API does not use wildcard CORS origins or cookies.
+
+## Experimental Basic Transaction Writes
+
+Backend-only Phase 1 endpoints are available for simple single-row income and
+expense create/update operations:
+
+```text
+POST /prototype/repositories/transactions/dry-run/create
+POST /prototype/repositories/transactions/dry-run/update
+POST /prototype/repositories/transactions/write/create
+POST /prototype/repositories/transactions/write/update
+```
+
+Dry-runs are read-only. Real writes are disabled unless this exact server flag
+is set:
+
+```text
+PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true
+```
+
+Real-write requests also require `dryRunReviewed: true` and the action-specific
+confirmation phrase:
+
+```text
+create basic transaction in disposable sqlite
+update basic transaction in disposable sqlite
+```
+
+Phase 1 requires an explicit `classification` of `income` or `expense`, a
+correctly signed nonzero `amount`, valid ISO-compatible `date`, existing
+`accountId`, `categoryId`, and `recipientId`, and the existing form-required
+description. It accepts the ordinary optional original-currency, exchange-rate,
+and reference fields. Responses are redacted summaries and never echo
+descriptions or references.
+
+Transfers and pair IDs, nonzero transaction costs, legacy payment-channel
+writes, budget links, occurrence links, and budget snapshot links are rejected.
+Updates require an existing unpaired, unlinked, zero-cost target. They preserve
+the ID and all legacy, transfer, cost, and budget-linkage columns. Transaction
+rows have no current creation/update timestamp columns.
+
+The write transaction verifies that exactly one transaction row changes and
+that accounts, payment methods, buckets, categories, recipients, budgets,
+budget snapshots, and SMS templates remain byte-for-byte unchanged. Account
+balances and reports are derived; their totals may change only by the signed
+transaction amount.
+
+Normal smoke remains non-mutating. Successful mutation smoke is explicit:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-transaction-basic-write-smoke
+```
+
+Run it only against a disposable database with the transaction write flag
+enabled. It creates and updates one expense and one income, then verifies exact
+financial deltas and selected-read visibility. The database is dirty afterward;
+re-import it from a fresh matching backup before clean parity checks. No
+frontend transaction write adapter or UI wiring exists, and Dexie remains
+authoritative.

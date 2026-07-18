@@ -120,23 +120,26 @@ not mutate or reinterpret related records.
 
 ### Transaction Writes
 
-Covered actions:
+Phase 1 implements backend-only dry-run and disposable SQLite write endpoints
+for basic single-row income and expense create/update operations. The endpoints
+are disabled by default behind
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`, have no frontend
+adapter or UI integration, and leave Dexie authoritative.
 
-- create
-- edit
-- delete
-- duplicate
-- transfer creation/linking
-- `transactionCost` handling
-- `budgetSnapshotId` linkage
-- CSV/import/export boundaries
+Eligible rows have a correctly signed nonzero amount, an existing account,
+category, category bucket, and recipient, and no transfer pairing, nonzero
+transaction cost, legacy budget link, occurrence link, or budget snapshot
+link. Create inserts exactly one transaction. Update changes only the fields
+editable by the existing ordinary transaction form and preserves legacy,
+transfer, cost, and budget-linkage columns. Transactions have no current
+`createdAt` or `updatedAt` fields, so this phase does not invent timestamp
+behavior.
 
-Transaction writes are high risk. A future plan must preserve expense-negative
-and income-positive semantics, keep `transactionCost` separate, maintain
-transfer-pair reciprocity, prevent self-linked transfer pairs, preserve
-`budgetSnapshotId` as the canonical budget linkage, and define exactly how
-legacy `budgetId` is handled. CSV import/export behavior is not automatically a
-write API concern; it needs its own boundary decision.
+Transfers, paired rows, nonzero `transactionCost`, budget and snapshot
+linkage, delete, duplicate, bulk writes, CSV/import/export, SMS import,
+recurring behavior, frontend writes, dual-write, and authority migration remain
+deferred. Those operations require separate plans that preserve transfer-pair
+reciprocity and `budgetSnapshotId` as the canonical budget linkage.
 
 ### Budget Writes
 

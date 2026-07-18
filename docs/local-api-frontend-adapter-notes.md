@@ -810,3 +810,45 @@ The local API can return sensitive personal finance rows. Do not log returned
 rows during manual experiments. SQLite databases, backups, exports, logs,
 tokens, import summaries, verification reports, and comparison reports must stay
 outside Git.
+
+## Basic Transaction Write Phase 1
+
+The backend exposes protected dry-run and experimental SQLite write endpoints:
+
+```text
+POST /prototype/repositories/transactions/dry-run/create
+POST /prototype/repositories/transactions/dry-run/update
+POST /prototype/repositories/transactions/write/create
+POST /prototype/repositories/transactions/write/update
+```
+
+Real writes remain disabled unless the server process has
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`. The frontend has no
+transaction write adapter or UI wiring. Existing pages continue to use Dexie
+for writes.
+
+Phase 1 accepts only one ordinary income or expense row with a nonzero,
+correctly signed amount and existing account, category, category bucket, and
+recipient. It rejects transfers, pair links, nonzero transaction costs, legacy
+payment-channel writes, budget links, occurrence links, and budget snapshot
+links. Updates require an already eligible target and preserve all excluded
+columns. Transaction rows do not currently have creation/update timestamp
+fields.
+
+Balances and report totals remain derived values. A successful write changes
+them only by the signed transaction amount because Phase 1 costs are null or
+zero. The endpoints do not mutate accounts, lookups, budgets, snapshots,
+related transactions, Dexie, or files.
+
+Normal `smoke:api` remains non-mutating. Successful transaction mutation smoke
+is explicit:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-transaction-basic-write-smoke
+```
+
+That mode creates and updates one expense and one income in disposable SQLite,
+checks exact account/month aggregate deltas, and leaves the database dirty.
+Re-import from a fresh matching backup before parity verification. Transfers,
+costs, budget linkage, delete, bulk operations, frontend writes, dual-write,
+and authority migration remain deferred.
