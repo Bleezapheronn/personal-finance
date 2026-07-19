@@ -245,7 +245,8 @@ Before any write code is implemented, the project needs explicit decisions for:
 - No additional write endpoints beyond the explicitly approved, flag-gated
   recipient operations, bucket/category/Account operations, SMS Import
   Template CRUD/active-state operations, and transaction Phase 1/Phase 2
-  create/update and atomic paired-transfer create/update operations.
+  create/update, atomic paired-transfer create/update operations, and
+  Budget-definition create/update operations.
 - No broad repository write adapters.
 - No dual-write.
 - No background sync.
@@ -258,7 +259,7 @@ Before any write code is implemented, the project needs explicit decisions for:
 - No no-op write methods in HTTP mode.
 - No write UI connected to HTTP outside the explicit dev-only Recipients,
   Buckets/Categories, Accounts, SMS Import Templates, and Transactions
-  experiments.
+  experiments, plus the definition-only Budget experiment.
 - No `.env`, token, SQLite, backup, export, log, or report files in Git.
 
 ## Proposed Safe Sequence

@@ -71,6 +71,7 @@ import {
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import { isBudgetsWriteExperimentEnabled } from "../repositories/http/budgetDefinitionWriteExperiment";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -576,8 +577,12 @@ const BudgetPage: React.FC = () => {
   const history = useHistory();
   const budgetReadExperimentEnabled = isBudgetReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
+  const budgetDefinitionWriteExperimentActive =
+    repositoryBackend === "http-readonly" &&
+    isBudgetsWriteExperimentEnabled();
   const budgetHttpReadonlyExperimentActive =
-    budgetReadExperimentEnabled && repositoryBackend === "http-readonly";
+    repositoryBackend === "http-readonly" &&
+    (budgetReadExperimentEnabled || budgetDefinitionWriteExperimentActive);
 
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [budgetSnapshots, setBudgetSnapshots] = useState<BudgetSnapshot[]>([]);
@@ -2320,17 +2325,32 @@ const BudgetPage: React.FC = () => {
 
         {!loading && (
           <>
-            {budgetReadExperimentEnabled && (
+            {(budgetReadExperimentEnabled ||
+              budgetDefinitionWriteExperimentActive) && (
               <IonCard color={budgetHttpReadonlyExperimentActive ? "warning" : undefined}>
                 <IonCardContent>
                   <IonText>
-                    <h3>Budget read experiment is active</h3>
+                    <h3>
+                      {budgetDefinitionWriteExperimentActive
+                        ? "Budget Definitions SQLite write experiment is active"
+                        : "Budget read experiment is active"}
+                    </h3>
                     <p>
                       Backend: {repositoryBackend}.{" "}
-                      {budgetHttpReadonlyExperimentActive
+                      {budgetDefinitionWriteExperimentActive
+                        ? "Writes go to disposable local SQLite only. Dexie remains authoritative. Create/update definitions only; existing snapshots, Budget History, and transaction links remain unchanged. Delete and snapshot lifecycle actions are unavailable."
+                        : budgetHttpReadonlyExperimentActive
                         ? "Budget inputs are loaded through selected-read http-readonly; budget edits and snapshot lifecycle actions are disabled. Switch back to Dexie for normal Budget behavior."
                         : "The experiment flag is on, but the selected backend is Dexie, so Budget uses the existing Dexie read and lifecycle path."}
                     </p>
+                    {budgetDefinitionWriteExperimentActive && (
+                      <p>
+                        Recurrence edits affect only the definition and may
+                        influence future snapshot generation when a separate
+                        lifecycle process later runs. Re-import SQLite before
+                        clean parity checks.
+                      </p>
+                    )}
                   </IonText>
                 </IonCardContent>
               </IonCard>
@@ -2571,22 +2591,25 @@ const BudgetPage: React.FC = () => {
                                 </div>
                               </IonCol>
                             )}
-                            {!budgetHttpReadonlyExperimentActive && (
+                            {(!budgetHttpReadonlyExperimentActive ||
+                              budgetDefinitionWriteExperimentActive) && (
                               <IonCol
                                 style={{ paddingRight: 0, textAlign: "right" }}
                               >
-                                <IonButton
-                                  fill="clear"
-                                  size="small"
-                                  style={{ marginRight: "0" }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenLinkModal(currentGoal);
-                                  }}
-                                  title="Link Transaction"
-                                >
-                                  <IonIcon icon={linkOutline} slot="end" />
-                                </IonButton>
+                                {!budgetHttpReadonlyExperimentActive && (
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    style={{ marginRight: "0" }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleOpenLinkModal(currentGoal);
+                                    }}
+                                    title="Link Transaction"
+                                  >
+                                    <IonIcon icon={linkOutline} slot="end" />
+                                  </IonButton>
+                                )}
                                 <IonButton
                                   fill="clear"
                                   size="small"
@@ -2601,19 +2624,21 @@ const BudgetPage: React.FC = () => {
                                 >
                                   <IonIcon icon={createOutline} slot="end" />
                                 </IonButton>
-                                <IonButton
-                                  fill="clear"
-                                  size="small"
-                                  color="danger"
-                                  style={{ marginRight: "0" }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteClick(currentGoal.budget.id!);
-                                  }}
-                                  title="Delete Goal"
-                                >
-                                  <IonIcon icon={trashOutline} slot="end" />
-                                </IonButton>
+                                {!budgetHttpReadonlyExperimentActive && (
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    color="danger"
+                                    style={{ marginRight: "0" }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteClick(currentGoal.budget.id!);
+                                    }}
+                                    title="Delete Goal"
+                                  >
+                                    <IonIcon icon={trashOutline} slot="end" />
+                                  </IonButton>
+                                )}
                               </IonCol>
                             )}
                           </IonRow>
@@ -2845,24 +2870,27 @@ const BudgetPage: React.FC = () => {
                                   style={{ marginTop: "4px" }}
                                 />
 
-                                {!budgetHttpReadonlyExperimentActive && (
+                                {(!budgetHttpReadonlyExperimentActive ||
+                                  budgetDefinitionWriteExperimentActive) && (
                                   <IonRow className="item-actions">
                                     <IonCol className="item-actions-container">
-                                      <IonButton
-                                        fill="clear"
-                                        size="small"
-                                        style={{ marginRight: "0" }}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleOpenLinkModal(occ);
-                                        }}
-                                        title="Link Transaction"
-                                      >
-                                        <IonIcon
-                                          icon={linkOutline}
-                                          slot="end"
-                                        />
-                                      </IonButton>
+                                      {!budgetHttpReadonlyExperimentActive && (
+                                        <IonButton
+                                          fill="clear"
+                                          size="small"
+                                          style={{ marginRight: "0" }}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleOpenLinkModal(occ);
+                                          }}
+                                          title="Link Transaction"
+                                        >
+                                          <IonIcon
+                                            icon={linkOutline}
+                                            slot="end"
+                                          />
+                                        </IonButton>
+                                      )}
                                       <IonButton
                                         fill="clear"
                                         size="small"
@@ -2880,22 +2908,24 @@ const BudgetPage: React.FC = () => {
                                           slot="end"
                                         />
                                       </IonButton>
-                                      <IonButton
-                                        fill="clear"
-                                        size="small"
-                                        style={{ marginRight: "0" }}
-                                        color="danger"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteClick(occ.budget.id!);
-                                        }}
-                                        title="Delete Budget Item"
-                                      >
-                                        <IonIcon
-                                          icon={trashOutline}
-                                          slot="end"
-                                        />
-                                      </IonButton>
+                                      {!budgetHttpReadonlyExperimentActive && (
+                                        <IonButton
+                                          fill="clear"
+                                          size="small"
+                                          style={{ marginRight: "0" }}
+                                          color="danger"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteClick(occ.budget.id!);
+                                          }}
+                                          title="Delete Budget Item"
+                                        >
+                                          <IonIcon
+                                            icon={trashOutline}
+                                            slot="end"
+                                          />
+                                        </IonButton>
+                                      )}
                                     </IonCol>
                                   </IonRow>
                                 )}
@@ -2944,7 +2974,8 @@ const BudgetPage: React.FC = () => {
         )}
       </IonContent>
 
-      {!budgetHttpReadonlyExperimentActive && (
+      {(!budgetHttpReadonlyExperimentActive ||
+        budgetDefinitionWriteExperimentActive) && (
         <IonFab vertical="bottom" horizontal="end" slot="fixed">
           <IonFabButton
             onClick={() => history.push("/budget/add")}

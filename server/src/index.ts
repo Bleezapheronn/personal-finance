@@ -3,6 +3,7 @@ import {
   ALLOWED_ORIGINS,
   API_VERSION,
   areAccountWritesEnabled,
+  areBudgetDefinitionWritesEnabled,
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
@@ -94,6 +95,18 @@ import {
   type BudgetFilters,
   type BudgetSnapshotFilters,
 } from "./lib/budgets.js";
+import {
+  budgetDefinitionDryRun,
+  budgetDefinitionDryRunRequestErrorResponse,
+  BudgetDefinitionDryRunRequestError,
+} from "./lib/budgetDefinitionDryRun.js";
+import {
+  budgetDefinitionRealWrite,
+  budgetDefinitionWriteDisabledResponse,
+  budgetDefinitionWriteRequestErrorResponse,
+  BudgetDefinitionWriteRequestError,
+  validateBudgetDefinitionWritePayload,
+} from "./lib/budgetDefinitionWrite.js";
 import {
   countTransactions,
   getTransactionById,
@@ -1052,6 +1065,127 @@ server.get<{ Params: { id: string } }>(
     }
   },
 );
+
+for (const action of ["create", "update"] as const) {
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/budgets/dry-run/${action}`,
+    async (request, reply) => {
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `budget_definition_${action}_dry_run_failed`,
+        });
+      }
+      if (!opened.ok) {
+        return reply.code(503).send({ ok: false, code: opened.code });
+      }
+      try {
+        const response = budgetDefinitionDryRun(
+          opened.db,
+          request.body,
+          action,
+        );
+        if (response.code === "budget_definition_not_found") {
+          return reply.code(404).send(response);
+        }
+        return response.ok ? response : reply.code(400).send(response);
+      } catch (error) {
+        if (error instanceof BudgetDefinitionDryRunRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(
+              budgetDefinitionDryRunRequestErrorResponse(action, error.code),
+            );
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `budget_definition_${action}_dry_run_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/budgets/write/${action}`,
+    async (request, reply) => {
+      try {
+        validateBudgetDefinitionWritePayload(request.body, action);
+      } catch (error) {
+        if (error instanceof BudgetDefinitionWriteRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(
+              budgetDefinitionWriteRequestErrorResponse(action, error.code),
+            );
+        }
+        return reply
+          .code(400)
+          .send(
+            budgetDefinitionWriteRequestErrorResponse(
+              action,
+              `budget_definition_${action}_write_invalid`,
+            ),
+          );
+      }
+      if (!areBudgetDefinitionWritesEnabled()) {
+        return reply
+          .code(403)
+          .send(budgetDefinitionWriteDisabledResponse(action));
+      }
+
+      let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+      try {
+        opened = openConfiguredWritableDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `budget_definition_${action}_write_failed`,
+        });
+      }
+      if (!opened.ok) {
+        return reply.code(503).send({ ok: false, code: opened.code });
+      }
+      try {
+        const response = budgetDefinitionRealWrite(
+          opened.db,
+          request.body,
+          action,
+        );
+        if (response.code === "budget_definition_not_found") {
+          return reply.code(404).send(response);
+        }
+        return response.ok ? response : reply.code(400).send(response);
+      } catch (error) {
+        if (error instanceof BudgetDefinitionWriteRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(
+              budgetDefinitionWriteRequestErrorResponse(action, error.code),
+            );
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `budget_definition_${action}_write_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+}
 
 const bucketCategoryRouteConfigs = [
   {

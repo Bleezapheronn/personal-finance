@@ -10,6 +10,11 @@ import {
   TRANSACTION_TRANSFER_UPDATE_WRITE_CONFIRMATION,
 } from "./lib/transactionTransferWrite.js";
 import { SMS_TEMPLATE_WRITE_CONFIRMATIONS } from "./lib/smsTemplateWrite.js";
+import {
+  BUDGET_DEFINITION_CREATE_CONFIRMATION,
+  BUDGET_DEFINITION_UPDATE_CONFIRMATION,
+} from "./lib/budgetDefinitionWrite.js";
+import { budgetGoalDirectionNormalizationSanityCheck } from "./lib/budgetDefinitionDryRun.js";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3147";
 const TOKEN_HEADER_NAME = "x-personal-finance-token";
@@ -39,6 +44,7 @@ interface SmokeArgs {
   allowTransactionCostBudgetWriteSmoke: boolean;
   allowTransactionTransferWriteSmoke: boolean;
   allowSmsTemplateWriteSmoke: boolean;
+  allowBudgetDefinitionWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -132,6 +138,8 @@ Options:
                          Opt in to disposable SQLite paired transfer create/update write smoke.
   --allow-sms-template-write-smoke
                          Opt in to disposable SQLite SMS template CRUD write smoke.
+  --allow-budget-definition-write-smoke
+                         Opt in to disposable SQLite Budget-definition create/update write smoke.
   --help                 Show this help text.
 `;
 
@@ -147,6 +155,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowTransactionCostBudgetWriteSmoke: false,
     allowTransactionTransferWriteSmoke: false,
     allowSmsTemplateWriteSmoke: false,
+    allowBudgetDefinitionWriteSmoke: false,
     help: false,
   };
 
@@ -224,6 +233,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-sms-template-write-smoke") {
       args.allowSmsTemplateWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-budget-definition-write-smoke") {
+      args.allowBudgetDefinitionWriteSmoke = true;
       continue;
     }
 
@@ -754,6 +768,7 @@ const buildChecks = (
   allowTransactionCostBudgetWriteSmoke: boolean,
   allowTransactionTransferWriteSmoke: boolean,
   allowSmsTemplateWriteSmoke: boolean,
+  allowBudgetDefinitionWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -774,6 +789,7 @@ const buildChecks = (
   const accountSmokeSequence = Date.now();
   const transactionSmokeSequence = Date.now();
   const smsTemplateSmokeSequence = Date.now();
+  const budgetDefinitionSmokeSequence = Date.now();
   const sampledLookupIds = new Map<string, number>();
   const lookupResources = [
     "accounts",
@@ -5632,6 +5648,473 @@ const buildChecks = (
         ]
       : []),
     {
+      name: "Budget definition dry-runs and disabled writes are safe",
+      run: async () => {
+        expect(
+          budgetGoalDirectionNormalizationSanityCheck(),
+          "budget_definition_goal_direction_helper_sanity_failed",
+        );
+        const path = "/prototype/repositories/budgets";
+        const [accounts, categories, budgetsBefore, snapshotsBefore, transactionsBefore] =
+          await Promise.all([
+            readAllTableRows(baseUrl, "accounts", authedOptions),
+            readAllTableRows(baseUrl, "categories", authedOptions),
+            readAllTableRows(baseUrl, "budgets", authedOptions),
+            readAllTableRows(baseUrl, "budgetSnapshots", authedOptions),
+            readAllTableRows(baseUrl, "transactions", authedOptions),
+          ]);
+        const accountId = Number(accounts[0]?.id);
+        const categoryId = Number(categories[0]?.id);
+        expect(
+          Number.isInteger(accountId) && Number.isInteger(categoryId),
+          "budget_definition_smoke_requires_lookup_rows",
+        );
+        const validPayload = {
+          description: `Synthetic Budget ${budgetDefinitionSmokeSequence}`,
+          categoryId,
+          accountId,
+          recipientId: null,
+          amount: -100,
+          transactionCost: null,
+          frequency: "once",
+          frequencyDetails: null,
+          isGoal: false,
+          isFlexible: false,
+          goalPercentage: null,
+          goalDirection: null,
+          remainingCyclesTotal: null,
+          dueDate: "2035-01-15T00:00:00.000Z",
+        };
+        const fingerprints = {
+          budgets: rowsFingerprint(budgetsBefore),
+          snapshots: rowsFingerprint(snapshotsBefore),
+          transactions: rowsFingerprint(transactionsBefore),
+        };
+
+        const missingToken = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          { method: "POST", body: validPayload, origin },
+        );
+        expectStatus(missingToken.status, 401);
+        const badOrigin = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          {
+            token,
+            origin: "http://unexpected-origin.invalid",
+            method: "POST",
+            body: validPayload,
+          },
+        );
+        expectStatus(badOrigin.status, 403);
+
+        const invalidCases = [
+          {
+            payload: { ...validPayload, amount: 0 },
+            code: "amount_must_be_nonzero",
+          },
+          {
+            payload: { ...validPayload, goalDirection: "sideways" },
+            code: "goalDirection_invalid",
+          },
+          {
+            payload: {
+              ...validPayload,
+              frequency: "monthly",
+              frequencyDetails: { dayOfMonth: 32 },
+            },
+            code: "frequencyDetails_dayOfMonth_invalid",
+          },
+          {
+            payload: { ...validPayload, dueDate: "not-a-date" },
+            code: "dueDate_invalid",
+          },
+          {
+            payload: { ...validPayload, categoryId: 2147483647 },
+            code: "category_not_found",
+          },
+          {
+            payload: { ...validPayload, snapshotId: 1 },
+            code: "unsupported_write_field",
+          },
+        ] as const;
+        for (const testCase of invalidCases) {
+          const result = await requestJson(
+            baseUrl,
+            `${path}/dry-run/create`,
+            {
+              ...authedOptions,
+              method: "POST",
+              body: testCase.payload,
+            },
+          );
+          expectStatus(result.status, 400);
+          expect(
+            result.json.code === testCase.code,
+            `budget_definition_${testCase.code}_not_rejected`,
+          );
+        }
+
+        const explicitIncome = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              ...validPayload,
+              amount: -100,
+              goalDirection: "income",
+            },
+          },
+        );
+        expectStatus(explicitIncome.status, 200);
+        const explicitSummary = explicitIncome.json
+          .goalDirectionSummary as Record<string, unknown>;
+        expect(
+          explicitSummary.explicit === true &&
+            explicitSummary.effectiveDirection === "income" &&
+            explicitSummary.amountSignFallbackUsed === false,
+          "budget_definition_explicit_direction_precedence_failed",
+        );
+
+        const fallback = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          {
+            ...authedOptions,
+            method: "POST",
+            body: validPayload,
+          },
+        );
+        expectStatus(fallback.status, 200);
+        const fallbackSummary = fallback.json
+          .goalDirectionSummary as Record<string, unknown>;
+        expect(
+          fallbackSummary.explicit === false &&
+            fallbackSummary.effectiveDirection === "expense" &&
+            fallbackSummary.amountSignFallbackUsed === true,
+          "budget_definition_amount_sign_fallback_failed",
+        );
+        expectNoSensitiveEcho(fallback.json, [validPayload.description]);
+
+        const unknownUpdate = await requestJson(
+          baseUrl,
+          `${path}/dry-run/update`,
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { id: 2147483647, ...validPayload },
+          },
+        );
+        expectStatus(unknownUpdate.status, 404);
+        expect(
+          unknownUpdate.json.code === "budget_definition_not_found",
+          "budget_definition_unknown_update_not_rejected",
+        );
+
+        expect(
+          rowsFingerprint(
+            await readAllTableRows(baseUrl, "budgets", authedOptions),
+          ) === fingerprints.budgets &&
+            rowsFingerprint(
+              await readAllTableRows(
+                baseUrl,
+                "budgetSnapshots",
+                authedOptions,
+              ),
+            ) === fingerprints.snapshots &&
+            rowsFingerprint(
+              await readAllTableRows(
+                baseUrl,
+                "transactions",
+                authedOptions,
+              ),
+            ) === fingerprints.transactions,
+          "budget_definition_dry_run_mutated_data",
+        );
+
+        for (const unsupportedPath of [
+          `${path}/dry-run/delete`,
+          `${path}/write/delete`,
+          "/prototype/repositories/budget-snapshots/write/create",
+          "/prototype/repositories/budget-snapshots/write/update",
+          "/prototype/repositories/budget-snapshots/write/delete",
+        ]) {
+          const result = await requestJson(baseUrl, unsupportedPath, {
+            ...authedOptions,
+            method: "POST",
+            body: { id: 1 },
+          });
+          expectStatus(result.status, 404);
+        }
+
+        if (!allowBudgetDefinitionWriteSmoke) {
+          const invalidWrite = await requestJson(
+            baseUrl,
+            `${path}/write/create`,
+            {
+              ...authedOptions,
+              method: "POST",
+              body: {
+                ...validPayload,
+                amount: 0,
+                dryRunReviewed: true,
+                confirmation: BUDGET_DEFINITION_CREATE_CONFIRMATION,
+              },
+            },
+          );
+          expectStatus(invalidWrite.status, 400);
+          expect(
+            invalidWrite.json.code === "amount_must_be_nonzero",
+            "budget_definition_invalid_write_not_rejected_safely",
+          );
+          const disabled = await requestJson(
+            baseUrl,
+            `${path}/write/create`,
+            {
+              ...authedOptions,
+              method: "POST",
+              body: {
+                ...validPayload,
+                dryRunReviewed: true,
+                confirmation: BUDGET_DEFINITION_CREATE_CONFIRMATION,
+              },
+            },
+          );
+          expectStatus(disabled.status, 403);
+          expect(
+            disabled.json.code === "budget_definition_writes_disabled",
+            "budget_definition_write_not_disabled",
+          );
+        }
+      },
+    },
+    ...(allowBudgetDefinitionWriteSmoke
+      ? [
+          {
+            name: "Budget definition opt-in smoke preserves snapshots and links",
+            run: async () => {
+              const path = "/prototype/repositories/budgets";
+              const tableNames = [
+                "transactions",
+                "budgetSnapshots",
+                "buckets",
+                "categories",
+                "accounts",
+                "paymentMethods",
+                "recipients",
+                "smsImportTemplates",
+              ] as const;
+              const [accounts, categories, budgetsBefore] = await Promise.all([
+                readAllTableRows(baseUrl, "accounts", authedOptions),
+                readAllTableRows(baseUrl, "categories", authedOptions),
+                readAllTableRows(baseUrl, "budgets", authedOptions),
+              ]);
+              const accountId = Number(accounts[0]?.id);
+              const categoryId = Number(categories[0]?.id);
+              expect(
+                Number.isInteger(accountId) && Number.isInteger(categoryId),
+                "budget_definition_write_smoke_requires_lookup_rows",
+              );
+              const relatedBefore = new Map<string, string>();
+              for (const table of tableNames) {
+                relatedBefore.set(
+                  table,
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ),
+                );
+              }
+              const createPayload = {
+                description: `Synthetic Budget ${budgetDefinitionSmokeSequence}`,
+                categoryId,
+                accountId,
+                recipientId: null,
+                amount: 100,
+                transactionCost: -2,
+                frequency: "once",
+                frequencyDetails: null,
+                isGoal: true,
+                isFlexible: false,
+                goalPercentage: 10,
+                goalDirection: "expense",
+                remainingCyclesTotal: 1,
+                dueDate: "2035-02-15T00:00:00.000Z",
+              };
+              const createDryRun = await requestJson(
+                baseUrl,
+                `${path}/dry-run/create`,
+                { ...authedOptions, method: "POST", body: createPayload },
+              );
+              expectStatus(createDryRun.status, 200);
+              const createWrite = await requestJson(
+                baseUrl,
+                `${path}/write/create`,
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...createPayload,
+                    dryRunReviewed: true,
+                    confirmation: BUDGET_DEFINITION_CREATE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(createWrite.status, 200);
+              expect(
+                createWrite.json.ok === true &&
+                  createWrite.json.sqliteMutated === true &&
+                  createWrite.json.rowsChanged === 1 &&
+                  typeof createWrite.json.targetId === "number",
+                "budget_definition_create_write_invalid",
+              );
+              expectNoSensitiveEcho(createWrite.json, [
+                createPayload.description,
+              ]);
+              const targetId = createWrite.json.targetId as number;
+              const budgetsAfterCreate = await readAllTableRows(
+                baseUrl,
+                "budgets",
+                authedOptions,
+              );
+              expect(
+                budgetsAfterCreate.length === budgetsBefore.length + 1 &&
+                  rowsFingerprint(
+                    budgetsAfterCreate.filter(
+                      (row) => Number(row.id) !== targetId,
+                    ),
+                  ) === rowsFingerprint(budgetsBefore),
+                "budget_definition_create_boundary_failed",
+              );
+              for (const table of tableNames) {
+                expect(
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ) === relatedBefore.get(table),
+                  `${table}_changed_during_budget_definition_create`,
+                );
+              }
+
+              const detail = await requestJson(
+                baseUrl,
+                `${path}/${targetId}`,
+                authedOptions,
+              );
+              expectStatus(detail.status, 200);
+              const created = detail.json.budget as Record<string, unknown>;
+              expect(
+                created.id === targetId &&
+                  created.goalDirection === "expense" &&
+                  created.frequency === "once",
+                "budget_definition_create_not_visible",
+              );
+
+              const updatePayload = {
+                ...createPayload,
+                id: targetId,
+                amount: -125,
+                transactionCost: null,
+                frequency: "monthly",
+                frequencyDetails: { dayOfMonth: 15 },
+                goalDirection: "income",
+                isFlexible: true,
+                remainingCyclesTotal: 6,
+                dueDate: "2035-03-15T00:00:00.000Z",
+              };
+              const fallbackDryRun = await requestJson(
+                baseUrl,
+                `${path}/dry-run/update`,
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: { ...updatePayload, goalDirection: null },
+                },
+              );
+              expectStatus(fallbackDryRun.status, 200);
+              const fallbackSummary = fallbackDryRun.json
+                .goalDirectionSummary as Record<string, unknown>;
+              expect(
+                fallbackSummary.effectiveDirection === "expense" &&
+                  fallbackSummary.amountSignFallbackUsed === true,
+                "budget_definition_update_fallback_invalid",
+              );
+
+              const updateDryRun = await requestJson(
+                baseUrl,
+                `${path}/dry-run/update`,
+                { ...authedOptions, method: "POST", body: updatePayload },
+              );
+              expectStatus(updateDryRun.status, 200);
+              const updateWrite = await requestJson(
+                baseUrl,
+                `${path}/write/update`,
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...updatePayload,
+                    dryRunReviewed: true,
+                    confirmation: BUDGET_DEFINITION_UPDATE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(updateWrite.status, 200);
+              expect(
+                updateWrite.json.ok === true &&
+                  updateWrite.json.rowsChanged === 1,
+                "budget_definition_update_write_invalid",
+              );
+              expectNoSensitiveEcho(updateWrite.json, [
+                updatePayload.description,
+              ]);
+              const budgetsAfterUpdate = await readAllTableRows(
+                baseUrl,
+                "budgets",
+                authedOptions,
+              );
+              expect(
+                budgetsAfterUpdate.length === budgetsAfterCreate.length &&
+                  rowsFingerprint(
+                    budgetsAfterUpdate.filter(
+                      (row) => Number(row.id) !== targetId,
+                    ),
+                  ) ===
+                    rowsFingerprint(
+                      budgetsAfterCreate.filter(
+                        (row) => Number(row.id) !== targetId,
+                      ),
+                    ),
+                "budget_definition_update_boundary_failed",
+              );
+              const updatedDetail = await requestJson(
+                baseUrl,
+                `${path}/${targetId}`,
+                authedOptions,
+              );
+              expectStatus(updatedDetail.status, 200);
+              const updated = updatedDetail.json
+                .budget as Record<string, unknown>;
+              expect(
+                updated.goalDirection === "income" &&
+                  updated.frequency === "monthly" &&
+                  Number(updated.isFlexible) === 1,
+                "budget_definition_update_not_visible",
+              );
+              for (const table of tableNames) {
+                expect(
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ) === relatedBefore.get(table),
+                  `${table}_changed_during_budget_definition_update`,
+                );
+              }
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    {
       name: "SMS template dry-run and disabled write paths are safe",
       run: async () => {
         const path = "/prototype/repositories/sms-import-templates";
@@ -6146,6 +6629,7 @@ const main = async (): Promise<void> => {
     args.allowTransactionCostBudgetWriteSmoke,
     args.allowTransactionTransferWriteSmoke,
     args.allowSmsTemplateWriteSmoke,
+    args.allowBudgetDefinitionWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

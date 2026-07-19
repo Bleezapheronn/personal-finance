@@ -22,6 +22,8 @@ import {
   useIonViewWillEnter,
   IonToast,
   IonCheckbox,
+  IonCard,
+  IonCardContent,
 } from "@ionic/react";
 import { db, Budget, Category, Bucket, Account, Recipient } from "../db";
 import { addOutline } from "ionicons/icons";
@@ -39,8 +41,78 @@ import {
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
+import { getRepositoryBackend } from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import {
+  budgetDefinitionWriteErrorCode,
+  createBudgetDefinitionInDisposableSqlite,
+  isBudgetsWriteExperimentEnabled,
+  updateBudgetDefinitionInDisposableSqlite,
+  type BudgetDefinitionWriteInput,
+} from "../repositories/http/budgetDefinitionWriteExperiment";
 
 type BudgetType = "expense" | "income";
+
+const selectedRows = <Row,>(
+  result: Row[] | { rows: Row[] },
+): Row[] => (Array.isArray(result) ? result : result.rows);
+
+const apiBoolean = (value: unknown, fallback = false): boolean =>
+  typeof value === "boolean"
+    ? value
+    : typeof value === "number"
+      ? value === 1
+      : fallback;
+
+const apiDate = (value: unknown): Date =>
+  value instanceof Date ? value : new Date(String(value));
+
+const normalizeSelectedBudget = (row: unknown): Budget => {
+  const source = row as Record<string, unknown>;
+  return {
+    ...source,
+    id: Number(source.id),
+    description: String(source.description),
+    categoryId: Number(source.categoryId),
+    accountId:
+      source.accountId === null || source.accountId === undefined
+        ? undefined
+        : Number(source.accountId),
+    recipientId:
+      source.recipientId === null || source.recipientId === undefined
+        ? undefined
+        : Number(source.recipientId),
+    amount: Number(source.amount),
+    transactionCost:
+      source.transactionCost === null || source.transactionCost === undefined
+        ? undefined
+        : Number(source.transactionCost),
+    frequency: source.frequency as Budget["frequency"],
+    frequencyDetails:
+      typeof source.frequencyDetails === "string"
+        ? JSON.parse(source.frequencyDetails)
+        : (source.frequencyDetails as Budget["frequencyDetails"]),
+    isGoal: apiBoolean(source.isGoal),
+    isFlexible: apiBoolean(source.isFlexible),
+    goalPercentage:
+      source.goalPercentage === null || source.goalPercentage === undefined
+        ? undefined
+        : Number(source.goalPercentage),
+    goalDirection:
+      source.goalDirection === "income" || source.goalDirection === "expense"
+        ? source.goalDirection
+        : undefined,
+    isActive: apiBoolean(source.isActive, true),
+    remainingCyclesTotal:
+      source.remainingCyclesTotal === null ||
+      source.remainingCyclesTotal === undefined
+        ? null
+        : Number(source.remainingCyclesTotal),
+    dueDate: apiDate(source.dueDate),
+    createdAt: apiDate(source.createdAt),
+    updatedAt: apiDate(source.updatedAt),
+  } as Budget;
+};
 
 const AddBudget: React.FC = () => {
   const history = useHistory();
@@ -50,6 +122,11 @@ const AddBudget: React.FC = () => {
   }>();
   const isEditMode = Boolean(id);
   const isFromTransaction = Boolean(transactionId);
+  const repositoryBackend = getRepositoryBackend();
+  const budgetDefinitionHttpMode = repositoryBackend === "http-readonly";
+  const budgetDefinitionWriteExperimentActive =
+    budgetDefinitionHttpMode &&
+    isBudgetsWriteExperimentEnabled();
 
   // Budget fields
   const [budgetType, setBudgetType] = useState<BudgetType>("expense");
@@ -111,12 +188,69 @@ const AddBudget: React.FC = () => {
 
   const loadLookupData = async () => {
     try {
-      const [b, c, a, r] = await Promise.all([
-        db.buckets.toArray(),
-        db.categories.toArray(),
-        db.accounts.toArray(),
-        db.recipients.toArray(),
-      ]);
+      let b: Bucket[];
+      let c: Category[];
+      let a: Account[];
+      let r: Recipient[];
+      let budgets: Budget[];
+      let transactions: Array<{ description?: string }>;
+
+      if (budgetDefinitionHttpMode) {
+        const repositories = getSelectedReadRepositories(repositoryBackend);
+        const [bucketRows, categoryRows, accountRows, recipientRows, budgetRows] =
+          await Promise.all([
+            repositories.buckets.list({ limit: 500 }),
+            repositories.categories.list({ limit: 500 }),
+            repositories.accounts.list({ limit: 500 }),
+            repositories.recipients.list({ limit: 500 }),
+            repositories.budgets.list({ limit: 500 }),
+          ]);
+        b = selectedRows(
+          bucketRows as unknown as Bucket[] | { rows: Bucket[] },
+        ).map((row) => ({
+          ...row,
+          id: Number(row.id),
+          isActive: apiBoolean(row.isActive),
+        }));
+        c = selectedRows(
+          categoryRows as unknown as Category[] | { rows: Category[] },
+        ).map((row) => ({
+          ...row,
+          id: Number(row.id),
+          bucketId: Number(row.bucketId),
+          isActive: apiBoolean(row.isActive),
+        }));
+        a = selectedRows(
+          accountRows as unknown as Account[] | { rows: Account[] },
+        ).map((row) => ({
+          ...row,
+          id: Number(row.id),
+          isActive: apiBoolean(row.isActive),
+          isCredit: apiBoolean(row.isCredit),
+        }));
+        r = selectedRows(
+          recipientRows as unknown as Recipient[] | { rows: Recipient[] },
+        ).map((row) => ({
+          ...row,
+          id: Number(row.id),
+          isActive: apiBoolean(row.isActive),
+        }));
+        budgets = selectedRows(
+          budgetRows as unknown as Budget[] | { rows: Budget[] },
+        ).map(normalizeSelectedBudget);
+        // Transaction-derived autocomplete is intentionally not loaded by the
+        // definition-only HTTP write experiment.
+        transactions = [];
+      } else {
+        [b, c, a, r, budgets, transactions] = await Promise.all([
+          db.buckets.toArray(),
+          db.categories.toArray(),
+          db.accounts.toArray(),
+          db.recipients.toArray(),
+          db.budgets.toArray(),
+          db.transactions.toArray(),
+        ]);
+      }
 
       // Show active items only in add mode, all items in edit mode
       const activeAccounts =
@@ -145,9 +279,6 @@ const AddBudget: React.FC = () => {
       setBuckets(activeBuckets);
       setSortedAccounts(activeAccounts); // CHANGED
 
-      // Sort by usage frequency
-      const budgets = await db.budgets.toArray();
-
       const recipientCounts = new Map<number, number>();
       budgets.forEach((budget) => {
         if (budget.recipientId) {
@@ -175,9 +306,6 @@ const AddBudget: React.FC = () => {
       setSortedCategories(sortedCats);
 
       // REMOVED: account count logic for payment methods
-
-      // Load descriptions sorted by frequency from TRANSACTIONS
-      const transactions = await db.transactions.toArray();
 
       // Count occurrences of each description from transactions
       const descriptionCounts = new Map<string, number>();
@@ -312,6 +440,7 @@ const AddBudget: React.FC = () => {
   // Helper to populate fields from the most recent transaction for a description
   const populateFromLastTransaction = async (description: string) => {
     if (!description || !description.trim()) return;
+    if (budgetDefinitionHttpMode) return;
     try {
       const txs = await db.transactions
         .where("description")
@@ -374,7 +503,16 @@ const AddBudget: React.FC = () => {
     if (isEditMode && id) {
       const loadBudget = async () => {
         try {
-          const budget = await db.budgets.get(Number(id));
+          const selectedBudget = budgetDefinitionHttpMode
+            ? await getSelectedReadRepositories(
+                repositoryBackend,
+              ).budgets.getById(Number(id))
+            : undefined;
+          const budget = budgetDefinitionHttpMode
+            ? selectedBudget
+              ? normalizeSelectedBudget(selectedBudget)
+              : undefined
+            : await db.budgets.get(Number(id));
 
           if (budget) {
             setEditingBudget(budget);
@@ -434,6 +572,12 @@ const AddBudget: React.FC = () => {
     } else if (isFromTransaction && transactionId) {
       const loadTransactionData = async () => {
         try {
+          if (budgetDefinitionHttpMode) {
+            setErrorMsg(
+              "Creating a Budget definition from a transaction is not available in the SQLite write experiment.",
+            );
+            return;
+          }
           const transaction = await db.transactions.get(Number(transactionId));
 
           if (transaction) {
@@ -480,6 +624,30 @@ const AddBudget: React.FC = () => {
     if (isEditMode && id) {
       const checkLinkedTransactions = async () => {
         try {
+          if (budgetDefinitionHttpMode) {
+            const repositories = getSelectedReadRepositories(repositoryBackend);
+            const snapshotResult = await repositories.budgetSnapshots.listForBudget(
+              Number(id),
+              { limit: 500 },
+            );
+            const snapshots = selectedRows(
+              snapshotResult as unknown as Array<{ id?: number }> | {
+                rows: Array<{ id?: number }>;
+              },
+            );
+            const linkedCounts = await Promise.all(
+              snapshots
+                .map((snapshot) => Number(snapshot.id))
+                .filter((snapshotId) => Number.isInteger(snapshotId))
+                .map((budgetSnapshotId) =>
+                  repositories.transactions.count({ budgetSnapshotId }),
+                ),
+            );
+            setHasLinkedTransactions(
+              linkedCounts.some((linkedCount) => linkedCount > 0),
+            );
+            return;
+          }
           const [allSnapshots, allTransactions] = await Promise.all([
             db.budgetSnapshots.where("budgetId").equals(Number(id)).toArray(),
             db.transactions.toArray(),
@@ -535,6 +703,13 @@ const AddBudget: React.FC = () => {
     setShowSuccessToast(false);
     setFieldErrors({});
 
+    if (budgetDefinitionHttpMode && !budgetDefinitionWriteExperimentActive) {
+      setErrorMsg(
+        "Budget definition HTTP writes are disabled. Enable the dev write experiment or switch back to Dexie.",
+      );
+      return;
+    }
+
     // Validate form - CHANGED validation to use accountId
     const formValidation = validateBudgetForm({
       description,
@@ -586,6 +761,7 @@ const AddBudget: React.FC = () => {
       return;
     }
 
+    let sqliteWriteConfirmed = false;
     try {
       const dueDateObj = new Date(dueDate);
       const numericAmountRaw = amount.trim() ? parseFloat(amount) : 0;
@@ -645,7 +821,61 @@ const AddBudget: React.FC = () => {
         updatedAt: new Date(),
       };
 
-      if (isEditMode && id) {
+      if (budgetDefinitionWriteExperimentActive) {
+        if (isFromTransaction) {
+          setErrorMsg(
+            "Creating a Budget definition from a transaction is not available in the SQLite write experiment.",
+          );
+          return;
+        }
+        const writeInput: BudgetDefinitionWriteInput = {
+          description: budgetData.description,
+          categoryId: budgetData.categoryId,
+          accountId: budgetData.accountId!,
+          recipientId: budgetData.recipientId ?? null,
+          amount: budgetData.amount,
+          transactionCost: budgetData.transactionCost ?? null,
+          frequency: budgetData.frequency,
+          frequencyDetails: budgetData.frequencyDetails ?? null,
+          isGoal: budgetData.isGoal,
+          isFlexible: budgetData.isFlexible,
+          goalPercentage: budgetData.goalPercentage ?? null,
+          goalDirection: budgetData.goalDirection ?? null,
+          remainingCyclesTotal: budgetData.remainingCyclesTotal ?? null,
+          dueDate: budgetData.dueDate.toISOString(),
+        };
+        let writtenId: number;
+        if (isEditMode && id) {
+          const writeResponse =
+            await updateBudgetDefinitionInDisposableSqlite(
+            Number(id),
+            writeInput,
+          );
+          sqliteWriteConfirmed = true;
+          writtenId = Number(writeResponse.targetId);
+          setSuccessToastMessage(
+            "Budget definition updated in disposable SQLite. Existing snapshots and Budget History were not changed.",
+          );
+        } else {
+          const writeResponse =
+            await createBudgetDefinitionInDisposableSqlite(writeInput);
+          sqliteWriteConfirmed = true;
+          writtenId = Number(writeResponse.targetId);
+          setSuccessToastMessage(
+            "Budget definition created in disposable SQLite. No snapshot or Budget History occurrence was generated.",
+          );
+        }
+        const refreshed = await getSelectedReadRepositories(
+          repositoryBackend,
+        ).budgets.getById(writtenId);
+        if (!refreshed) {
+          throw new Error("budget_definition_refresh_failed");
+        }
+        setShowSuccessToast(true);
+        setTimeout(() => {
+          history.push("/budget");
+        }, 500);
+      } else if (isEditMode && id) {
         await db.budgets.update(Number(id), budgetData);
 
         let unlockedSnapshotsUpdated = 0;
@@ -690,6 +920,20 @@ const AddBudget: React.FC = () => {
       }
     } catch (error) {
       console.error("Error saving budget:", error);
+      if (budgetDefinitionWriteExperimentActive) {
+        if (sqliteWriteConfirmed) {
+          setErrorMsg(
+            "SQLite changed, but the selected-read refresh failed. Reload before retrying; do not repeat the write automatically.",
+          );
+          return;
+        }
+        setErrorMsg(
+          `Budget definition SQLite write failed: ${budgetDefinitionWriteErrorCode(
+            error,
+          )}`,
+        );
+        return;
+      }
       setErrorMsg(
         `Failed to ${isEditMode ? "update" : "add"} budget. Please try again.`,
       );
@@ -714,6 +958,25 @@ const AddBudget: React.FC = () => {
       </IonHeader>
 
       <IonContent className="ion-padding">
+        {budgetDefinitionHttpMode && (
+          <IonCard color="warning">
+            <IonCardContent>
+              <IonText>
+                <h3>Budget Definitions SQLite write experiment</h3>
+                <p>
+                  {budgetDefinitionWriteExperimentActive
+                    ? "Writes go to disposable local SQLite only. Dexie remains authoritative. Creating or editing a definition does not generate, update, prune, delete, or relink budget snapshots."
+                    : "The HTTP backend is selected, but Budget definition writes are disabled. No write will be attempted."}
+                </p>
+                <p>
+                  Create/update definitions only. Existing Budget History remains
+                  unchanged, delete is unavailable, and SQLite must be
+                  re-imported before clean parity checks.
+                </p>
+              </IonText>
+            </IonCardContent>
+          </IonCard>
+        )}
         <form onSubmit={handleSubmit}>
           <IonGrid>
             {/* Budget Type: Income/Expense */}
@@ -880,20 +1143,22 @@ const AddBudget: React.FC = () => {
                   )}
                 </div>
               </IonCol>
-              <IonCol size="1">
-                <IonButton
-                  style={{ marginTop: "23px" }}
-                  color="primary"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowCategoryModal(true);
-                  }}
-                  aria-label="Add Category"
-                  title="Add Category"
-                >
-                  <IonIcon icon={addOutline} />
-                </IonButton>
-              </IonCol>
+              {!budgetDefinitionHttpMode && (
+                <IonCol size="1">
+                  <IonButton
+                    style={{ marginTop: "23px" }}
+                    color="primary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowCategoryModal(true);
+                    }}
+                    aria-label="Add Category"
+                    title="Add Category"
+                  >
+                    <IonIcon icon={addOutline} />
+                  </IonButton>
+                </IonCol>
+              )}
             </IonRow>
 
             {/* Account - CHANGED from Payment Method */}
@@ -963,20 +1228,22 @@ const AddBudget: React.FC = () => {
                   />
                 </div>
               </IonCol>
-              <IonCol size="1">
-                <IonButton
-                  style={{ marginTop: "23px" }}
-                  color="primary"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowRecipientModal(true);
-                  }}
-                  aria-label="Add Recipient"
-                  title="Add Recipient"
-                >
-                  <IonIcon icon={addOutline} />
-                </IonButton>
-              </IonCol>
+              {!budgetDefinitionHttpMode && (
+                <IonCol size="1">
+                  <IonButton
+                    style={{ marginTop: "23px" }}
+                    color="primary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowRecipientModal(true);
+                    }}
+                    aria-label="Add Recipient"
+                    title="Add Recipient"
+                  >
+                    <IonIcon icon={addOutline} />
+                  </IonButton>
+                </IonCol>
+              )}
             </IonRow>
 
             {/* Amount Mode Toggle */}
@@ -1263,7 +1530,15 @@ const AddBudget: React.FC = () => {
             {/* Submit Button */}
             <IonRow>
               <IonCol size="11">
-                <IonButton type="submit" expand="block" color="primary">
+                <IonButton
+                  type="submit"
+                  expand="block"
+                  color="primary"
+                  disabled={
+                    budgetDefinitionHttpMode &&
+                    !budgetDefinitionWriteExperimentActive
+                  }
+                >
                   {isEditMode
                     ? "Update Budget"
                     : isFromTransaction
@@ -1277,24 +1552,28 @@ const AddBudget: React.FC = () => {
       </IonContent>
 
       {/* Modals */}
-      <AddRecipientModal
-        isOpen={showRecipientModal}
-        onClose={() => setShowRecipientModal(false)}
-        onRecipientAdded={(recipient) => {
-          setSortedRecipients((prev) => [recipient, ...prev]);
-          setRecipientId(recipient.id);
-        }}
-      />
+      {!budgetDefinitionHttpMode && (
+        <>
+          <AddRecipientModal
+            isOpen={showRecipientModal}
+            onClose={() => setShowRecipientModal(false)}
+            onRecipientAdded={(recipient) => {
+              setSortedRecipients((prev) => [recipient, ...prev]);
+              setRecipientId(recipient.id);
+            }}
+          />
 
-      <AddCategoryModal
-        isOpen={showCategoryModal}
-        onClose={() => setShowCategoryModal(false)}
-        onCategoryAdded={(category) => {
-          setSortedCategories((prev) => [category, ...prev]);
-          setCategoryId(category.id);
-        }}
-        buckets={buckets}
-      />
+          <AddCategoryModal
+            isOpen={showCategoryModal}
+            onClose={() => setShowCategoryModal(false)}
+            onCategoryAdded={(category) => {
+              setSortedCategories((prev) => [category, ...prev]);
+              setCategoryId(category.id);
+            }}
+            buckets={buckets}
+          />
+        </>
+      )}
 
       {/* REMOVED: AddPaymentMethodModal */}
 

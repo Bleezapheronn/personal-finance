@@ -865,3 +865,52 @@ Run it only against an outside-repo disposable SQLite database with the
 backend flag enabled, preferably on a unique port. It performs synthetic CRUD
 and active-state checks and leaves SQLite dirty. Re-import a separate database
 from the matching fresh backup before parity verification.
+
+## Experimental Budget Definition Writes
+
+Protected dry-run and disposable SQLite write routes exist for Budget
+definition create and update only:
+
+```text
+POST /prototype/repositories/budgets/dry-run/create
+POST /prototype/repositories/budgets/dry-run/update
+POST /prototype/repositories/budgets/write/create
+POST /prototype/repositories/budgets/write/update
+```
+
+Real writes remain disabled unless the server process has:
+
+```text
+PERSONAL_FINANCE_ENABLE_BUDGET_DEFINITION_WRITES=true
+```
+
+Each real write requires a successful matching dry-run,
+`dryRunReviewed: true`, and its internal action confirmation. Create inserts
+one active definition. Update changes only form-editable definition fields and
+`updatedAt`, preserving ID, `createdAt`, legacy `paymentChannelId`, and
+`isActive`.
+
+Explicit `goalDirection` values (`expense` or `income`) are authoritative.
+Null or missing direction uses the current amount-sign fallback. Recurrence
+details are validated for the selected frequency, but recurrence edits affect
+the definition only and may influence a later, separately invoked snapshot
+generation process.
+
+These routes do not create, update, generate, prune, delete, backfill, or
+repair budget snapshots. They do not relink transactions, change Budget
+History, run report calculations, access Dexie, or write files. Existing
+snapshots and transaction linkage are fingerprint-checked as unchanged inside
+the SQLite write transaction. Budget delete and every snapshot write route
+remain absent.
+
+Normal smoke remains non-mutating. Explicit mutation smoke is:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-budget-definition-write-smoke
+```
+
+Run it only against an outside-repo disposable SQLite database with the
+backend flag enabled, preferably on a unique port. It creates and updates a
+synthetic definition and leaves SQLite dirty. Re-import a separate database
+from the matching fresh backup before parity verification. Dexie remains
+authoritative.

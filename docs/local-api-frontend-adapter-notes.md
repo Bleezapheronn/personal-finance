@@ -979,3 +979,42 @@ against disposable SQLite and dirties that database. Re-import a separate
 fresh database from the matching backup before parity diagnostics. Never
 commit the database, token, env files, logs, reports, or any private SMS
 fixture output.
+
+## Budget Definitions SQLite Write Experiment
+
+Budget definition create/update has a separate dev-only frontend gate:
+
+```text
+VITE_PERSONAL_FINANCE_BUDGETS_WRITE_EXPERIMENT=true
+```
+
+It activates only with
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`. The API server
+independently requires
+`PERSONAL_FINANCE_ENABLE_BUDGET_DEFINITION_WRITES=true`. Both flags default
+off. Restart Vite and the API server after changing their respective values,
+and ensure the frontend URL uses the same local test port.
+
+When active, the Budget list and Add/Edit Budget form use selected HTTP reads.
+The form keeps its existing validation and amount-sign behavior, runs the
+matching dry-run, performs one disposable SQLite definition write, and returns
+to the selected-read list. It does not optimistically patch the list. If a
+confirmed write is followed by a refresh failure, reload before retrying
+because SQLite may already have changed.
+
+The experiment creates or updates only the `budgets` definition row. Explicit
+`goalDirection` values win; null/missing direction retains the amount-sign
+fallback. Recurrence edits affect the definition only and may affect future
+snapshot generation if a separate lifecycle process later runs.
+
+No snapshot is created, updated, generated, pruned, deleted, repaired, or
+backfilled. Existing Budget History rows and transaction links remain
+unchanged. Delete, completion, transaction linking, import/export, lookup
+creation, and snapshot lifecycle actions stay unavailable in HTTP mode.
+Default Dexie behavior, including its current update-time snapshot lifecycle,
+is unchanged.
+
+Mutation smoke uses `--allow-budget-definition-write-smoke` and dirties its
+disposable SQLite database. Re-import a separate fresh database from the
+matching app backup before parity and browser diagnostics. Never commit the
+database, token, env files, logs, reports, backups, or exports.
