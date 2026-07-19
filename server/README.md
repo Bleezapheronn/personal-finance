@@ -820,3 +820,48 @@ cost-bearing linked transaction, verifies exact financial and Budget History
 membership deltas, then updates and unlinks that transaction. The database is
 dirty afterward; re-import a separate SQLite database from a fresh matching
 backup before clean parity checks. Dexie remains authoritative.
+
+## Experimental SMS Import Template Writes
+
+Protected dry-run and disposable SQLite write routes exist for SMS Import
+Template create, update, activate, deactivate, and delete:
+
+```text
+POST /prototype/repositories/sms-import-templates/dry-run/{action}
+POST /prototype/repositories/sms-import-templates/write/{action}
+```
+
+Real writes remain disabled unless the server process has:
+
+```text
+PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES=true
+```
+
+Each write requires its matching successful dry-run, `dryRunReviewed: true`,
+and an internal action-specific confirmation. Payloads mirror the existing
+management form: trimmed required name, optional description/account, and
+optional regex source strings. Regexes are compiled in memory with the
+parser's fixed case-insensitive behavior. Malformed syntax and unusable
+extraction capture shapes are rejected; duplicate names/signatures and broad
+patterns are reported only as redacted counts or warning codes.
+
+Create inserts one active template with matching timestamps. Update changes
+only form-editable fields and `updatedAt`, preserving ID, `createdAt`,
+`isActive`, and legacy `paymentMethodId`. Active-state writes change only
+`isActive` and `updatedAt`. Delete removes exactly one template without a
+cascade; inspection found no persisted template-ID references.
+
+These routes do not parse SMS messages, import or mutate transactions, alter
+Accounts or Recipients, change template priority, access Dexie, or write
+files. Responses exclude raw patterns, sample messages, names, account
+details, tokens, paths, and raw rows. Normal smoke remains non-mutating.
+Explicit mutation smoke is:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-sms-template-write-smoke
+```
+
+Run it only against an outside-repo disposable SQLite database with the
+backend flag enabled, preferably on a unique port. It performs synthetic CRUD
+and active-state checks and leaves SQLite dirty. Re-import a separate database
+from the matching fresh backup before parity verification.

@@ -46,6 +46,16 @@ import {
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import {
+  activateSmsTemplateInDisposableSqlite,
+  createSmsTemplateInDisposableSqlite,
+  deactivateSmsTemplateInDisposableSqlite,
+  deleteSmsTemplateFromDisposableSqlite,
+  isSmsTemplatesWriteExperimentEnabled,
+  smsTemplateWriteErrorCode,
+  type SmsTemplateWriteInput,
+  updateSmsTemplateInDisposableSqlite,
+} from "../repositories/http/smsTemplateWriteExperiment";
 import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
 import {
   booleanValue,
@@ -192,11 +202,21 @@ const SmsImportTemplatesManagement: React.FC = () => {
   const selectedBackend = getRepositoryBackend();
   const smsTemplatesReadExperimentEnabled =
     isSmsTemplatesReadExperimentEnabled();
+  const smsTemplatesWriteExperimentEnabled =
+    isSmsTemplatesWriteExperimentEnabled();
+  const smsTemplatesSqliteWriteExperimentActive =
+    smsTemplatesWriteExperimentEnabled && selectedBackend === "http-readonly";
   const smsTemplatesReadExperimentHttpReadonly =
-    smsTemplatesReadExperimentEnabled && selectedBackend === "http-readonly";
+    (smsTemplatesReadExperimentEnabled || smsTemplatesWriteExperimentEnabled) &&
+    selectedBackend === "http-readonly";
+  const smsTemplatesHttpReadonlyWithoutWrites =
+    smsTemplatesReadExperimentHttpReadonly &&
+    !smsTemplatesSqliteWriteExperimentActive;
 
   const showReadExperimentActionDisabledToast = () => {
-    setToastMessage("Switch back to Dexie to edit SMS import templates");
+    setToastMessage(
+      "Enable the SMS template write experiment or switch back to Dexie",
+    );
     setShowToast(true);
   };
 
@@ -213,7 +233,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
     };
   }, []);
 
-  const fetchData = async () => {
+  const fetchData = async (): Promise<boolean> => {
     setLoading(true);
     try {
       // Revoke old blob URLs before fetching new ones
@@ -261,10 +281,12 @@ const SmsImportTemplatesManagement: React.FC = () => {
       setTemplates(temps);
       setSmsTemplatesReadExperimentCount(selectedReadCount);
       setAccounts(accountsWithPreview);
+      return true;
     } catch (err) {
       console.error("Failed to load SMS import templates:", err);
       setToastMessage("Failed to load SMS import templates");
       setShowToast(true);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -297,7 +319,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleEditTemplate - Opens modal with template data
    */
   const handleEditTemplate = (template: SmsImportTemplate) => {
-    if (smsTemplatesReadExperimentHttpReadonly) {
+    if (smsTemplatesHttpReadonlyWithoutWrites) {
       showReadExperimentActionDisabledToast();
       return;
     }
@@ -322,7 +344,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleSave - Saves or updates template
    */
   const handleSave = async () => {
-    if (smsTemplatesReadExperimentHttpReadonly) {
+    if (smsTemplatesHttpReadonlyWithoutWrites) {
       showReadExperimentActionDisabledToast();
       return;
     }
@@ -336,9 +358,30 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
     try {
       setLoading(true);
-      const now = new Date();
+      const input: SmsTemplateWriteInput = {
+        name: formName,
+        description: formDescription,
+        accountId: formAccountId,
+        referencePattern: formReferencePattern,
+        amountPattern: formAmountPattern,
+        recipientNamePattern: formRecipientNamePattern,
+        recipientPhonePattern: formRecipientPhonePattern,
+        dateTimePattern: formDateTimePattern,
+        costPattern: formCostPattern,
+        incomePattern: formIncomePattern,
+        expensePattern: formExpensePattern,
+      };
 
-      if (editingTemplate?.id) {
+      if (smsTemplatesSqliteWriteExperimentActive) {
+        if (editingTemplate?.id) {
+          await updateSmsTemplateInDisposableSqlite(editingTemplate.id, input);
+          setToastMessage("Template updated in disposable SQLite");
+        } else {
+          await createSmsTemplateInDisposableSqlite(input);
+          setToastMessage("Template created in disposable SQLite");
+        }
+      } else if (editingTemplate?.id) {
+        const now = new Date();
         // UPDATE MODE
         await db.smsImportTemplates.update(editingTemplate.id, {
           name: formName.trim(),
@@ -356,6 +399,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
         } as Partial<SmsImportTemplate>);
         setToastMessage("Template updated successfully!");
       } else {
+        const now = new Date();
         // ADD MODE
         const newTemplate: Omit<SmsImportTemplate, "id"> = {
           name: formName.trim(),
@@ -381,10 +425,17 @@ const SmsImportTemplatesManagement: React.FC = () => {
       setShowToast(true);
       resetForm();
       setShowAddTemplateModal(false);
-      await fetchData();
+      const refreshed = await fetchData();
+      if (!refreshed && smsTemplatesSqliteWriteExperimentActive) {
+        setToastMessage(
+          "SQLite changed, but refresh failed. Reload before retrying.",
+        );
+      }
     } catch (err) {
-      console.error("Failed to save template:", err);
-      setFormError("Failed to save template");
+      const code = smsTemplatesSqliteWriteExperimentActive
+        ? smsTemplateWriteErrorCode(err)
+        : "sms_template_save_failed";
+      setFormError(`Failed to save template: ${code}`);
     } finally {
       setLoading(false);
     }
@@ -394,7 +445,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleToggleTemplateActive - Toggles template active/inactive status
    */
   const handleToggleTemplateActive = async (template: SmsImportTemplate) => {
-    if (smsTemplatesReadExperimentHttpReadonly) {
+    if (smsTemplatesHttpReadonlyWithoutWrites) {
       showReadExperimentActionDisabledToast();
       return;
     }
@@ -402,11 +453,25 @@ const SmsImportTemplatesManagement: React.FC = () => {
     try {
       setLoading(true);
       const newStatus = template.isActive ? false : true;
-      await db.smsImportTemplates.update(template.id!, {
-        isActive: newStatus,
-        updatedAt: new Date(),
-      } as Partial<SmsImportTemplate>);
-      await fetchData();
+      if (smsTemplatesSqliteWriteExperimentActive) {
+        if (newStatus) {
+          await activateSmsTemplateInDisposableSqlite(template.id!);
+        } else {
+          await deactivateSmsTemplateInDisposableSqlite(template.id!);
+        }
+      } else {
+        await db.smsImportTemplates.update(template.id!, {
+          isActive: newStatus,
+          updatedAt: new Date(),
+        } as Partial<SmsImportTemplate>);
+      }
+      const refreshed = await fetchData();
+      if (!refreshed && smsTemplatesSqliteWriteExperimentActive) {
+        setToastMessage(
+          "SQLite changed, but refresh failed. Reload before retrying.",
+        );
+        setShowToast(true);
+      }
     } catch (error) {
       console.error("Error toggling template status:", error);
       setToastMessage("Failed to update template status");
@@ -420,7 +485,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleDeleteTemplate - Removes template from database
    */
   const handleDeleteTemplate = async (templateId: number) => {
-    if (smsTemplatesReadExperimentHttpReadonly) {
+    if (smsTemplatesHttpReadonlyWithoutWrites) {
       showReadExperimentActionDisabledToast();
       setDeleteTemplateId(null);
       return;
@@ -428,11 +493,20 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
     try {
       setLoading(true);
-      await db.smsImportTemplates.delete(templateId);
+      if (smsTemplatesSqliteWriteExperimentActive) {
+        await deleteSmsTemplateFromDisposableSqlite(templateId);
+      } else {
+        await db.smsImportTemplates.delete(templateId);
+      }
       setDeleteTemplateId(null);
       setToastMessage("Template deleted successfully!");
       setShowToast(true);
-      await fetchData();
+      const refreshed = await fetchData();
+      if (!refreshed && smsTemplatesSqliteWriteExperimentActive) {
+        setToastMessage(
+          "SQLite changed, but refresh failed. Reload before retrying.",
+        );
+      }
     } catch (error) {
       console.error("Error deleting template:", error);
       setToastMessage("Failed to delete template");
@@ -633,7 +707,8 @@ const SmsImportTemplatesManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
-        {smsTemplatesReadExperimentEnabled && (
+        {(smsTemplatesReadExperimentEnabled ||
+          smsTemplatesWriteExperimentEnabled) && (
           <IonCard>
             <IonCardContent>
               <IonText
@@ -643,11 +718,21 @@ const SmsImportTemplatesManagement: React.FC = () => {
               >
                 <p>
                   <IonIcon icon={warningOutline} />{" "}
-                  {smsTemplatesReadExperimentHttpReadonly
+                  {smsTemplatesSqliteWriteExperimentActive
+                    ? "SMS Import Templates SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Saving templates does not import or modify transactions."
+                    : smsTemplatesReadExperimentHttpReadonly
                     ? "SMS Templates read experiment is active. List is loaded through selected-read `http-readonly`; writes, imports, and test-parse actions are disabled. Switch back to Dexie to edit."
                     : "SMS Templates read experiment flag is active with the Dexie backend. Existing Dexie write, import, and test-parse behavior remains available."}
                 </p>
-                {smsTemplatesReadExperimentHttpReadonly && (
+                {smsTemplatesSqliteWriteExperimentActive && (
+                  <p>
+                    Create, update, activate, deactivate, and delete are
+                    available. Each operation runs a dry-run first. No parser,
+                    SMS import, transaction, Account, or Recipient mutation is
+                    performed.
+                  </p>
+                )}
+                {smsTemplatesHttpReadonlyWithoutWrites && (
                   <p>
                     This is a list-only experiment. Regex and pattern values are
                     not shown unless you switch back to Dexie and open the edit
@@ -752,7 +837,8 @@ const SmsImportTemplatesManagement: React.FC = () => {
                           </IonCol>
 
                           {/* ACTION BUTTONS */}
-                          {!smsTemplatesReadExperimentHttpReadonly && (
+                          {(!smsTemplatesReadExperimentHttpReadonly ||
+                            smsTemplatesSqliteWriteExperimentActive) && (
                             <IonCol size="auto">
                               <IonButton
                                 fill="clear"
@@ -809,7 +895,9 @@ const SmsImportTemplatesManagement: React.FC = () => {
         {/* ALERT: Delete template confirmation */}
         <IonAlert
           isOpen={
-            deleteTemplateId !== null && !smsTemplatesReadExperimentHttpReadonly
+            deleteTemplateId !== null &&
+            (!smsTemplatesReadExperimentHttpReadonly ||
+              smsTemplatesSqliteWriteExperimentActive)
           }
           onDidDismiss={() => setDeleteTemplateId(null)}
           header="Delete Template"
@@ -834,7 +922,9 @@ const SmsImportTemplatesManagement: React.FC = () => {
         {/* MODAL: Add/Edit Template */}
         <IonModal
           isOpen={
-            showAddTemplateModal && !smsTemplatesReadExperimentHttpReadonly
+            showAddTemplateModal &&
+            (!smsTemplatesReadExperimentHttpReadonly ||
+              smsTemplatesSqliteWriteExperimentActive)
           }
           onDidDismiss={handleCloseModal}
         >
@@ -1151,7 +1241,8 @@ const SmsImportTemplatesManagement: React.FC = () => {
         </IonModal>
 
         {/* FAB BUTTON FOR ADDING TEMPLATES */}
-        {!smsTemplatesReadExperimentHttpReadonly && (
+        {(!smsTemplatesReadExperimentHttpReadonly ||
+          smsTemplatesSqliteWriteExperimentActive) && (
           <IonFab vertical="bottom" horizontal="end" slot="fixed">
             <IonFabButton
               onClick={() => {

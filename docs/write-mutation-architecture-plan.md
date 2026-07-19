@@ -115,6 +115,17 @@ name, currency, credit classification, and optional credit limit. Account
 images, description, active state, delete, merge, transaction/account
 references, legacy payment-method links, reconciliation, balances, financial
 aggregates, dual-write, and authority migration remain outside the boundary.
+
+SMS Import Templates now have a separate accelerated, flag-gated experiment.
+Create, update, activate, deactivate, and reference-safe delete use protected
+dry-runs followed by disposable SQLite writes behind
+`PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES=true`. Dev-only UI wiring is
+separately gated by
+`VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT=true` and the
+`http-readonly` backend. Pattern validation mirrors the current parser's fixed
+case-insensitive regex syntax without running real SMS data. No template
+priority, parser semantics, transactions, Accounts, Recipients, Dexie,
+dual-write, or authority migration are changed.
 Currency and `isCredit` changes are surfaced as financially significant but do
 not mutate or reinterpret related records.
 
@@ -232,9 +243,9 @@ Before any write code is implemented, the project needs explicit decisions for:
 ## Not Allowed Yet
 
 - No additional write endpoints beyond the explicitly approved, flag-gated
-  recipient operations, bucket/category/Account create/update operations, and
-  transaction Phase 1/Phase 2 create/update and atomic paired-transfer
-  create/update operations.
+  recipient operations, bucket/category/Account operations, SMS Import
+  Template CRUD/active-state operations, and transaction Phase 1/Phase 2
+  create/update and atomic paired-transfer create/update operations.
 - No broad repository write adapters.
 - No dual-write.
 - No background sync.
@@ -246,7 +257,8 @@ Before any write code is implemented, the project needs explicit decisions for:
 - No writes without a tested restore path.
 - No no-op write methods in HTTP mode.
 - No write UI connected to HTTP outside the explicit dev-only Recipients,
-  Buckets/Categories, Accounts, and Transactions experiments.
+  Buckets/Categories, Accounts, SMS Import Templates, and Transactions
+  experiments.
 - No `.env`, token, SQLite, backup, export, log, or report files in Git.
 
 ## Proposed Safe Sequence

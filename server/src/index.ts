@@ -6,6 +6,7 @@ import {
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
+  areSmsTemplateWritesEnabled,
   areTransactionBasicWritesEnabled,
   areTransactionCostBudgetWritesEnabled,
   areTransactionTransferWritesEnabled,
@@ -125,6 +126,19 @@ import {
   TransactionTransferWriteRequestError,
   validateTransactionTransferWritePayload,
 } from "./lib/transactionTransferWrite.js";
+import {
+  smsTemplateDryRun,
+  smsTemplateDryRunRequestErrorResponse,
+  SmsTemplateDryRunRequestError,
+  type SmsTemplateAction,
+} from "./lib/smsTemplateDryRun.js";
+import {
+  smsTemplateRealWrite,
+  smsTemplateWriteDisabledResponse,
+  smsTemplateWriteRequestErrorResponse,
+  SmsTemplateWriteRequestError,
+  validateSmsTemplateWritePayload,
+} from "./lib/smsTemplateWrite.js";
 import { readOrCreateToken } from "./tokenStore.js";
 
 const server = Fastify({
@@ -2025,6 +2039,122 @@ server.post<{ Body: unknown }>(
     }
   },
 );
+
+const smsTemplateActions: SmsTemplateAction[] = [
+  "create",
+  "update",
+  "activate",
+  "deactivate",
+  "delete",
+];
+
+for (const action of smsTemplateActions) {
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/sms-import-templates/dry-run/${action}`,
+    async (request, reply) => {
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `sms_template_${action}_dry_run_failed`,
+        });
+      }
+
+      if (!opened.ok) {
+        return reply.code(503).send({ ok: false, code: opened.code });
+      }
+
+      try {
+        const response = smsTemplateDryRun(opened.db, request.body, action);
+        if (response.code === "sms_template_not_found") {
+          return reply.code(404).send(response);
+        }
+        return response.ok ? response : reply.code(400).send(response);
+      } catch (error) {
+        if (error instanceof SmsTemplateDryRunRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(smsTemplateDryRunRequestErrorResponse(action, error.code));
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `sms_template_${action}_dry_run_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/sms-import-templates/write/${action}`,
+    async (request, reply) => {
+      try {
+        validateSmsTemplateWritePayload(request.body, action);
+      } catch (error) {
+        if (error instanceof SmsTemplateWriteRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(smsTemplateWriteRequestErrorResponse(action, error.code));
+        }
+        return reply
+          .code(400)
+          .send(smsTemplateWriteRequestErrorResponse(action, "sms_template_write_invalid"));
+      }
+
+      if (!areSmsTemplateWritesEnabled()) {
+        return reply.code(403).send(smsTemplateWriteDisabledResponse(action));
+      }
+
+      let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+      try {
+        opened = openConfiguredWritableDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `sms_template_${action}_write_failed`,
+        });
+      }
+
+      if (!opened.ok) {
+        return reply.code(503).send({ ok: false, code: opened.code });
+      }
+
+      try {
+        const response = smsTemplateRealWrite(opened.db, request.body, action);
+        if (response.code === "sms_template_not_found") {
+          return reply.code(404).send(response);
+        }
+        return response.ok ||
+          response.resultCodes.includes("active_state_already_matches")
+          ? response
+          : reply.code(400).send(response);
+      } catch (error) {
+        if (error instanceof SmsTemplateWriteRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(smsTemplateWriteRequestErrorResponse(action, error.code));
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `sms_template_${action}_write_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+}
 
 for (const resource of lookupResources) {
   server.get<{

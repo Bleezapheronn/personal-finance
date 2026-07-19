@@ -9,6 +9,7 @@ import {
   TRANSACTION_TRANSFER_CREATE_WRITE_CONFIRMATION,
   TRANSACTION_TRANSFER_UPDATE_WRITE_CONFIRMATION,
 } from "./lib/transactionTransferWrite.js";
+import { SMS_TEMPLATE_WRITE_CONFIRMATIONS } from "./lib/smsTemplateWrite.js";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3147";
 const TOKEN_HEADER_NAME = "x-personal-finance-token";
@@ -37,6 +38,7 @@ interface SmokeArgs {
   allowTransactionBasicWriteSmoke: boolean;
   allowTransactionCostBudgetWriteSmoke: boolean;
   allowTransactionTransferWriteSmoke: boolean;
+  allowSmsTemplateWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -128,6 +130,8 @@ Options:
                          Opt in to disposable SQLite transaction cost/budget-link create/update write smoke.
   --allow-transaction-transfer-write-smoke
                          Opt in to disposable SQLite paired transfer create/update write smoke.
+  --allow-sms-template-write-smoke
+                         Opt in to disposable SQLite SMS template CRUD write smoke.
   --help                 Show this help text.
 `;
 
@@ -142,6 +146,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowTransactionBasicWriteSmoke: false,
     allowTransactionCostBudgetWriteSmoke: false,
     allowTransactionTransferWriteSmoke: false,
+    allowSmsTemplateWriteSmoke: false,
     help: false,
   };
 
@@ -214,6 +219,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-transaction-transfer-write-smoke") {
       args.allowTransactionTransferWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-sms-template-write-smoke") {
+      args.allowSmsTemplateWriteSmoke = true;
       continue;
     }
 
@@ -743,6 +753,7 @@ const buildChecks = (
   allowTransactionBasicWriteSmoke: boolean,
   allowTransactionCostBudgetWriteSmoke: boolean,
   allowTransactionTransferWriteSmoke: boolean,
+  allowSmsTemplateWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -762,6 +773,7 @@ const buildChecks = (
   const bucketCategorySmokeSequence = Date.now();
   const accountSmokeSequence = Date.now();
   const transactionSmokeSequence = Date.now();
+  const smsTemplateSmokeSequence = Date.now();
   const sampledLookupIds = new Map<string, number>();
   const lookupResources = [
     "accounts",
@@ -5620,6 +5632,397 @@ const buildChecks = (
         ]
       : []),
     {
+      name: "SMS template dry-run and disabled write paths are safe",
+      run: async () => {
+        const path = "/prototype/repositories/sms-import-templates";
+        const validPayload = {
+          name: `Smoke SMS Template ${smsTemplateSmokeSequence}`,
+          amountPattern: "Ksh\\s*([\\d,]+(?:\\.\\d{1,2})?)",
+          incomePattern: "received",
+        };
+        const before = await readAllTableRows(
+          baseUrl,
+          "smsImportTemplates",
+          authedOptions,
+        );
+        const beforeFingerprint = rowsFingerprint(before);
+
+        const missingToken = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          { method: "POST", body: validPayload, origin },
+        );
+        expectStatus(missingToken.status, 401);
+
+        const badOrigin = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          {
+            token,
+            origin: "http://unexpected-origin.invalid",
+            method: "POST",
+            body: validPayload,
+          },
+        );
+        expectStatus(badOrigin.status, 403);
+
+        const invalidPattern = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { name: "Synthetic invalid pattern", amountPattern: "(" },
+          },
+        );
+        expectStatus(invalidPattern.status, 400);
+        expect(
+          invalidPattern.json.code === "amountPattern_invalid_regex",
+          "sms_template_invalid_regex_not_rejected",
+        );
+
+        const invalidCapture = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { name: "Synthetic invalid capture", amountPattern: "Ksh" },
+          },
+        );
+        expectStatus(invalidCapture.status, 400);
+        expect(
+          invalidCapture.json.code === "amountPattern_capture_required",
+          "sms_template_invalid_capture_not_rejected",
+        );
+
+        const unexpectedField = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { ...validPayload, rawSms: "not allowed" },
+          },
+        );
+        expectStatus(unexpectedField.status, 400);
+        expect(
+          unexpectedField.json.code === "unexpected_payload_field",
+          "sms_template_unexpected_field_not_rejected",
+        );
+
+        const missingAccount = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { ...validPayload, accountId: 2147483647 },
+          },
+        );
+        expectStatus(missingAccount.status, 400);
+        expect(
+          missingAccount.json.code === "account_not_found",
+          "sms_template_missing_account_not_rejected",
+        );
+
+        const dryRun = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          { ...authedOptions, method: "POST", body: validPayload },
+        );
+        expectStatus(dryRun.status, 200);
+        expect(
+          dryRun.json.ok === true &&
+            dryRun.json.entity === "smsImportTemplate" &&
+            dryRun.json.dryRun === true &&
+            dryRun.json.wouldMutate === false,
+          "sms_template_dry_run_shape_invalid",
+        );
+        expectNoSensitiveEcho(dryRun.json, [
+          validPayload.name,
+          validPayload.amountPattern,
+          validPayload.incomePattern,
+        ]);
+        expect(
+          rowsFingerprint(
+            await readAllTableRows(baseUrl, "smsImportTemplates", authedOptions),
+          ) === beforeFingerprint,
+          "sms_template_dry_run_mutated",
+        );
+
+        for (const action of ["update", "activate", "deactivate", "delete"] as const) {
+          const body =
+            action === "update"
+              ? { id: 2147483647, ...validPayload }
+              : { id: 2147483647 };
+          const unknown = await requestJson(
+            baseUrl,
+            `${path}/dry-run/${action}`,
+            { ...authedOptions, method: "POST", body },
+          );
+          expectStatus(unknown.status, 404);
+          expect(
+            unknown.json.code === "sms_template_not_found",
+            `sms_template_${action}_unknown_id_not_rejected`,
+          );
+        }
+
+        const unsupported = await requestJson(
+          baseUrl,
+          `${path}/write/test-parse`,
+          { ...authedOptions, method: "POST", body: { id: 1 } },
+        );
+        expectStatus(unsupported.status, 404);
+
+        if (!allowSmsTemplateWriteSmoke) {
+          const disabledWrite = await requestJson(
+            baseUrl,
+            `${path}/write/create`,
+            {
+              ...authedOptions,
+              method: "POST",
+              body: {
+                ...validPayload,
+                dryRunReviewed: true,
+                confirmation: SMS_TEMPLATE_WRITE_CONFIRMATIONS.create,
+              },
+            },
+          );
+          expectStatus(disabledWrite.status, 403);
+          expect(
+            disabledWrite.json.code === "sms_template_writes_disabled",
+            "sms_template_write_not_disabled",
+          );
+          expect(
+            rowsFingerprint(
+              await readAllTableRows(baseUrl, "smsImportTemplates", authedOptions),
+            ) === beforeFingerprint,
+            "disabled_sms_template_write_mutated",
+          );
+        }
+      },
+    },
+    ...(allowSmsTemplateWriteSmoke
+      ? [
+          {
+            name: "SMS template opt-in smoke mutates only disposable template rows",
+            run: async () => {
+              const path = "/prototype/repositories/sms-import-templates";
+              const relatedTables = [
+                "transactions",
+                "budgets",
+                "budgetSnapshots",
+                "buckets",
+                "categories",
+                "accounts",
+                "paymentMethods",
+                "recipients",
+              ] as const;
+              const templatesBefore = await readAllTableRows(
+                baseUrl,
+                "smsImportTemplates",
+                authedOptions,
+              );
+              const relatedBefore = new Map<string, string>();
+              for (const table of relatedTables) {
+                relatedBefore.set(
+                  table,
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ),
+                );
+              }
+              const createPayload = {
+                name: `Synthetic SMS Template ${smsTemplateSmokeSequence}`,
+                description: "Synthetic smoke template",
+                referencePattern: "Ref\\s+([A-Z0-9]+)",
+                amountPattern: "Ksh\\s*([\\d,]+(?:\\.\\d{1,2})?)",
+                incomePattern: "received",
+              };
+
+              const createDryRun = await requestJson(
+                baseUrl,
+                `${path}/dry-run/create`,
+                { ...authedOptions, method: "POST", body: createPayload },
+              );
+              expectStatus(createDryRun.status, 200);
+              const createWrite = await requestJson(
+                baseUrl,
+                `${path}/write/create`,
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...createPayload,
+                    dryRunReviewed: true,
+                    confirmation: SMS_TEMPLATE_WRITE_CONFIRMATIONS.create,
+                  },
+                },
+              );
+              expectStatus(createWrite.status, 200);
+              expect(
+                createWrite.json.ok === true &&
+                  createWrite.json.sqliteMutated === true &&
+                  createWrite.json.rowsChanged === 1 &&
+                  typeof createWrite.json.targetId === "number",
+                "sms_template_create_write_invalid",
+              );
+              expectNoSensitiveEcho(createWrite.json, [
+                createPayload.name,
+                createPayload.description,
+                createPayload.referencePattern,
+                createPayload.amountPattern,
+              ]);
+              const targetId = createWrite.json.targetId as number;
+              let templates = await readAllTableRows(
+                baseUrl,
+                "smsImportTemplates",
+                authedOptions,
+              );
+              expect(
+                templates.length === templatesBefore.length + 1,
+                "sms_template_create_count_invalid",
+              );
+              let detail = await requestJson(
+                baseUrl,
+                `${path}/${targetId}`,
+                authedOptions,
+              );
+              expectStatus(detail.status, 200);
+              let template = detail.json.smsImportTemplate as Record<string, unknown>;
+              expect(
+                template.id === targetId && Number(template.isActive) === 1,
+                "sms_template_create_not_visible",
+              );
+
+              const updatePayload = {
+                id: targetId,
+                ...createPayload,
+                name: `${createPayload.name} Updated`,
+                expensePattern: "sent to",
+              };
+              const updateDryRun = await requestJson(
+                baseUrl,
+                `${path}/dry-run/update`,
+                { ...authedOptions, method: "POST", body: updatePayload },
+              );
+              expectStatus(updateDryRun.status, 200);
+              const updateWrite = await requestJson(
+                baseUrl,
+                `${path}/write/update`,
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...updatePayload,
+                    dryRunReviewed: true,
+                    confirmation: SMS_TEMPLATE_WRITE_CONFIRMATIONS.update,
+                  },
+                },
+              );
+              expectStatus(updateWrite.status, 200);
+              expect(
+                updateWrite.json.ok === true &&
+                  updateWrite.json.rowsChanged === 1,
+                "sms_template_update_write_invalid",
+              );
+              templates = await readAllTableRows(
+                baseUrl,
+                "smsImportTemplates",
+                authedOptions,
+              );
+              expect(
+                templates.length === templatesBefore.length + 1,
+                "sms_template_update_changed_count",
+              );
+
+              for (const action of ["deactivate", "activate"] as const) {
+                const dryRun = await requestJson(
+                  baseUrl,
+                  `${path}/dry-run/${action}`,
+                  { ...authedOptions, method: "POST", body: { id: targetId } },
+                );
+                expectStatus(dryRun.status, 200);
+                const write = await requestJson(
+                  baseUrl,
+                  `${path}/write/${action}`,
+                  {
+                    ...authedOptions,
+                    method: "POST",
+                    body: {
+                      id: targetId,
+                      dryRunReviewed: true,
+                      confirmation: SMS_TEMPLATE_WRITE_CONFIRMATIONS[action],
+                    },
+                  },
+                );
+                expectStatus(write.status, 200);
+                expect(
+                  write.json.sqliteMutated === true &&
+                    write.json.rowsChanged === 1,
+                  `sms_template_${action}_write_invalid`,
+                );
+                detail = await requestJson(
+                  baseUrl,
+                  `${path}/${targetId}`,
+                  authedOptions,
+                );
+                expectStatus(detail.status, 200);
+                template = detail.json.smsImportTemplate as Record<string, unknown>;
+                expect(
+                  Number(template.isActive) === (action === "activate" ? 1 : 0),
+                  `sms_template_${action}_not_visible`,
+                );
+              }
+
+              const deleteDryRun = await requestJson(
+                baseUrl,
+                `${path}/dry-run/delete`,
+                { ...authedOptions, method: "POST", body: { id: targetId } },
+              );
+              expectStatus(deleteDryRun.status, 200);
+              const deleteWrite = await requestJson(
+                baseUrl,
+                `${path}/write/delete`,
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: targetId,
+                    dryRunReviewed: true,
+                    confirmation: SMS_TEMPLATE_WRITE_CONFIRMATIONS.delete,
+                  },
+                },
+              );
+              expectStatus(deleteWrite.status, 200);
+              expect(
+                deleteWrite.json.ok === true &&
+                  deleteWrite.json.rowsChanged === 1,
+                "sms_template_delete_write_invalid",
+              );
+              templates = await readAllTableRows(
+                baseUrl,
+                "smsImportTemplates",
+                authedOptions,
+              );
+              expect(
+                rowsFingerprint(templates) === rowsFingerprint(templatesBefore),
+                "sms_template_delete_did_not_restore_rows",
+              );
+              for (const table of relatedTables) {
+                expect(
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ) === relatedBefore.get(table),
+                  `${table}_changed_during_sms_template_write`,
+                );
+              }
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    {
       name: "transaction delete transfer repair and bulk write routes are not implemented",
       run: async () => {
         for (const action of ["delete", "transfer", "repair", "bulk"] as const) {
@@ -5742,6 +6145,7 @@ const main = async (): Promise<void> => {
     args.allowTransactionBasicWriteSmoke,
     args.allowTransactionCostBudgetWriteSmoke,
     args.allowTransactionTransferWriteSmoke,
+    args.allowSmsTemplateWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

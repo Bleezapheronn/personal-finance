@@ -22,6 +22,8 @@ export const TRANSACTION_COST_BUDGET_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES" as const;
 export const TRANSACTION_TRANSFER_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_TRANSACTION_TRANSFER_WRITES" as const;
+export const SMS_TEMPLATE_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES" as const;
 
 export const ALLOWED_ORIGINS = new Set([
   "http://localhost:8100",
@@ -73,3 +75,6 @@ export const areTransactionCostBudgetWritesEnabled = (): boolean =>
 
 export const areTransactionTransferWritesEnabled = (): boolean =>
   process.env[TRANSACTION_TRANSFER_WRITES_ENV_VAR] === "true";
+
+export const areSmsTemplateWritesEnabled = (): boolean =>
+  process.env[SMS_TEMPLATE_WRITES_ENV_VAR] === "true";

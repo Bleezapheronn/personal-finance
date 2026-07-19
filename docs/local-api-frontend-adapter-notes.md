@@ -939,3 +939,43 @@ The explicit `--allow-transaction-transfer-write-smoke` mode verifies atomic
 create/update, pair integrity, exact account-derived and net effects, and
 related-table fingerprints. It dirties disposable SQLite. Use a separate fresh
 import for parity checks and never commit the database, token, logs, or reports.
+
+## SMS Import Templates SQLite Write Experiment
+
+SMS Import Template management has a separate dev-only write gate:
+
+```text
+VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT=true
+```
+
+It activates only with
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-readonly`. The server
+independently requires
+`PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES=true`. Both flags default off;
+restart Vite and the API server after changing their respective values, and
+use matching local API ports.
+
+When active, create, update, activate, deactivate, and delete run a protected
+dry-run before the disposable SQLite write, then refresh through selected
+reads. The screen never optimistically patches its list. If the write succeeds
+but refresh fails, reload before retrying because SQLite may already have
+changed.
+
+The experiment mirrors the existing form fields and timestamp behavior.
+Patterns remain raw regex source strings interpreted with the parser's fixed
+case-insensitive semantics. The server validates syntax and extraction capture
+shape in memory and returns only redacted duplicate/matching-risk summaries.
+It does not run templates against real SMS history.
+
+Saving or deleting a template does not parse or import SMS, create or update a
+transaction, mutate Accounts or Recipients, change parser priority, write
+Dexie, or dual-write. Delete is included because current persisted data has no
+template-ID references and the existing Dexie operation has no cascade.
+Default Dexie behavior is unchanged, and HTTP read mode with the write flag
+off remains non-mutating.
+
+The explicit `--allow-sms-template-write-smoke` mode performs synthetic CRUD
+against disposable SQLite and dirties that database. Re-import a separate
+fresh database from the matching backup before parity diagnostics. Never
+commit the database, token, env files, logs, reports, or any private SMS
+fixture output.
