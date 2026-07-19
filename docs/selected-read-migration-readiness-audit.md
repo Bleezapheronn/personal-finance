@@ -6,8 +6,12 @@ Transactions, Reports, Budget, and Budget History. No real workflow screen is
 switched to HTTP unless an explicit per-screen experiment flag is enabled.
 
 Dexie / IndexedDB remains authoritative. SQLite remains disposable and must be
-seeded from a full backup before comparison. The local API and HTTP repository
-adapters are read-only. No write methods or write endpoints exist.
+seeded from a full backup before comparison. The selected-read facade remains
+read-only. Separate, disabled-by-default SQLite write experiments now exist;
+their current capabilities, recovery procedure, and hard boundaries are
+documented in
+[sqlite-write-experiment-operational-readiness.md](sqlite-write-experiment-operational-readiness.md).
+They do not change the default Dexie path or authorize SQLite authority.
 
 High-risk workflow areas have a separate planning document:
 [high-risk-selected-read-parity-plan.md](high-risk-selected-read-parity-plan.md).
@@ -17,7 +21,9 @@ or Budget History `http-readonly` experiment.
 Future write or mutation work is a separate phase covered by
 [write-mutation-architecture-plan.md](write-mutation-architecture-plan.md).
 Read parity and read experiments do not authorize write endpoints, repository
-write adapters, dual-write, background sync, or SQLite authority migration.
+write experiments, dual-write, background sync, or SQLite authority migration.
+The explicitly approved write experiments are tracked separately in the
+operational readiness document.
 The first domain-specific dry-run design is
 [recipients-write-dry-run-design.md](recipients-write-dry-run-design.md), which
 is documentation only and does not authorize implementation.
@@ -114,10 +120,10 @@ is documentation only and does not authorize implementation.
   status, and rounded derived-value mismatch counts without rendering budget
   descriptions, amount values, target values, raw rows, names, tokens, or
   SQLite paths. It does not call budget snapshot lifecycle helpers.
-- Disabled-by-default server-side recipient create/update and activate/deactivate
-  write experiments exist for disposable SQLite only. No frontend write adapter,
-  UI write integration, dual-write, delete, merge, import, restore, repair, or
-  authority migration path exists.
+- Disabled-by-default, domain-specific SQLite write experiments exist outside
+  the selected-read facade. See the operational readiness document for the
+  exact supported actions and flags. No dual-write, automatic synchronization,
+  default-backend change, or authority migration path exists.
 - No write no-ops exist; future HTTP write attempts must fail loudly.
 - Browser token exposure is accepted only for this local prototype, never for
   production or shared environments.
@@ -149,7 +155,8 @@ Dexie-vs-SQLite diagnostics.
 
 - Keep `.env`, token, SQLite, backup, export, log, report, and import-summary
   files outside Git.
-- Keep SQLite read-only in the API server.
+- Keep normal API reads read-only. Writable SQLite access is allowed only in
+  the explicitly enabled disposable write experiments.
 - Keep Dexie as the default backend.
 - Keep any real-screen experiment behind a flag with a clear rollback path.
 - Do not run snapshot generation, pruning, dedupe, repair, creation, or update

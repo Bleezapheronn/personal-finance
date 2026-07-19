@@ -1,0 +1,161 @@
+# SQLite Write Experiment Operational Readiness
+
+Status at `budgets-definition-ui-write-experiment-complete-baseline`:
+the current local SQLite write experiments are implemented, verified, and
+safe to leave committed but disabled. Dexie / IndexedDB remains authoritative.
+SQLite remains disposable. No authority migration, dual-write, or automatic
+synchronization has occurred.
+
+This document is the operational source of truth for pausing, recovering, and
+resuming the current write-experiment phase. Detailed endpoint contracts remain
+in `server/README.md` and the domain-specific implementation documents.
+
+## Completed Capabilities
+
+All mutation smoke modes listed below are explicit opt-ins. They passed against
+outside-repository disposable SQLite databases. The corresponding browser
+experiments also passed with the documented frontend and backend flags enabled.
+All flags default off.
+
+| Area | Supported SQLite writes | Unsupported or deferred writes | Backend flag | Frontend flag | Mutation smoke | Browser verification | Recovery boundary |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Recipients | Create, update, activate, deactivate | Delete, merge, transaction recipient-reference mutation | `PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES=true`; `PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true` | `VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT=true` | Passed: create/update and active-state opt-in modes | Passed | Discard or re-import SQLite; Dexie recipient and transaction data is unaffected |
+| Buckets | Create, update | Delete, reorder, active-state changes, cascade/reference rewrites | `PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true` | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true` | Passed: bucket/category opt-in mode | Passed | Discard or re-import SQLite; Dexie and related financial rows are unaffected |
+| Categories | Create, update, including an existing bucket link | Delete, active-state changes, cascade/reference rewrites | `PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true` | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true` | Passed: bucket/category opt-in mode | Passed | Discard or re-import SQLite; Dexie and existing transaction/budget links are unaffected |
+| Accounts | Create and update non-image fields: name, currency, credit classification, optional credit limit | Delete, merge, active-state changes, images, reference migration, reconciliation | `PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES=true` | `VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT=true` | Passed: Account opt-in mode | Passed, with image/icon omission remaining visible | Discard or re-import SQLite; Dexie, transactions, and derived balances are unaffected |
+| Transactions | Ordinary income/expense create/update; nonpositive transaction costs; link/change/unlink existing budget snapshots; atomic paired-transfer create/update | Delete, duplicate, bulk/import/export writes, transfer-pair repair, ordinary/transfer conversion, snapshot creation or repair | `PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_TRANSFER_WRITES=true` as required by the operation | `VITE_PERSONAL_FINANCE_TRANSACTIONS_BASIC_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_TRANSFER_WRITE_EXPERIMENT=true` as required | Passed: basic, cost/budget-link, and transfer opt-in modes | Passed | Discard or re-import SQLite; Dexie transactions remain unchanged, while SQLite-derived totals must be treated as dirty until re-import |
+| SMS Import Templates | Create, update, activate, deactivate, reference-safe delete | Parser priority changes, SMS-history execution/import, transaction mutation | `PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES=true` | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT=true` | Passed: template CRUD/active-state opt-in mode | Passed | Discard or re-import SQLite; Dexie templates, SMS data, and transactions are unaffected |
+| Budget Definitions | Create and update the definition row only | Delete, completion, transaction linking, lookup creation, every snapshot lifecycle mutation | `PERSONAL_FINANCE_ENABLE_BUDGET_DEFINITION_WRITES=true` | `VITE_PERSONAL_FINANCE_BUDGETS_WRITE_EXPERIMENT=true` | Passed: Budget definition opt-in mode | Passed | Discard or re-import SQLite; Dexie budgets, snapshots, Budget History, and transaction links are unaffected |
+
+## Hard Boundaries
+
+- Dexie / IndexedDB remains authoritative.
+- SQLite is disposable and must stay outside the repository.
+- There is no dual-write.
+- There is no automatic Dexie-to-SQLite or SQLite-to-Dexie synchronization.
+- The default repository backend remains `dexie`; missing or unknown backend
+  configuration falls back to Dexie.
+- Every write UI experiment requires its explicit frontend flag and the
+  `http-readonly` repository backend.
+- Every real SQLite write endpoint requires its explicit backend flag.
+- Successful mutation smoke or browser write testing dirties the configured
+  SQLite database.
+- Normal `smoke:api` is non-mutating. Mutation smoke must be explicitly
+  requested and must use a disposable database.
+- No write experiment changes Dexie, makes SQLite authoritative, or proves that
+  the current browser-token model is suitable outside local development.
+
+## Known Gaps
+
+The following work is intentionally unsupported or deferred:
+
+- Recipient delete, merge, and transaction recipient-reference reassignment.
+- Bucket or Category delete, bucket reorder, unsupported active-state changes,
+  cascades, and reference rewrites.
+- Account delete, merge, active-state changes, image writes, reconciliation,
+  and transaction/account reference migration.
+- Transaction delete, duplicate/bulk/import/export mutation, transfer-pair
+  repair, and conversion between ordinary and transfer transactions.
+- Budget-definition delete, completion, transaction linking, and lookup
+  creation from the HTTP write path.
+- Budget snapshot creation, generation, pruning, dedupe, repair, backfill,
+  editing, deletion, coverage, and historical relinking.
+- SMS parsing/import execution and transaction mutation from the template write
+  path.
+- General-purpose frontend write repositories, offline write queues, conflict
+  resolution, background synchronization, and authority migration.
+
+## Clean Recovery Procedure
+
+Use this procedure after any successful write smoke or browser write
+experiment, and before trusting parity diagnostics again.
+
+1. Stop Vite and the local API server.
+2. Preserve or export a fresh full backup from the Dexie-authoritative app.
+3. Delete or archive the disposable SQLite database and its
+   `.import-summary.json`. Keep both outside the repository.
+4. From `server/`, import that exact backup into a new disposable database:
+
+   ```powershell
+   npx tsx src/importBackup.ts --input <backup> --output <sqlite>
+   ```
+
+5. From `server/`, verify the exact backup/database pair:
+
+   ```powershell
+   npx tsx src/verifySqlitePrototype.ts --backup <backup> --sqlite <sqlite>
+   ```
+
+6. Require all six verification groups to pass: row counts, structural
+   integrity, financial aggregates, report totals, transaction samples, and
+   Budget History parity.
+7. Start the local API with `PERSONAL_FINANCE_SQLITE_PATH` pointing to that
+   exact SQLite database. Do not enable mutation flags for a clean baseline.
+8. Run normal non-mutating smoke:
+
+   ```powershell
+   npm run smoke:api -- -- --token-file <token-file>
+   ```
+
+9. Confirm the ignored `.env.local` uses
+   `VITE_PERSONAL_FINANCE_LOCAL_API_URL` with the local API's matching port.
+   Keep the repository backend and experiment flags appropriate for the test.
+10. Restart Vite after every `VITE_` environment change.
+11. Never commit `.env.local`, tokens, SQLite databases, backups, import
+    summaries, exports, logs, or generated reports.
+
+Stale or previously mutated SQLite can produce false parity, ordering, report,
+or browser-diagnostic mismatches. A clean import must always come from the same
+fresh backup used for verification.
+
+## Rollback Procedure
+
+1. Disable all frontend write-experiment flags:
+   - `VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT`
+   - `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT`
+   - `VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT`
+   - `VITE_PERSONAL_FINANCE_TRANSACTIONS_BASIC_WRITE_EXPERIMENT`
+   - `VITE_PERSONAL_FINANCE_TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT`
+   - `VITE_PERSONAL_FINANCE_TRANSACTIONS_TRANSFER_WRITE_EXPERIMENT`
+   - `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT`
+   - `VITE_PERSONAL_FINANCE_BUDGETS_WRITE_EXPERIMENT`
+2. Set `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, or remove the setting
+   so the safe Dexie default is selected.
+3. Restart Vite.
+4. Stop the local API if it is no longer needed.
+5. Delete or re-import disposable SQLite if it was mutated.
+6. Use the Git experiment baseline tags as source-code rollback points.
+
+SQLite-only experiment writes do not mutate Dexie. Returning the frontend to
+Dexie restores the normal authoritative app path without copying experimental
+SQLite changes into IndexedDB.
+
+## Not Ready For Authority Migration
+
+SQLite must not become authoritative until all of the following are complete:
+
+- Every required everyday mutation has an intentional, supported, tested path.
+- Budget snapshot lifecycle ownership is designed and verified.
+- Delete, merge, cascade, reference-migration, and repair decisions are
+  resolved.
+- A synchronization design or one-time authority migration design exists.
+- Full backup and restore are proven for the proposed authoritative store.
+- Default-backend cutover and rollback are rehearsed with explicit recovery
+  criteria.
+- Application-wide end-to-end testing passes for reads, writes, offline
+  behavior, failures, retries, and recovery.
+- Security is redesigned for the intended deployment context; the current
+  browser token is a local-development prototype constraint.
+
+Passing the current smokes and parity checks proves only the bounded disposable
+experiments. It does not approve authority migration.
+
+## Safe Pause Point
+
+The current experiments may remain committed while all experiment flags stay
+disabled. Normal Dexie application behavior remains available, and the local
+API does not need to keep running. Future work can resume from
+`sqlite-write-experiments-safe-pause-baseline` after creating a fresh matching
+backup/SQLite baseline and rerunning the documented gates.
+
+This is an acceptable stopping point before moving to other projects.

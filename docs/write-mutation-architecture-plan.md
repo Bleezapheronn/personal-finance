@@ -1,5 +1,11 @@
 # Write / Mutation Architecture Plan
 
+Current operational status, recovery steps, completed experiment capabilities,
+and authority-migration blockers are consolidated in
+[sqlite-write-experiment-operational-readiness.md](sqlite-write-experiment-operational-readiness.md).
+This document retains the architecture decisions and planning history; use the
+operational readiness document for the current safe-pause baseline.
+
 This is a documentation-only plan for a future write and mutation phase. It
 does not authorize implementation. It does not add write endpoints, repository
 write adapters, schema changes, UI wiring, background sync, or any mutation of
@@ -8,11 +14,11 @@ Dexie, SQLite, budgets, transactions, or budget snapshots.
 The read-path experiment phase is complete enough to define the next boundary:
 read parity is not write approval. Dexie / IndexedDB remains authoritative.
 SQLite remains disposable until an explicit authority migration is designed,
-approved, implemented, backed up, and verified. Frontend HTTP repositories
-remain read-only. The server-side real-write experiments are the flag-gated
-recipient operations plus bucket/category and Account create/update operations;
-no additional write endpoint should be added without a separate per-domain
-design and approval.
+approved, implemented, backed up, and verified. The selected-read facade
+remains read-only. Separate, disabled-by-default write experiment helpers and
+endpoints now cover the bounded domains recorded in the operational readiness
+document; no additional write endpoint should be added without a separate
+per-domain design and approval.
 
 Current read baseline:
 
