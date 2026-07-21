@@ -287,3 +287,28 @@
 .summary-value.expense {
   color: #eb445c;
 }
+/* Persistent local-only warning for the explicit SQLite authority rehearsal. */
+.sqlite-rehearsal-banner {
+  position: relative;
+  z-index: 1000;
+  padding: 10px 16px;
+  border-bottom: 1px solid currentColor;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.sqlite-rehearsal-banner-ready {
+  color: #3b2f00;
+  background: #fff3bf;
+}
+
+.sqlite-rehearsal-banner-blocked {
+  color: #5f1212;
+  background: #ffe3e3;
+}
+
+.sqlite-rehearsal-banner-missing {
+  display: block;
+  margin-top: 4px;
+  font-family: monospace;
+}

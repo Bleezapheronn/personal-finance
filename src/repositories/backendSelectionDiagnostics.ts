@@ -87,6 +87,12 @@ export const runRepositoryBackendSelectionDiagnostics = (
       "http_readonly_backend_not_http_readonly",
     ),
     passOrFail(
+      "explicit rehearsal resolves to http-sqlite-rehearsal",
+      resolveRepositoryBackend("http-sqlite-rehearsal") ===
+        "http-sqlite-rehearsal",
+      "rehearsal_backend_not_recognized",
+    ),
+    passOrFail(
       "unknown backend resolves to dexie",
       resolveRepositoryBackend("bad-value") === "dexie",
       "unknown_backend_not_dexie",
@@ -107,6 +113,16 @@ export const runRepositoryBackendSelectionDiagnostics = (
       "http_readonly_write_guard_did_not_throw",
     ),
     passOrFail(
+      "rehearsal backend does not directly support writes",
+      repositoryBackendSupportsWrites("http-sqlite-rehearsal") === false,
+      "rehearsal_direct_write_support_enabled",
+    ),
+    passOrFail(
+      "rehearsal direct write guard throws",
+      writeGuardThrowsFor("http-sqlite-rehearsal"),
+      "rehearsal_direct_write_guard_did_not_throw",
+    ),
+    passOrFail(
       "undefined selected facade source is dexie",
       getSelectedReadRepositorySource(undefined) === "dexie",
       "undefined_selected_facade_not_dexie",
@@ -120,6 +136,12 @@ export const runRepositoryBackendSelectionDiagnostics = (
       "explicit http-readonly selected facade source is http-readonly",
       getSelectedReadRepositorySource("http-readonly") === "http-readonly",
       "http_readonly_selected_facade_not_http_readonly",
+    ),
+    passOrFail(
+      "rehearsal selected facade source is http-readonly",
+      getSelectedReadRepositorySource("http-sqlite-rehearsal") ===
+        "http-readonly",
+      "rehearsal_selected_facade_not_http_readonly",
     ),
     passOrFail(
       "unknown selected facade source is dexie",
@@ -136,6 +158,12 @@ export const runRepositoryBackendSelectionDiagnostics = (
       getSelectedReadRepositoriesForBackend("http-readonly").source ===
         "http-readonly",
       "http_readonly_selected_facade_source_mismatch",
+    ),
+    passOrFail(
+      "rehearsal selected facade maps to http readers",
+      getSelectedReadRepositoriesForBackend("http-sqlite-rehearsal").source ===
+        "http-readonly",
+      "rehearsal_selected_facade_source_mismatch",
     ),
   ];
 

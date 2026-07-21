@@ -43,6 +43,12 @@ import Settings from "./pages/Settings"; // NEW
 import LocalApiDiagnostics, {
   isLocalApiDiagnosticsEnabled,
 } from "./pages/LocalApiDiagnostics";
+import SqliteAuthorityRehearsalBanner from "./components/SqliteAuthorityRehearsalBanner";
+import {
+  SqliteAuthorityRehearsalProvider,
+  useSqliteAuthorityRehearsal,
+} from "./contexts/SqliteAuthorityRehearsalContext";
+import { isSqliteAuthorityRehearsalBackend } from "./repositories/adapterSelection";
 
 import {
   migrateBudgetSnapshots,
@@ -79,10 +85,12 @@ setupIonicReact();
 const InnerApp: React.FC = () => {
   const location = useLocation();
   const showLocalApiDiagnostics = isLocalApiDiagnosticsEnabled();
+  const rehearsal = useSqliteAuthorityRehearsal();
 
   return (
     <IonApp>
       <IonReactRouter>
+        <SqliteAuthorityRehearsalBanner />
         {/* Side menu */}
         <IonMenu side="start" contentId="main">
           <IonHeader>
@@ -112,14 +120,16 @@ const InnerApp: React.FC = () => {
             <IonList>
               <IonListHeader>System</IonListHeader>
               <IonMenuToggle autoHide={true}>
-                <IonItem button routerLink="/settings">
-                  <IonIcon
-                    aria-hidden="true"
-                    icon={settingsOutline}
-                    slot="start"
-                  />
-                  <IonLabel>Settings & Debug</IonLabel>
-                </IonItem>
+                {!rehearsal.selected && (
+                  <IonItem button routerLink="/settings">
+                    <IonIcon
+                      aria-hidden="true"
+                      icon={settingsOutline}
+                      slot="start"
+                    />
+                    <IonLabel>Settings & Debug</IonLabel>
+                  </IonItem>
+                )}
                 {showLocalApiDiagnostics && (
                   <IonItem button routerLink="/local-api-diagnostics">
                     <IonIcon
@@ -149,7 +159,7 @@ const InnerApp: React.FC = () => {
               <AddTransaction />
             </Route>
             <Route exact path="/transaction-details/:id">
-              <TransactionDetails />
+              {rehearsal.selected ? <Redirect to="/transactions" /> : <TransactionDetails />}
             </Route>
             <Route
               exact
@@ -185,7 +195,7 @@ const InnerApp: React.FC = () => {
             </Route>
             {/* NEW: Settings route */}
             <Route path="/settings">
-              <Settings />
+              {rehearsal.selected ? <Redirect to="/transactions" /> : <Settings />}
             </Route>
             <Route path="/local-api-diagnostics">
               <LocalApiDiagnostics />
@@ -217,6 +227,11 @@ const InnerApp: React.FC = () => {
 const App: React.FC = () => {
   // Run migrations on app startup
   useEffect(() => {
+    if (isSqliteAuthorityRehearsalBackend()) {
+      console.info("SQLite authority rehearsal selected; Dexie startup migrations skipped.");
+      return;
+    }
+
     const runMigrations = async () => {
       try {
         console.log("🚀 Starting database migrations...");
@@ -244,11 +259,13 @@ const App: React.FC = () => {
   }, []); // Run once on mount
 
   return (
-    <IonApp>
-      <IonReactRouter>
-        <InnerApp />
-      </IonReactRouter>
-    </IonApp>
+    <SqliteAuthorityRehearsalProvider>
+      <IonApp>
+        <IonReactRouter>
+          <InnerApp />
+        </IonReactRouter>
+      </IonApp>
+    </SqliteAuthorityRehearsalProvider>
   );
 };
 

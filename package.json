@@ -10,6 +10,7 @@
     "check:selected-read-imports": "node scripts/check-selected-read-imports.mjs",
     "check:no-runtime-artifacts": "node scripts/check-no-runtime-artifacts.mjs",
     "check:local-api-safety": "node scripts/check-local-api-safety.mjs",
+    "verify:sqlite-rehearsal": "node scripts/verify-sqlite-rehearsal.mjs",
     "test.e2e": "cypress run",
     "test.unit": "vitest",
     "lint": "eslint"

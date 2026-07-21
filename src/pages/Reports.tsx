@@ -38,6 +38,7 @@ import {
 import { reportRepository } from "../repositories";
 import {
   getRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
@@ -231,8 +232,10 @@ const Reports: React.FC = () => {
   } | null>(null);
   const reportsExperimentEnabled = isReportsReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(repositoryBackend);
   const reportsHttpReadonlyExperimentActive =
-    reportsExperimentEnabled && repositoryBackend === "http-readonly";
+    rehearsalSelected ||
+    (reportsExperimentEnabled && repositoryBackend === "http-readonly");
 
   // Load report whenever period type or date changes
   const loadReport = useCallback(async () => {

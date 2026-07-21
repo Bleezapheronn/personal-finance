@@ -4,6 +4,7 @@ This is a prototype-only local API skeleton. It currently exposes only:
 
 - `GET /health`
 - `GET /metadata`
+- `GET /prototype/write-capabilities`
 - `GET /prototype/sqlite/row-counts`
 - `GET /prototype/sqlite/tables/:tableName`
 - `GET /prototype/repositories/transactions`
@@ -248,6 +249,26 @@ npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token 
 
 The smoke test checks public, protected, rejected-origin, invalid-table, and invalid-pagination behavior. It does not print tokens, table rows, transaction data, account names, or SQLite paths. The table-read endpoint itself returns sensitive personal finance rows, so keep using it only for local prototype diagnostics. SQLite remains disposable and Dexie / IndexedDB remains authoritative.
 
+Normal smoke also verifies the protected, read-only write-capability endpoint.
+It checks token/origin protection, redaction, default-off capability values, and
+enabled values during explicit mutation smoke modes. The capability request
+does not mutate SQLite or Dexie.
+
+## SQLite Authority Rehearsal Verification
+
+From the repository root, the read-only rehearsal verifier uses the existing
+ignored Vite local API URL/token configuration:
+
+```bash
+npm run verify:sqlite-rehearsal
+```
+
+It calls `/health`, `/metadata`, `/prototype/write-capabilities`, and
+`/prototype/sqlite/row-counts`. It requires all nine existing backend write
+capabilities, `storageMode: "sqlite-disposable"`, `authoritative: false`, and
+an available configured SQLite database. It sends no mutation request and does
+not print the token, URL, database path, row data, or raw responses.
+
 ## Token Commands
 
 Show the local development token:
@@ -299,6 +320,19 @@ Expected response:
   "readonly": true
 }
 ```
+
+Write capabilities, token required:
+
+```bash
+$TOKEN = npm run token:show --silent
+curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/write-capabilities
+```
+
+The response contains booleans for the nine existing write flags, a fixed
+`sqlite-disposable` storage label, `authoritative: false`, safe unsupported
+operation codes, and non-sensitive safety booleans. It never returns
+environment values, tokens, paths, filenames, or raw configuration. The route
+opens configured SQLite read-only only to report whether it is available.
 
 SQLite row counts, token required:
 

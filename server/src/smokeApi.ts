@@ -772,6 +772,40 @@ const buildChecks = (
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
+  const expectedEnabledCapabilities = new Set<string>([
+    ...(allowRecipientActivateWriteSmoke || allowRecipientDeactivateWriteSmoke
+      ? ["recipientActiveStateWrites"]
+      : []),
+    ...(allowRecipientCreateUpdateWriteSmoke
+      ? ["recipientCreateUpdateWrites"]
+      : []),
+    ...(allowBucketCategoryWriteSmoke ? ["bucketCategoryWrites"] : []),
+    ...(allowAccountWriteSmoke ? ["accountWrites"] : []),
+    ...(allowTransactionBasicWriteSmoke ||
+    allowTransactionCostBudgetWriteSmoke ||
+    allowTransactionTransferWriteSmoke
+      ? ["transactionBasicWrites"]
+      : []),
+    ...(allowTransactionCostBudgetWriteSmoke
+      ? ["transactionCostBudgetWrites"]
+      : []),
+    ...(allowTransactionTransferWriteSmoke
+      ? ["transactionTransferWrites"]
+      : []),
+    ...(allowSmsTemplateWriteSmoke ? ["smsTemplateWrites"] : []),
+    ...(allowBudgetDefinitionWriteSmoke ? ["budgetDefinitionWrites"] : []),
+  ]);
+  const writeCapabilityKeys = [
+    "recipientActiveStateWrites",
+    "recipientCreateUpdateWrites",
+    "bucketCategoryWrites",
+    "accountWrites",
+    "transactionBasicWrites",
+    "transactionCostBudgetWrites",
+    "transactionTransferWrites",
+    "smsTemplateWrites",
+    "budgetDefinitionWrites",
+  ] as const;
   let sampledTransactionId: number | undefined;
   let sampledBudgetId: number | undefined;
   let sampledBudgetSnapshotId: number | undefined;
@@ -829,6 +863,81 @@ const buildChecks = (
         const { status, json } = await requestJson(baseUrl, "/metadata", authedOptions);
         expectStatus(status, 200);
         expect(json.mode === "prototype" && json.readonly === true, "unexpected_metadata_response");
+      },
+    },
+    {
+      name: "write capabilities fail without token",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/write-capabilities",
+        );
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "unexpected_capabilities_unauthorized_response");
+      },
+    },
+    {
+      name: "write capabilities reject unexpected origin",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/write-capabilities",
+          {
+            token,
+            origin: "http://unexpected-origin.invalid",
+          },
+        );
+        expectStatus(status, 403);
+        expect(json.error === "forbidden_origin", "unexpected_capabilities_origin_response");
+      },
+    },
+    {
+      name: "write capabilities are protected read-only and redacted",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/write-capabilities",
+          authedOptions,
+        );
+        expectStatus(status, 200);
+        expect(json.ok === true, "write_capabilities_not_ok");
+        expect(json.storageMode === "sqlite-disposable", "unexpected_storage_mode");
+        expect(json.authoritative === false, "unexpected_authoritative_mode");
+        expect(typeof json.capabilities === "object", "capabilities_missing");
+        expect(Array.isArray(json.unsupportedOperations), "unsupported_operations_missing");
+        expect(typeof json.safety === "object", "capabilities_safety_missing");
+
+        const capabilities = json.capabilities as Record<string, unknown>;
+        for (const key of writeCapabilityKeys) {
+          expect(typeof capabilities[key] === "boolean", `capability_${key}_invalid`);
+        }
+
+        const safety = json.safety as Record<string, unknown>;
+        expect(safety.endpointReadOnly === true, "capabilities_endpoint_not_read_only");
+        expect(safety.dexieAccessed === false, "capabilities_dexie_access_reported");
+        expect(safety.filesWritten === false, "capabilities_file_write_reported");
+
+        if (expectedEnabledCapabilities.size === 0) {
+          for (const key of writeCapabilityKeys) {
+            expect(capabilities[key] === false, `default_capability_${key}_enabled`);
+          }
+        } else {
+          for (const key of expectedEnabledCapabilities) {
+            expect(capabilities[key] === true, `expected_capability_${key}_disabled`);
+          }
+        }
+
+        const serialized = JSON.stringify(json);
+        expect(!serialized.includes(token), "capabilities_echoed_token");
+        for (const forbiddenKey of [
+          "sqlitePath",
+          "backupPath",
+          "filePath",
+          "token",
+          "environment",
+        ]) {
+          expect(!serialized.includes(forbiddenKey), `capabilities_exposed_${forbiddenKey}`);
+        }
       },
     },
     {

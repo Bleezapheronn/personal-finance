@@ -43,8 +43,10 @@ import {
 } from "../repositories";
 import {
   getRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import {
   activateSmsTemplateInDisposableSqlite,
@@ -200,15 +202,19 @@ const SmsImportTemplatesManagement: React.FC = () => {
     useState<number | undefined>(undefined);
 
   const selectedBackend = getRepositoryBackend();
+  const rehearsal = useSqliteAuthorityRehearsal();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
   const smsTemplatesReadExperimentEnabled =
     isSmsTemplatesReadExperimentEnabled();
   const smsTemplatesWriteExperimentEnabled =
     isSmsTemplatesWriteExperimentEnabled();
   const smsTemplatesSqliteWriteExperimentActive =
-    smsTemplatesWriteExperimentEnabled && selectedBackend === "http-readonly";
+    (smsTemplatesWriteExperimentEnabled && selectedBackend === "http-readonly") ||
+    (rehearsalSelected && rehearsal.ready);
   const smsTemplatesReadExperimentHttpReadonly =
-    (smsTemplatesReadExperimentEnabled || smsTemplatesWriteExperimentEnabled) &&
-    selectedBackend === "http-readonly";
+    rehearsalSelected ||
+    ((smsTemplatesReadExperimentEnabled || smsTemplatesWriteExperimentEnabled) &&
+      selectedBackend === "http-readonly");
   const smsTemplatesHttpReadonlyWithoutWrites =
     smsTemplatesReadExperimentHttpReadonly &&
     !smsTemplatesSqliteWriteExperimentActive;
@@ -244,7 +250,27 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
       let temps: SmsImportTemplate[];
       let selectedReadCount: number | undefined;
-      const accsPromise = accountRepository.listAccounts();
+      const accsPromise: Promise<Account[]> = smsTemplatesReadExperimentHttpReadonly
+        ? getSelectedReadRepositories(selectedBackend)
+            .accounts.list({ limit: 500, offset: 0 })
+            .then((result) => {
+              const rows = previewRows(result as DevPreviewListResult);
+              if (!rows) {
+                throw new Error("invalid_sms_template_accounts_response");
+              }
+              return rows.map(
+                (row) => {
+                  const source = row as Record<string, unknown>;
+                  return {
+                    ...source,
+                    id: Number(source.id),
+                    isActive: booleanValue(source.isActive),
+                    isCredit: booleanValue(source.isCredit),
+                  } as Account;
+                },
+              );
+            })
+        : accountRepository.listAccounts();
 
       if (smsTemplatesReadExperimentHttpReadonly) {
         const repositories = getSelectedReadRepositories(selectedBackend);

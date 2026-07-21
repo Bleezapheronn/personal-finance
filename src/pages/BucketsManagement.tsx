@@ -49,7 +49,12 @@ import {
   AddCategoryModal,
   type CategoryFormValues,
 } from "../components/AddCategoryModal";
-import { getRepositoryBackend, type RepositoryBackend } from "../repositories/adapterSelection";
+import {
+  getRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
+  type RepositoryBackend,
+} from "../repositories/adapterSelection";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { categoryRepository, transactionRepository } from "../repositories";
 import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
@@ -239,17 +244,21 @@ const BucketsManagement: React.FC = () => {
   );
 
   const selectedBackend = getRepositoryBackend();
+  const rehearsal = useSqliteAuthorityRehearsal();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
   const bucketsCategoriesReadExperimentEnabled =
     isBucketsCategoriesReadExperimentEnabled();
   const bucketsCategoriesWriteExperimentEnabled =
     isBucketsCategoriesWriteExperimentEnabled();
   const bucketsCategoriesSqliteWriteExperimentActive =
-    bucketsCategoriesWriteExperimentEnabled &&
-    selectedBackend === "http-readonly";
+    (bucketsCategoriesWriteExperimentEnabled &&
+      selectedBackend === "http-readonly") ||
+    (rehearsalSelected && rehearsal.ready);
   const bucketsCategoriesReadExperimentHttpReadonly =
-    (bucketsCategoriesReadExperimentEnabled ||
+    rehearsalSelected ||
+    ((bucketsCategoriesReadExperimentEnabled ||
       bucketsCategoriesWriteExperimentEnabled) &&
-    selectedBackend === "http-readonly";
+      selectedBackend === "http-readonly");
   const bucketsCategoriesHttpReadonlyWithoutWrites =
     bucketsCategoriesReadExperimentHttpReadonly &&
     !bucketsCategoriesSqliteWriteExperimentActive;

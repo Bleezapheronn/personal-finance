@@ -60,7 +60,12 @@ import {
   recipientRepository,
   smsImportTemplateRepository,
 } from "../repositories";
-import { getRepositoryBackend } from "../repositories/adapterSelection";
+import {
+  getRepositoryBackend,
+  isHttpSelectedReadRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
+} from "../repositories/adapterSelection";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import type {
   AccountDto,
@@ -299,6 +304,8 @@ const AddTransaction: React.FC = () => {
   const isEditMode = Boolean(id);
   const duplicatePrefill = location.state?.duplicatePrefill;
   const selectedBackend = getRepositoryBackend();
+  const rehearsal = useSqliteAuthorityRehearsal();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
   const transactionsBasicWriteExperimentEnabled =
     isTransactionsBasicWriteExperimentEnabled();
   const transactionsCostBudgetWriteExperimentEnabled =
@@ -306,16 +313,17 @@ const AddTransaction: React.FC = () => {
   const transactionsTransferWriteExperimentEnabled =
     isTransactionsTransferWriteExperimentEnabled();
   const transactionsSqliteWriteExperimentActive =
-    selectedBackend === "http-readonly" &&
-    transactionsBasicWriteExperimentEnabled;
+    (selectedBackend === "http-readonly" &&
+      transactionsBasicWriteExperimentEnabled) ||
+    (rehearsalSelected && rehearsal.ready);
   const transactionsHttpBackendSelected =
-    selectedBackend === "http-readonly";
+    isHttpSelectedReadRepositoryBackend(selectedBackend);
   const transactionsCostBudgetWriteExperimentActive =
     transactionsSqliteWriteExperimentActive &&
-    transactionsCostBudgetWriteExperimentEnabled;
+    (transactionsCostBudgetWriteExperimentEnabled || rehearsalSelected);
   const transactionsTransferWriteExperimentActive =
     transactionsSqliteWriteExperimentActive &&
-    transactionsTransferWriteExperimentEnabled;
+    (transactionsTransferWriteExperimentEnabled || rehearsalSelected);
 
   // Combined date and time into single datetime state
   const [transactionDateTime, setTransactionDateTime] = useState<string>("");
@@ -424,7 +432,7 @@ const AddTransaction: React.FC = () => {
   const loadLookupData = async () => {
     try {
       if (transactionsHttpBackendSelected) {
-        const repositories = getSelectedReadRepositories("http-readonly");
+        const repositories = getSelectedReadRepositories(selectedBackend);
         const [
           bucketResult,
           categoryResult,
@@ -566,8 +574,8 @@ const AddTransaction: React.FC = () => {
       const loadTransaction = async () => {
         try {
           const selectedTransaction = transactionsHttpBackendSelected
-            ? await getSelectedReadRepositories(
-                "http-readonly",
+              ? await getSelectedReadRepositories(
+                selectedBackend,
               ).transactions.getById(Number(id))
             : await db.transactions.get(Number(id));
           const txn = selectedTransaction
@@ -599,7 +607,7 @@ const AddTransaction: React.FC = () => {
               const pairedSelectedTransaction =
                 transactionsHttpBackendSelected
                   ? await getSelectedReadRepositories(
-                      "http-readonly",
+                      selectedBackend,
                     ).transactions.getById(txn.transferPairId)
                   : await db.transactions.get(txn.transferPairId);
               const pairedTxn = pairedSelectedTransaction

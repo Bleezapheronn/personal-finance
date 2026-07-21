@@ -515,14 +515,15 @@ const httpReadonlyReadRepositories: SelectedReadRepositories = {
 
 export const getSelectedReadRepositorySource = (
   configuredBackend: string | undefined,
-): SelectedReadRepositorySource => resolveRepositoryBackend(configuredBackend);
+): SelectedReadRepositorySource =>
+  resolveRepositoryBackend(configuredBackend) === "dexie"
+    ? "dexie"
+    : "http-readonly";
 
 export const getSelectedReadRepositoriesForBackend = (
   backend: RepositoryBackend,
 ): SelectedReadRepositories =>
-  backend === "http-readonly"
-    ? httpReadonlyReadRepositories
-    : dexieReadRepositories;
+  backend === "dexie" ? dexieReadRepositories : httpReadonlyReadRepositories;
 
 export const getSelectedReadRepositories = (
   backend: RepositoryBackend = getRepositoryBackend(),

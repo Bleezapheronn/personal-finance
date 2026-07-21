@@ -41,7 +41,12 @@ import {
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
-import { getRepositoryBackend } from "../repositories/adapterSelection";
+import {
+  getRepositoryBackend,
+  isHttpSelectedReadRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
+} from "../repositories/adapterSelection";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import {
   budgetDefinitionWriteErrorCode,
@@ -123,10 +128,14 @@ const AddBudget: React.FC = () => {
   const isEditMode = Boolean(id);
   const isFromTransaction = Boolean(transactionId);
   const repositoryBackend = getRepositoryBackend();
-  const budgetDefinitionHttpMode = repositoryBackend === "http-readonly";
+  const rehearsal = useSqliteAuthorityRehearsal();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(repositoryBackend);
+  const budgetDefinitionHttpMode =
+    isHttpSelectedReadRepositoryBackend(repositoryBackend);
   const budgetDefinitionWriteExperimentActive =
-    budgetDefinitionHttpMode &&
-    isBudgetsWriteExperimentEnabled();
+    (repositoryBackend === "http-readonly" &&
+      isBudgetsWriteExperimentEnabled()) ||
+    (rehearsalSelected && rehearsal.ready);
 
   // Budget fields
   const [budgetType, setBudgetType] = useState<BudgetType>("expense");

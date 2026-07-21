@@ -7,8 +7,9 @@ SQLite remains disposable. No authority migration, dual-write, or automatic
 synchronization has occurred.
 
 This document is the operational source of truth for pausing, recovering, and
-resuming the current write-experiment phase. Detailed endpoint contracts remain
-in `server/README.md` and the domain-specific implementation documents.
+resuming the current write-experiment phase, including the reversible SQLite
+authority rehearsal. Detailed endpoint contracts remain in `server/README.md`
+and the domain-specific implementation documents.
 
 ## Completed Capabilities
 
@@ -35,8 +36,8 @@ All flags default off.
 - There is no automatic Dexie-to-SQLite or SQLite-to-Dexie synchronization.
 - The default repository backend remains `dexie`; missing or unknown backend
   configuration falls back to Dexie.
-- Every write UI experiment requires its explicit frontend flag and the
-  `http-readonly` repository backend.
+- A narrow write UI requires either its individual frontend flag with the
+  `http-readonly` backend or the fully ready `http-sqlite-rehearsal` mode.
 - Every real SQLite write endpoint requires its explicit backend flag.
 - Successful mutation smoke or browser write testing dirties the configured
   SQLite database.
@@ -44,6 +45,38 @@ All flags default off.
   requested and must use a disposable database.
 - No write experiment changes Dexie, makes SQLite authoritative, or proves that
   the current browser-token model is suitable outside local development.
+
+## Reversible Authority Rehearsal
+
+The rehearsal is a controlled local-dev mode, not a permanent migration. It is
+disabled unless both of these exact frontend settings are present:
+
+```text
+VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-sqlite-rehearsal
+VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_REHEARSAL=true
+```
+
+The protected read-only capability check must also report all nine existing
+backend write flags enabled and disposable SQLite available. Any missing flag,
+unavailable API, invalid token/origin, malformed response, or unavailable
+SQLite keeps every mutation control disabled. Reads may remain on HTTP, but the
+app never falls back to Dexie writes or partially enables domains.
+
+When ready, the mode reuses only the existing selected-read repositories and
+narrow dry-run-first write helpers. A persistent global banner identifies ready
+or blocked status. Dexie startup migrations are skipped, and Dexie-only
+Settings and direct Transaction Details routes are blocked for the session.
+All known unsupported operations in this document remain unavailable.
+
+The read-only readiness command is:
+
+```powershell
+npm run verify:sqlite-rehearsal
+```
+
+It calls health, metadata, write capabilities, and row counts using the
+existing ignored local Vite API configuration. It performs no mutation and
+prints no token, URL, path, filename, row, or raw response.
 
 ## Known Gaps
 
@@ -110,7 +143,9 @@ fresh backup used for verification.
 
 ## Rollback Procedure
 
-1. Disable all frontend write-experiment flags:
+1. Set `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie` and disable
+   `VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_REHEARSAL`.
+2. Disable all individual frontend write-experiment flags:
    - `VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT`
    - `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT`
    - `VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT`
@@ -119,8 +154,6 @@ fresh backup used for verification.
    - `VITE_PERSONAL_FINANCE_TRANSACTIONS_TRANSFER_WRITE_EXPERIMENT`
    - `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT`
    - `VITE_PERSONAL_FINANCE_BUDGETS_WRITE_EXPERIMENT`
-2. Set `VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, or remove the setting
-   so the safe Dexie default is selected.
 3. Restart Vite.
 4. Stop the local API if it is no longer needed.
 5. Delete or re-import disposable SQLite if it was mutated.

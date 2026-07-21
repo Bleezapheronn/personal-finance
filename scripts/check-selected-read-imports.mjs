@@ -34,6 +34,7 @@ const approvedFiles = new Set(
     "src/repositories/selectedReadRepositories.ts",
     "src/repositories/selectedReadRepositoryDiagnostics.ts",
     "src/repositories/smsTemplatesReadExperimentDiagnostics.ts",
+    "src/repositories/sqliteAuthorityRehearsal.ts",
     "src/repositories/transactionsReadParityDiagnostics.ts",
   ].map((path) => path.replaceAll("/", sep)),
 );

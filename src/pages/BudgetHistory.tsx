@@ -59,6 +59,7 @@ import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCa
 import { budgetRepository } from "../repositories";
 import {
   getRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
@@ -501,8 +502,10 @@ const BudgetHistory: React.FC = () => {
   const budgetHistoryReadExperimentEnabled =
     isBudgetHistoryReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(repositoryBackend);
   const budgetHistoryHttpReadonlyExperimentActive =
-    budgetHistoryReadExperimentEnabled && repositoryBackend === "http-readonly";
+    rehearsalSelected ||
+    (budgetHistoryReadExperimentEnabled && repositoryBackend === "http-readonly");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");

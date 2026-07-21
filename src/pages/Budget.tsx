@@ -68,8 +68,10 @@ import { ensureBudgetSnapshotCoverage } from "../utils/budgetSnapshots";
 import { ImportModal } from "../components/ImportModal";
 import {
   getRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { isBudgetsWriteExperimentEnabled } from "../repositories/http/budgetDefinitionWriteExperiment";
 import "./Budget.css";
@@ -577,12 +579,16 @@ const BudgetPage: React.FC = () => {
   const history = useHistory();
   const budgetReadExperimentEnabled = isBudgetReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
+  const rehearsal = useSqliteAuthorityRehearsal();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(repositoryBackend);
   const budgetDefinitionWriteExperimentActive =
-    repositoryBackend === "http-readonly" &&
-    isBudgetsWriteExperimentEnabled();
+    (repositoryBackend === "http-readonly" &&
+      isBudgetsWriteExperimentEnabled()) ||
+    (rehearsalSelected && rehearsal.ready);
   const budgetHttpReadonlyExperimentActive =
-    repositoryBackend === "http-readonly" &&
-    (budgetReadExperimentEnabled || budgetDefinitionWriteExperimentActive);
+    rehearsalSelected ||
+    (repositoryBackend === "http-readonly" &&
+      (budgetReadExperimentEnabled || budgetDefinitionWriteExperimentActive));
 
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [budgetSnapshots, setBudgetSnapshots] = useState<BudgetSnapshot[]>([]);

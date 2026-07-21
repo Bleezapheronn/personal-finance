@@ -44,8 +44,10 @@ import { MergeRecipientsModal } from "../components/MergeRecipientsModal";
 import { recipientRepository, transactionRepository } from "../repositories";
 import {
   getRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
 import {
@@ -179,13 +181,17 @@ const RecipientsManagement: React.FC = () => {
     useState<number | undefined>(undefined);
 
   const selectedBackend = getRepositoryBackend();
+  const rehearsal = useSqliteAuthorityRehearsal();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
   const recipientsReadExperimentEnabled = isRecipientsReadExperimentEnabled();
   const recipientsWriteExperimentEnabled = isRecipientsWriteExperimentEnabled();
   const recipientsSqliteWriteExperimentActive =
-    recipientsWriteExperimentEnabled && selectedBackend === "http-readonly";
+    (recipientsWriteExperimentEnabled && selectedBackend === "http-readonly") ||
+    (rehearsalSelected && rehearsal.ready);
   const recipientsHttpSelectedReadActive =
-    (recipientsReadExperimentEnabled || recipientsWriteExperimentEnabled) &&
-    selectedBackend === "http-readonly";
+    rehearsalSelected ||
+    ((recipientsReadExperimentEnabled || recipientsWriteExperimentEnabled) &&
+      selectedBackend === "http-readonly");
   const recipientsHttpReadonlyWithoutWrites =
     recipientsHttpSelectedReadActive && !recipientsSqliteWriteExperimentActive;
 
@@ -272,12 +278,39 @@ const RecipientsManagement: React.FC = () => {
       setRecipientsReadExperimentCount(selectedReadCount);
 
       // Get transactions to count usage
-      const transactions = await transactionRepository.listTransactions();
+      let transactionRecipientIds: number[];
+      if (recipientsHttpSelectedReadActive) {
+        const repositories = getSelectedReadRepositories(selectedBackend);
+        const reportedCount = await repositories.transactions.count();
+        const rows: Array<Record<string, unknown>> = [];
+        const pageSize = 500;
+
+        while (rows.length < reportedCount) {
+          const result = await repositories.transactions.list({
+            limit: Math.min(pageSize, reportedCount - rows.length),
+            offset: rows.length,
+          });
+          const pageRows = previewRows(result as DevPreviewListResult);
+          if (!pageRows || pageRows.length === 0) {
+            break;
+          }
+          rows.push(...pageRows);
+        }
+
+        if (rows.length !== reportedCount) {
+          throw new Error("recipients_transaction_usage_read_incomplete");
+        }
+        transactionRecipientIds = rows.map((row) => Number(row.recipientId));
+      } else {
+        transactionRecipientIds = (
+          await transactionRepository.listTransactions()
+        ).map((transaction) => transaction.recipientId);
+      }
       const counts = new Map<number, number>();
 
-      transactions.forEach((txn) => {
-        const count = counts.get(txn.recipientId) || 0;
-        counts.set(txn.recipientId, count + 1);
+      transactionRecipientIds.forEach((recipientId) => {
+        const count = counts.get(recipientId) || 0;
+        counts.set(recipientId, count + 1);
       });
 
       setRecipientCounts(counts); // Store counts in state

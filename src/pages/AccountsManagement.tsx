@@ -61,8 +61,10 @@ import {
 import { accountRepository, transactionRepository } from "../repositories";
 import {
   getRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
 import {
@@ -185,13 +187,17 @@ const AccountsManagement: React.FC = () => {
     useState<number | undefined>(undefined);
 
   const selectedBackend = getRepositoryBackend();
+  const rehearsal = useSqliteAuthorityRehearsal();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
   const accountsReadExperimentEnabled = isAccountsReadExperimentEnabled();
   const accountsWriteExperimentEnabled = isAccountsWriteExperimentEnabled();
   const accountsSqliteWriteExperimentActive =
-    accountsWriteExperimentEnabled && selectedBackend === "http-readonly";
+    (accountsWriteExperimentEnabled && selectedBackend === "http-readonly") ||
+    (rehearsalSelected && rehearsal.ready);
   const accountsReadExperimentHttpReadonly =
-    (accountsReadExperimentEnabled || accountsWriteExperimentEnabled) &&
-    selectedBackend === "http-readonly";
+    rehearsalSelected ||
+    ((accountsReadExperimentEnabled || accountsWriteExperimentEnabled) &&
+      selectedBackend === "http-readonly");
   const accountsHttpReadonlyWithoutWrites =
     accountsReadExperimentHttpReadonly && !accountsSqliteWriteExperimentActive;
 

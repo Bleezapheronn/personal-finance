@@ -70,8 +70,10 @@ import {
 } from "../utils/devPreview";
 import {
   getRepositoryBackend,
+  isSqliteAuthorityRehearsalBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import {
   isCostBudgetTransactionWriteEligible,
@@ -549,6 +551,8 @@ const Transactions: React.FC = () => {
   const history = useHistory();
   const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
   const selectedBackend = getRepositoryBackend();
+  const rehearsal = useSqliteAuthorityRehearsal();
+  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
   const transactionsReadExperimentEnabled =
     isTransactionsReadExperimentEnabled();
   const transactionsBasicWriteExperimentEnabled =
@@ -558,18 +562,20 @@ const Transactions: React.FC = () => {
   const transactionsTransferWriteExperimentEnabled =
     isTransactionsTransferWriteExperimentEnabled();
   const transactionsSqliteWriteExperimentActive =
-    transactionsBasicWriteExperimentEnabled &&
-    selectedBackend === "http-readonly";
+    (transactionsBasicWriteExperimentEnabled &&
+      selectedBackend === "http-readonly") ||
+    (rehearsalSelected && rehearsal.ready);
   const transactionsCostBudgetWriteExperimentActive =
     transactionsSqliteWriteExperimentActive &&
-    transactionsCostBudgetWriteExperimentEnabled;
+    (transactionsCostBudgetWriteExperimentEnabled || rehearsalSelected);
   const transactionsTransferWriteExperimentActive =
     transactionsSqliteWriteExperimentActive &&
-    transactionsTransferWriteExperimentEnabled;
+    (transactionsTransferWriteExperimentEnabled || rehearsalSelected);
   const transactionsHttpSelectedReadActive =
-    (transactionsReadExperimentEnabled ||
+    rehearsalSelected ||
+    ((transactionsReadExperimentEnabled ||
       transactionsBasicWriteExperimentEnabled) &&
-    selectedBackend === "http-readonly";
+      selectedBackend === "http-readonly");
 
   const fetchTransactions = async () => {
     setLoading(true);

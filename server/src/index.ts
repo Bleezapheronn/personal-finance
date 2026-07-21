@@ -153,6 +153,7 @@ import {
   validateSmsTemplateWritePayload,
 } from "./lib/smsTemplateWrite.js";
 import { readOrCreateToken } from "./tokenStore.js";
+import { buildWriteCapabilitiesResponse } from "./lib/writeCapabilities.js";
 
 const server = Fastify({
   logger: {
@@ -457,6 +458,25 @@ server.get("/metadata", async () => {
     apiVersion: API_VERSION,
     readonly: READONLY_MODE,
   };
+});
+
+server.get("/prototype/write-capabilities", async () => {
+  let sqliteAvailable = false;
+  let database: ReturnType<typeof openReadOnlyDatabase> | undefined;
+
+  try {
+    const opened = openConfiguredReadOnlyDatabase();
+    if (opened.ok) {
+      database = opened.db;
+      sqliteAvailable = true;
+    }
+  } catch {
+    sqliteAvailable = false;
+  } finally {
+    database?.close();
+  }
+
+  return buildWriteCapabilitiesResponse(sqliteAvailable);
 });
 
 server.get("/prototype/sqlite/row-counts", async (_request, reply) => {

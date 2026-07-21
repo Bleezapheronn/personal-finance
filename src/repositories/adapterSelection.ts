@@ -1,4 +1,7 @@
-export type RepositoryBackend = "dexie" | "http-readonly";
+export type RepositoryBackend =
+  | "dexie"
+  | "http-readonly"
+  | "http-sqlite-rehearsal";
 
 const REPOSITORY_BACKEND_ENV_VAR = "VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND";
 const DEFAULT_REPOSITORY_BACKEND: RepositoryBackend = "dexie";
@@ -6,6 +9,7 @@ const DEFAULT_REPOSITORY_BACKEND: RepositoryBackend = "dexie";
 const repositoryBackendValues = new Set<RepositoryBackend>([
   "dexie",
   "http-readonly",
+  "http-sqlite-rehearsal",
 ]);
 
 const getEnvValue = (key: string): string | undefined => {
@@ -38,6 +42,14 @@ export const isDexieRepositoryBackend = (): boolean =>
 export const isHttpReadonlyRepositoryBackend = (): boolean =>
   getRepositoryBackend() === "http-readonly";
 
+export const isSqliteAuthorityRehearsalBackend = (
+  backend: RepositoryBackend = getRepositoryBackend(),
+): boolean => backend === "http-sqlite-rehearsal";
+
+export const isHttpSelectedReadRepositoryBackend = (
+  backend: RepositoryBackend = getRepositoryBackend(),
+): boolean => backend !== "dexie";
+
 export const repositoryBackendSupportsWrites = (
   backend: RepositoryBackend,
 ): boolean => backend === "dexie";
@@ -46,6 +58,6 @@ export const assertRepositoryBackendSupportsWrites = (
   backend: RepositoryBackend = getRepositoryBackend(),
 ): void => {
   if (!repositoryBackendSupportsWrites(backend)) {
-    throw new Error("http_readonly_repository_backend_does_not_support_writes");
+    throw new Error("http_repository_backend_does_not_support_direct_writes");
   }
 };

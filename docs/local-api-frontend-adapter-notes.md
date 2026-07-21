@@ -1,8 +1,9 @@
 # Local API Frontend Adapter Notes
 
-This is prototype scaffolding only. The live Ionic app still uses Dexie /
-IndexedDB through the existing repositories, and IndexedDB remains the
-authoritative data store.
+This is prototype scaffolding only. Dexie / IndexedDB remains the default and
+authoritative data store. A separate, explicit SQLite authority rehearsal mode
+can route supported reads and writes through disposable local SQLite, but it is
+disabled by default and is not an authority migration.
 
 Migration readiness gates are summarized in
 [selected-read-migration-readiness-audit.md](selected-read-migration-readiness-audit.md).
@@ -19,6 +20,7 @@ Manual prototype calls require Vite environment variables:
 
 ```text
 VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie
+VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_REHEARSAL=false
 VITE_PERSONAL_FINANCE_LOCAL_API_URL=http://127.0.0.1:3147
 VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN=<local prototype token>
 VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS=true
@@ -33,10 +35,71 @@ VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT=true
 - `dexie` - default, authoritative, normal app behavior
 - `http-readonly` - experimental local API read-only mode for future manual
   adapter experiments
+- `http-sqlite-rehearsal` - explicit all-area rehearsal mode; selected reads
+  use HTTP and mutations remain globally blocked until the acknowledgement,
+  local API configuration, disposable SQLite availability, and all nine
+  backend write capabilities pass
 
 Missing or unknown backend values fall back to `dexie`. Existing pages still use
 the Dexie repository exports by default; the adapter selection scaffold does not
 switch any live page or route to HTTP.
+
+## SQLite Authority Rehearsal
+
+The rehearsal requires both:
+
+```text
+VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-sqlite-rehearsal
+VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_REHEARSAL=true
+```
+
+It also requires the existing local API URL/token and all backend write flags:
+
+```text
+PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true
+PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES=true
+PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true
+PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES=true
+PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true
+PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES=true
+PERSONAL_FINANCE_ENABLE_TRANSACTION_TRANSFER_WRITES=true
+PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES=true
+PERSONAL_FINANCE_ENABLE_BUDGET_DEFINITION_WRITES=true
+```
+
+At startup, one readiness provider calls the protected
+`GET /prototype/write-capabilities` endpoint. Until the response is valid,
+disposable SQLite is available, and all capabilities are true, every rehearsal
+mutation control remains disabled. A missing acknowledgement, URL, token,
+server, capability, or valid response never falls back to a Dexie write.
+
+When ready, the existing selected-read repositories and dry-run-first narrow
+write helpers are reused for Recipients, Buckets/Categories, Accounts,
+Transactions, SMS Import Templates, and Budget Definitions. Reports and Budget
+History use their existing selected HTTP read paths. Dexie startup migrations,
+Settings, and direct Transaction Details are unavailable during rehearsal so
+the app does not silently read or mutate Dexie through those paths.
+
+Unsupported actions remain blocked, including recipient delete/merge; bucket
+or category delete/reorder/active-state actions; Account delete/merge/
+active-state/reference migration; transaction delete/duplicate/import/export
+and transfer repair; Budget-definition delete; and every budget snapshot
+lifecycle mutation. The global banner reports whether rehearsal is ready and
+lists safe missing requirement/capability names without exposing secrets or
+paths.
+
+Run the non-mutating readiness verifier from the repository root:
+
+```bash
+npm run verify:sqlite-rehearsal
+```
+
+Rollback is exact and restart-based: set
+`VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=dexie`, disable
+`VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_REHEARSAL`, restart Vite, and optionally
+stop the local API. Rehearsal writes never copy back into Dexie. Re-import the
+disposable SQLite database from a fresh matching backup before clean parity
+work after any rehearsal mutation.
 
 `VITE_PERSONAL_FINANCE_SHOW_LOCAL_API_DIAGNOSTICS=true` enables the dev-only
 Local API Diagnostics screen. The screen is hidden by default and should remain
