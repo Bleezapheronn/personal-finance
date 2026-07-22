@@ -1,6 +1,6 @@
 # SQLite Write Experiment Operational Readiness
 
-Status at `budgets-definition-ui-write-experiment-complete-baseline`:
+Status at `budget-snapshot-generation-phase1-complete-baseline`:
 the current local SQLite write experiments are implemented, verified, and
 safe to leave committed but disabled. Dexie / IndexedDB remains authoritative.
 SQLite remains disposable. No authority migration, dual-write, or automatic
@@ -164,6 +164,76 @@ fresh backup used for verification.
 SQLite-only experiment writes do not mutate Dexie. Returning the frontend to
 Dexie restores the normal authoritative app path without copying experimental
 SQLite changes into IndexedDB.
+
+## SQLite-Native Recovery Rehearsal
+
+SQLite-native backup and restore tooling now provides a bounded recovery
+rehearsal for the disposable store. This is recovery evidence for the
+prototype, not authority migration approval.
+
+Before backup, stop the local API or ensure every SQLite write capability is
+disabled. SQLite's online backup API creates a transactionally consistent
+destination, but a logical write concurrent with the operation makes the
+source before/after verification fail closed. Raw filesystem copy is not an
+approved backup method because journal or WAL state may be required for a
+consistent image.
+
+From `server/`, create the native backup and redacted manifest at fresh paths
+outside the repository:
+
+```powershell
+npm run backup:sqlite -- -- --source <source.sqlite> --output <backup.sqlite>
+```
+
+Then restore to another fresh outside-repository path:
+
+```powershell
+npm run restore:sqlite-rehearsal -- -- --backup <backup.sqlite> --manifest <backup.sqlite.manifest.json> --output <restored.sqlite>
+```
+
+Neither command overwrites an existing file or permits source/output aliases.
+The backup verifies source immutability and source-to-backup equivalence. The
+restore verifies the backup against its manifest, verifies the backup did not
+change during restore, and verifies the restored database against both.
+Logical verification covers integrity check, schema and known tables, counts,
+content fingerprints, financial aggregates, report totals, Budget History,
+transfer integrity, and Budget snapshot linkage. No Budget snapshot lifecycle
+helper runs and no source row is mutated.
+
+The manifest intentionally contains only fingerprints, counts, derived
+summaries, and timestamps. It has no full paths or raw financial rows, but it
+is still a generated runtime artifact and must stay outside Git. The recorded
+destination-local SQLite `schema_version` and journal mode are diagnostic
+metadata; exact logical equality is based on schema fingerprint,
+`user_version`, table content, and derived summaries.
+
+Recovery acceptance requires all of the following:
+
+1. Native backup and restore commands report pass.
+2. The original source identity remains unchanged.
+3. Normal non-mutating `smoke:api` passes against the restored database.
+4. All enabled-capability authority-rehearsal checks pass against the restored
+   database when that mode is being rehearsed.
+5. `verify:sqlite` passes against the exact matching Dexie full backup when
+   available.
+6. No SQLite, manifest, report, log, token, backup, or environment artifact
+   appears in the repository.
+
+To rehearse rollback with the verified restore: stop the API, preserve the
+current disposable database at a separate outside-repository path, point
+`PERSONAL_FINANCE_SQLITE_PATH` at the fresh verified restore, start the API on
+a unique local port, run normal non-mutating `smoke:api`, then run
+`verify:sqlite-rehearsal`. Stop the API after the rehearsal. Do not replace or
+rename a configured database underneath a running API process.
+
+The original full JSON backup/import workflow remains an independent clean
+bootstrap and parity path from the Dexie-authoritative store. A native SQLite
+backup is useful for preserving experimental SQLite mutations, but it does
+not replace the Dexie recovery path or transfer authority to SQLite.
+
+If any check fails, discard the incomplete backup/restored outputs, keep Dexie
+authoritative, and create a fresh disposable SQLite import before retrying.
+Never replace the API's configured database while the API is running.
 
 ## Not Ready For Authority Migration
 

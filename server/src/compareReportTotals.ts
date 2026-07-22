@@ -43,7 +43,7 @@ interface BucketForReports {
   excludeFromReports: boolean;
 }
 
-interface ReportTotals {
+export interface ReportTotals {
   totalIncome: number;
   totalExpense: number;
   netTotal: number;
@@ -353,6 +353,23 @@ const aggregateReportTotals = (data: ReportData, periodType: PeriodType): Map<st
   }
 
   return new Map([...totalsByPeriod.entries()].map(([key, totals]) => [key, normalizeTotals(totals)]));
+};
+
+export interface SqliteReportTotalsSummary {
+  monthly: Array<[string, ReportTotals]>;
+  quarterly: Array<[string, ReportTotals]>;
+  yearly: Array<[string, ReportTotals]>;
+}
+
+export const readSqliteReportTotalsSummary = (
+  db: Database.Database,
+): SqliteReportTotalsSummary => {
+  const data = readSqliteData(db);
+  return {
+    monthly: [...aggregateReportTotals(data, "month").entries()],
+    quarterly: [...aggregateReportTotals(data, "quarter").entries()],
+    yearly: [...aggregateReportTotals(data, "year").entries()],
+  };
 };
 
 const compareTotals = (

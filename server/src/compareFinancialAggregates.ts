@@ -33,7 +33,7 @@ interface TransactionForAggregates {
   transactionCost: number;
 }
 
-interface AggregateTotals {
+export interface AggregateTotals {
   amountTotal: number;
   transactionCostTotal: number;
   combinedTotal: number;
@@ -260,6 +260,21 @@ const aggregateByAccount = (
     map.set(transaction.accountId, totals);
   }
   return new Map([...map.entries()].map(([key, totals]) => [key, normalizeTotals(totals)]));
+};
+
+export interface SqliteFinancialAggregateSummary {
+  monthlyTransactionTotals: Array<[string, AggregateTotals]>;
+  accountBalances: Array<[number, AggregateTotals]>;
+}
+
+export const readSqliteFinancialAggregateSummary = (
+  db: Database.Database,
+): SqliteFinancialAggregateSummary => {
+  const transactions = readSqliteTransactions(db);
+  return {
+    monthlyTransactionTotals: [...aggregateByMonth(transactions).entries()],
+    accountBalances: [...aggregateByAccount(transactions).entries()],
+  };
 };
 
 const compareTotals = (

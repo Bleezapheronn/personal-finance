@@ -52,7 +52,7 @@ interface IntegrityData {
   budgetSnapshots: BudgetSnapshotForIntegrity[];
 }
 
-type IntegritySummary = Record<IntegrityCategory, number>;
+export type IntegritySummary = Record<IntegrityCategory, number>;
 
 interface IntegrityMismatch {
   category: IntegrityCategory;
@@ -352,6 +352,10 @@ const summarizeIntegrity = (data: IntegrityData): IntegritySummary => {
 
   return summary;
 };
+
+export const readSqliteIntegritySummary = (
+  db: Database.Database,
+): IntegritySummary => summarizeIntegrity(readSqliteData(db));
 
 const pickSummary = <T extends readonly IntegrityCategory[]>(
   summary: IntegritySummary,

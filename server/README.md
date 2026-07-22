@@ -233,6 +233,50 @@ The `--sample-size` option applies to transaction sample and Budget History comp
 npm run verify:sqlite -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --sample-size 20 --output-dir C:\dev\personal-finance-data\temp\verification
 ```
 
+## SQLite-Native Backup And Restore Rehearsal
+
+The native backup CLI uses SQLite's online backup API rather than copying the
+database file. This produces a consistent backup even when SQLite journal
+files exist. For an operational rehearsal, stop the API first or start it with
+all write flags disabled. The tool fails closed if the source's logical
+fingerprint changes while the backup is running.
+
+Source, backup, manifest, and restored database paths must remain outside the
+repository. Existing outputs are never overwritten, and source/output path
+aliases are rejected. Create a backup and redacted verification manifest:
+
+```powershell
+npm run backup:sqlite -- -- --source C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --output C:\dev\personal-finance-data\backups\personal-finance-prototype-native.sqlite
+```
+
+Restore only to a fresh path and require the matching manifest:
+
+```powershell
+npm run restore:sqlite-rehearsal -- -- --backup C:\dev\personal-finance-data\backups\personal-finance-prototype-native.sqlite --manifest C:\dev\personal-finance-data\backups\personal-finance-prototype-native.sqlite.manifest.json --output C:\dev\personal-finance-data\temp\personal-finance-prototype-restored.sqlite
+```
+
+Both commands verify `PRAGMA integrity_check`, schema and table identities,
+row counts, deterministic table-content fingerprints, financial aggregates,
+report totals, Budget History summaries at a fixed local day, transfer and
+snapshot-link integrity, and source immutability. The manifest contains
+fingerprints, counts, summary data, and timestamps only; it contains no paths,
+raw rows, names, descriptions, references, tokens, or SQLite content. It is
+still a generated runtime artifact and must remain outside Git.
+
+SQLite assigns a destination-local `schema_version` cookie during native
+backup. The manifest records it for diagnostics, while logical equivalence
+requires the schema fingerprint and `user_version` to match exactly. Journal
+mode is also recorded but is not treated as logical content.
+
+After restore, point a separately started API process at the restored database
+and run normal `smoke:api`. Run `verify:sqlite` with the matching Dexie full
+backup when one is available. A restored database is still disposable and
+does not make SQLite authoritative. Run the focused no-data test suite with:
+
+```powershell
+npm run test:sqlite-backup-restore
+```
+
 ## API Smoke Test
 
 The API smoke-test CLI checks a running local API server. Start the server first with `PERSONAL_FINANCE_SQLITE_PATH` pointing at a verified disposable SQLite database outside the repository.

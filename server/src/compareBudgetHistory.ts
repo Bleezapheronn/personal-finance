@@ -103,7 +103,7 @@ interface IssueSummary {
   duplicateOccurrenceCandidates: number;
 }
 
-interface BudgetHistorySummary {
+export interface BudgetHistorySummary {
   occurrences: OccurrenceSummary[];
   issues: IssueSummary;
 }
@@ -460,9 +460,12 @@ const createEmptyIssues = (): IssueSummary => ({
   duplicateOccurrenceCandidates: 0,
 });
 
-const summarizeBudgetHistory = (data: BudgetHistoryData): BudgetHistorySummary => {
+const summarizeBudgetHistory = (
+  data: BudgetHistoryData,
+  asOf: Date = new Date(),
+): BudgetHistorySummary => {
   const budgetsById = new Map(data.budgets.map((budget) => [budget.id, budget]));
-  const today = normalizeToLocalDay(new Date());
+  const today = normalizeToLocalDay(asOf);
   const dedupedByDueDate = new Map<string, SnapshotCandidate>();
   const issues = createEmptyIssues();
 
@@ -562,6 +565,11 @@ const summarizeBudgetHistory = (data: BudgetHistoryData): BudgetHistorySummary =
 
   return { occurrences, issues };
 };
+
+export const readSqliteBudgetHistorySummary = (
+  db: Database.Database,
+  asOf: Date,
+): BudgetHistorySummary => summarizeBudgetHistory(readSqliteData(db), asOf);
 
 const sumIssues = (issues: IssueSummary): number =>
   issues.missingLiveBudget + issues.duplicateOccurrenceCandidates;
