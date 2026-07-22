@@ -47,7 +47,9 @@ Until a future write phase is explicitly approved:
 - No frontend repository may silently no-op write methods in HTTP mode.
 - No screen may send mutations to HTTP except the explicitly flag-gated,
   dev-only Recipients, Buckets/Categories, and Accounts experiments.
-- No budget snapshot lifecycle behavior may move to HTTP.
+- No budget snapshot lifecycle behavior may move to HTTP except the explicitly
+  approved, manual, generation-only Phase 1 endpoint. That endpoint may insert
+  missing occurrences only.
 
 ## Write Domains
 
@@ -199,8 +201,17 @@ Any future snapshot write plan must define:
 - how repair/dedupe/generation/pruning are invoked, audited, and rolled back
 - how accidental historical rewrites are detected before commit
 
-No snapshot mutation, repair, dedupe, generation, pruning, coverage, creation,
-or update endpoint is allowed yet.
+Budget snapshot lifecycle Phase 1 now permits one narrow exception: a protected,
+default-off SQLite-only endpoint may deterministically insert missing snapshots
+without changing any existing row. It shares the Dexie occurrence calculator,
+requires a reviewed dry-run and explicit confirmation, and verifies all
+pre-existing snapshots, Budget definitions, Transactions, and other tables are
+unchanged before commit.
+
+Snapshot update, repair, dedupe, pruning, deletion, historical rewriting,
+transaction relinking, automatic coverage/startup execution, Dexie mutation,
+and dual-write remain forbidden. Generation-only support does not authorize
+any other lifecycle mutation or make SQLite authoritative.
 
 ### Reports
 
@@ -252,12 +263,15 @@ Before any write code is implemented, the project needs explicit decisions for:
   recipient operations, bucket/category/Account operations, SMS Import
   Template CRUD/active-state operations, and transaction Phase 1/Phase 2
   create/update, atomic paired-transfer create/update operations, and
-  Budget-definition create/update operations.
+  Budget-definition create/update operations, and generation-only insertion of
+  missing Budget snapshots.
 - No broad repository write adapters.
 - No dual-write.
 - No background sync.
 - No automatic Dexie-to-SQLite mutation sync.
-- No budget snapshot lifecycle mutation through HTTP.
+- No Budget snapshot lifecycle mutation through HTTP beyond manual insertion
+  of missing occurrences. Existing-row update, pruning, deletion, repair,
+  historical rewriting, relinking, and automatic execution remain forbidden.
 - No transfer delete, pair repair, bulk transfer mutation, or conversion
   between ordinary and transfer transactions through HTTP.
 - No permanent switch to SQLite authority.

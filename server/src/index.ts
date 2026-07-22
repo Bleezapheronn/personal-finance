@@ -4,6 +4,7 @@ import {
   API_VERSION,
   areAccountWritesEnabled,
   areBudgetDefinitionWritesEnabled,
+  areBudgetSnapshotGenerationWritesEnabled,
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
@@ -107,6 +108,18 @@ import {
   BudgetDefinitionWriteRequestError,
   validateBudgetDefinitionWritePayload,
 } from "./lib/budgetDefinitionWrite.js";
+import {
+  budgetSnapshotGenerationDryRun,
+  budgetSnapshotGenerationRequestErrorResponse,
+  BudgetSnapshotGenerationRequestError,
+} from "./lib/budgetSnapshotGenerationDryRun.js";
+import {
+  budgetSnapshotGenerationRealWrite,
+  budgetSnapshotGenerationWriteDisabledResponse,
+  budgetSnapshotGenerationWriteRequestErrorResponse,
+  BudgetSnapshotGenerationWriteRequestError,
+  validateBudgetSnapshotGenerationWritePayload,
+} from "./lib/budgetSnapshotGenerationWrite.js";
 import {
   countTransactions,
   getTransactionById,
@@ -1206,6 +1219,130 @@ for (const action of ["create", "update"] as const) {
     },
   );
 }
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/budget-snapshots/lifecycle/dry-run/generate",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code:
+          statusCode === 503
+            ? "sqlite_unavailable"
+            : "budget_snapshot_generation_dry_run_failed",
+      });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+    try {
+      const response = budgetSnapshotGenerationDryRun(opened.db, request.body);
+      if (response.conflictCount > 0) {
+        return reply.code(409).send(response);
+      }
+      return response.ok ? response : reply.code(400).send(response);
+    } catch (error) {
+      if (error instanceof BudgetSnapshotGenerationRequestError) {
+        return reply
+          .code(error.statusCode)
+          .send(budgetSnapshotGenerationRequestErrorResponse(error.code));
+      }
+      return reply.code(500).send({
+        ok: false,
+        code: "budget_snapshot_generation_dry_run_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/budget-snapshots/lifecycle/write/generate",
+  async (request, reply) => {
+    let normalizedAsOf: Date;
+    try {
+      normalizedAsOf = validateBudgetSnapshotGenerationWritePayload(
+        request.body,
+      );
+    } catch (error) {
+      if (error instanceof BudgetSnapshotGenerationWriteRequestError) {
+        const dryRun = budgetSnapshotGenerationRequestErrorResponse(error.code);
+        return reply
+          .code(error.statusCode)
+          .send(
+            budgetSnapshotGenerationWriteRequestErrorResponse(
+              dryRun,
+              error.code,
+            ),
+          );
+      }
+      return reply.code(400).send({
+        ok: false,
+        code: "budget_snapshot_generation_write_invalid",
+      });
+    }
+
+    if (!areBudgetSnapshotGenerationWritesEnabled()) {
+      const dryRun = budgetSnapshotGenerationRequestErrorResponse(
+        "budget_snapshot_generation_writes_disabled",
+        normalizedAsOf,
+      );
+      return reply
+        .code(403)
+        .send(budgetSnapshotGenerationWriteDisabledResponse(dryRun));
+    }
+
+    let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+    try {
+      opened = openConfiguredWritableDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code:
+          statusCode === 503
+            ? "sqlite_unavailable"
+            : "budget_snapshot_generation_write_failed",
+      });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+    try {
+      const response = budgetSnapshotGenerationRealWrite(
+        opened.db,
+        request.body,
+      );
+      if (response.conflictCount > 0) {
+        return reply.code(409).send(response);
+      }
+      return response.ok ? response : reply.code(400).send(response);
+    } catch (error) {
+      if (error instanceof BudgetSnapshotGenerationWriteRequestError) {
+        const dryRun = budgetSnapshotGenerationRequestErrorResponse(error.code);
+        return reply
+          .code(error.statusCode)
+          .send(
+            budgetSnapshotGenerationWriteRequestErrorResponse(
+              dryRun,
+              error.code,
+            ),
+          );
+      }
+      return reply.code(500).send({
+        ok: false,
+        code: "budget_snapshot_generation_write_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
 
 const bucketCategoryRouteConfigs = [
   {

@@ -15,6 +15,7 @@
     "compare:reports": "tsx src/compareReportTotals.ts",
     "compare:transactions": "tsx src/compareTransactionSamples.ts",
     "compare:budget-history": "tsx src/compareBudgetHistory.ts",
+    "compare:budget-snapshot-generation": "tsx src/compareBudgetSnapshotGeneration.ts",
     "verify:sqlite": "tsx src/verifySqlitePrototype.ts",
     "smoke:api": "tsx src/smokeApi.ts",
     "token:show": "tsx src/tokenCli.ts show",

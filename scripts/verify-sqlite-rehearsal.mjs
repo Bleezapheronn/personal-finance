@@ -15,6 +15,7 @@ const requiredCapabilities = [
   "transactionTransferWrites",
   "smsTemplateWrites",
   "budgetDefinitionWrites",
+  "budgetSnapshotGenerationWrites",
 ];
 
 const parseLocalEnv = () => {

@@ -1,6 +1,7 @@
 import {
   areAccountWritesEnabled,
   areBudgetDefinitionWritesEnabled,
+  areBudgetSnapshotGenerationWritesEnabled,
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
@@ -20,6 +21,7 @@ export const WRITE_CAPABILITY_KEYS = [
   "transactionTransferWrites",
   "smsTemplateWrites",
   "budgetDefinitionWrites",
+  "budgetSnapshotGenerationWrites",
 ] as const;
 
 export type WriteCapabilityKey = (typeof WRITE_CAPABILITY_KEYS)[number];
@@ -40,7 +42,10 @@ export const SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS = [
   "transaction_duplicate_import_export",
   "transfer_pair_repair",
   "budget_definition_delete",
-  "budget_snapshot_lifecycle",
+  "budget_snapshot_editing",
+  "budget_snapshot_deletion",
+  "budget_snapshot_pruning",
+  "budget_snapshot_repair",
   "historical_snapshot_relink",
   "sms_parse_or_import",
 ] as const;
@@ -55,6 +60,8 @@ export const readWriteCapabilities = (): WriteCapabilities => ({
   transactionTransferWrites: areTransactionTransferWritesEnabled(),
   smsTemplateWrites: areSmsTemplateWritesEnabled(),
   budgetDefinitionWrites: areBudgetDefinitionWritesEnabled(),
+  budgetSnapshotGenerationWrites:
+    areBudgetSnapshotGenerationWritesEnabled(),
 });
 
 export const buildWriteCapabilitiesResponse = (sqliteAvailable: boolean) => ({

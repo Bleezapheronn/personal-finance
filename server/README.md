@@ -15,6 +15,8 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /prototype/repositories/budgets/:id/snapshots`
 - `GET /prototype/repositories/budget-snapshots`
 - `GET /prototype/repositories/budget-snapshots/:id`
+- `POST /prototype/repositories/budget-snapshots/lifecycle/dry-run/generate`
+- `POST /prototype/repositories/budget-snapshots/lifecycle/write/generate` (experimental, disabled by default)
 - `GET /prototype/repositories/accounts`
 - `GET /prototype/repositories/accounts/:id`
 - `POST /prototype/repositories/accounts/dry-run/create`
@@ -41,11 +43,11 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `POST /prototype/repositories/categories/write/update` (experimental, disabled by default)
 
 The backend normally opens configured disposable SQLite read-only for prototype
-diagnostics. Explicit, disabled-by-default experiments exist for recipient,
-bucket/category, and account create/update writes. The browser IndexedDB
-database remains authoritative. Narrow dev-only UI helpers exist for these
-experiments; no broad write repository, dual-write, or SQLite authority
-migration exists.
+diagnostics. Explicit writes are narrow, domain-specific, and disabled by
+default. The browser IndexedDB database remains authoritative. Snapshot
+generation is manual and insert-only; no pruning, repair, rewrite, relinking,
+or automatic scheduling exists. There is no broad write repository,
+dual-write, or SQLite authority migration.
 
 ## Safety
 
@@ -927,15 +929,15 @@ one active definition. Update changes only form-editable definition fields and
 Explicit `goalDirection` values (`expense` or `income`) are authoritative.
 Null or missing direction uses the current amount-sign fallback. Recurrence
 details are validated for the selected frequency, but recurrence edits affect
-the definition only and may influence a later, separately invoked snapshot
-generation process.
+the definition only and may influence the separately invoked snapshot
+generation process documented below.
 
 These routes do not create, update, generate, prune, delete, backfill, or
 repair budget snapshots. They do not relink transactions, change Budget
 History, run report calculations, access Dexie, or write files. Existing
 snapshots and transaction linkage are fingerprint-checked as unchanged inside
-the SQLite write transaction. Budget delete and every snapshot write route
-remain absent.
+the SQLite write transaction. Budget delete and snapshot mutation from these
+definition routes remain absent.
 
 Normal smoke remains non-mutating. Explicit mutation smoke is:
 
@@ -948,3 +950,77 @@ backend flag enabled, preferably on a unique port. It creates and updates a
 synthetic definition and leaves SQLite dirty. Re-import a separate database
 from the matching fresh backup before parity verification. Dexie remains
 authoritative.
+
+## Experimental Budget Snapshot Generation
+
+Budget snapshot lifecycle Phase 1 exposes generation-only protected routes:
+
+```text
+POST /prototype/repositories/budget-snapshots/lifecycle/dry-run/generate
+POST /prototype/repositories/budget-snapshots/lifecycle/write/generate
+```
+
+The dry-run is read-only. The write route is disabled unless the server process
+has this separate exact flag:
+
+```text
+PERSONAL_FINANCE_ENABLE_BUDGET_SNAPSHOT_GENERATION_WRITES=true
+```
+
+Both routes accept an optional ISO date or datetime `asOf`; omitted values use
+the current local day. Date-only values and recurrence calculations use the
+app's local JavaScript calendar semantics. The write additionally requires
+`dryRunReviewed: true` and the internal confirmation phrase. Responses contain
+counts, recurrence/goal-direction summaries, warnings, and safety metadata
+only. They do not return Budget descriptions, amounts, raw rows, generated
+IDs, paths, tokens, or environment values.
+
+The generator shares the app's pure occurrence calculation. It includes the
+due date when it falls on the horizon, covers inactive definitions through
+`asOf`, and covers active definitions through one local calendar year after
+`asOf`. Supported recurrence behavior is unchanged: once; daily; weekly;
+monthly using `dayOfMonth` clamped to the target month's final day; yearly;
+and custom positive `intervalDays`. Finite `remainingCyclesTotal` and the
+existing 5,000-advance guard still apply.
+
+Every new snapshot copies the current Budget definition's persisted snapshot
+fields. Explicit `goalDirection` values win; null/missing direction retains
+the amount-sign fallback used for classification summaries. Missing/null
+legacy `isFlexible` is copied as `false`. SQLite generates the ID and one
+runtime timestamp is used for both `createdAt` and `updatedAt` on new rows.
+
+Identity is `budgetId` plus the local occurrence day, matching the Dexie
+compound occurrence lookup. Existing occurrences are skipped. Duplicate or
+disagreeing occurrence/due-date identities block generation; they are not
+repaired. The write recalculates inside one SQLite transaction, inserts only
+missing rows, verifies all pre-existing snapshots and every other table are
+unchanged, then verifies a second plan is empty. Repeating the same request is
+a safe zero-row no-op and never refreshes timestamps on existing snapshots.
+
+This phase does not update, prune, delete, edit, regenerate, dedupe, or repair
+snapshots. It does not mutate Budget definitions, relink Transactions, change
+`budgetSnapshotId` or legacy `budgetId`, access Dexie, write files, run at
+startup, or schedule background work. No frontend action was added; invoke the
+protected endpoint manually only against disposable SQLite.
+
+The read-only deterministic parity command is:
+
+```powershell
+npm run compare:budget-snapshot-generation -- -- --backup C:\dev\personal-finance-data\exports\personal-finance-full-backup.json --sqlite C:\dev\personal-finance-data\temp\personal-finance-prototype.sqlite --as-of 2026-07-22
+```
+
+It compares the backup-derived Dexie-equivalent plan with the SQLite dry-run
+plan. Generated IDs and runtime timestamps are the only tolerated differences;
+all other generated fields are compared exactly. Optional reports must remain
+outside Git.
+
+Normal `smoke:api` remains non-mutating. Explicit generation smoke is:
+
+```powershell
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-budget-snapshot-generation-write-smoke
+```
+
+Run it only with the generation flag enabled against a copied, outside-repo
+disposable database on a distinct port. It inserts missing occurrences and
+then proves the repeated request is a no-op. The database is dirty afterward;
+re-import from the matching fresh backup before any clean parity work.

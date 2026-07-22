@@ -27,6 +27,7 @@ All flags default off.
 | Transactions | Ordinary income/expense create/update; nonpositive transaction costs; link/change/unlink existing budget snapshots; atomic paired-transfer create/update | Delete, duplicate, bulk/import/export writes, transfer-pair repair, ordinary/transfer conversion, snapshot creation or repair | `PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_TRANSFER_WRITES=true` as required by the operation | `VITE_PERSONAL_FINANCE_TRANSACTIONS_BASIC_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_TRANSFER_WRITE_EXPERIMENT=true` as required | Passed: basic, cost/budget-link, and transfer opt-in modes | Passed | Discard or re-import SQLite; Dexie transactions remain unchanged, while SQLite-derived totals must be treated as dirty until re-import |
 | SMS Import Templates | Create, update, activate, deactivate, reference-safe delete | Parser priority changes, SMS-history execution/import, transaction mutation | `PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES=true` | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT=true` | Passed: template CRUD/active-state opt-in mode | Passed | Discard or re-import SQLite; Dexie templates, SMS data, and transactions are unaffected |
 | Budget Definitions | Create and update the definition row only | Delete, completion, transaction linking, lookup creation, every snapshot lifecycle mutation | `PERSONAL_FINANCE_ENABLE_BUDGET_DEFINITION_WRITES=true` | `VITE_PERSONAL_FINANCE_BUDGETS_WRITE_EXPERIMENT=true` | Passed: Budget definition opt-in mode | Passed | Discard or re-import SQLite; Dexie budgets, snapshots, Budget History, and transaction links are unaffected |
+| Budget Snapshot Generation | Deterministic insert of missing occurrences only | Existing-row update, pruning, delete, repair, dedupe, historical rewrite, transaction relinking, automatic scheduling | `PERSONAL_FINANCE_ENABLE_BUDGET_SNAPSHOT_GENERATION_WRITES=true` | None; protected endpoint/CLI only | Passed: generation and repeated idempotency opt-in mode | Manual UI action intentionally omitted | Discard or re-import SQLite; Dexie snapshots remain unchanged and SQLite Budget History is dirty until re-import |
 
 ## Hard Boundaries
 
@@ -56,7 +57,7 @@ VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-sqlite-rehearsal
 VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_REHEARSAL=true
 ```
 
-The protected read-only capability check must also report all nine existing
+The protected read-only capability check must also report all ten existing
 backend write flags enabled and disposable SQLite available. Any missing flag,
 unavailable API, invalid token/origin, malformed response, or unavailable
 SQLite keeps every mutation control disabled. Reads may remain on HTTP, but the
@@ -91,8 +92,9 @@ The following work is intentionally unsupported or deferred:
   repair, and conversion between ordinary and transfer transactions.
 - Budget-definition delete, completion, transaction linking, and lookup
   creation from the HTTP write path.
-- Budget snapshot creation, generation, pruning, dedupe, repair, backfill,
-  editing, deletion, coverage, and historical relinking.
+- Budget snapshot update, pruning, dedupe, repair, backfill, editing, deletion,
+  historical rewriting/relinking, and automatic scheduling. Phase 1 supports
+  only manual deterministic insertion of missing occurrences.
 - SMS parsing/import execution and transaction mutation from the template write
   path.
 - General-purpose frontend write repositories, offline write queues, conflict
@@ -168,7 +170,8 @@ SQLite changes into IndexedDB.
 SQLite must not become authoritative until all of the following are complete:
 
 - Every required everyday mutation has an intentional, supported, tested path.
-- Budget snapshot lifecycle ownership is designed and verified.
+- Remaining Budget snapshot lifecycle ownership (pruning, repair, historical
+  policy, and automatic scheduling) is designed and verified.
 - Delete, merge, cascade, reference-migration, and repair decisions are
   resolved.
 - A synchronization design or one-time authority migration design exists.

@@ -22,6 +22,7 @@ export const REQUIRED_SQLITE_REHEARSAL_CAPABILITIES = [
   "transactionTransferWrites",
   "smsTemplateWrites",
   "budgetDefinitionWrites",
+  "budgetSnapshotGenerationWrites",
 ] as const;
 
 export type SqliteRehearsalCapability =

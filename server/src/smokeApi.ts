@@ -15,6 +15,17 @@ import {
   BUDGET_DEFINITION_UPDATE_CONFIRMATION,
 } from "./lib/budgetDefinitionWrite.js";
 import { budgetGoalDirectionNormalizationSanityCheck } from "./lib/budgetDefinitionDryRun.js";
+import {
+  BUDGET_SNAPSHOT_GENERATION_CONFIRMATION,
+} from "./lib/budgetSnapshotGenerationWrite.js";
+import {
+  calculateBudgetOccurrenceSchedule,
+  calculateMissingBudgetSnapshotPlan,
+  effectiveGoalDirection,
+  localDayKey,
+  type BudgetGenerationDefinition,
+  type ExistingSnapshotIdentity,
+} from "../shared/budgetSnapshotGeneration.js";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3147";
 const TOKEN_HEADER_NAME = "x-personal-finance-token";
@@ -45,6 +56,7 @@ interface SmokeArgs {
   allowTransactionTransferWriteSmoke: boolean;
   allowSmsTemplateWriteSmoke: boolean;
   allowBudgetDefinitionWriteSmoke: boolean;
+  allowBudgetSnapshotGenerationWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -75,6 +87,9 @@ interface ResponseJson {
   realWrite?: unknown;
   sqliteMutated?: unknown;
   rowsChanged?: unknown;
+  rowsInserted?: unknown;
+  proposedSnapshotCount?: unknown;
+  conflictCount?: unknown;
   targetIdPresent?: unknown;
   targetId?: unknown;
   validationErrors?: unknown;
@@ -140,6 +155,8 @@ Options:
                          Opt in to disposable SQLite SMS template CRUD write smoke.
   --allow-budget-definition-write-smoke
                          Opt in to disposable SQLite Budget-definition create/update write smoke.
+  --allow-budget-snapshot-generation-write-smoke
+                         Opt in to deterministic missing Budget snapshot generation smoke.
   --help                 Show this help text.
 `;
 
@@ -156,6 +173,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowTransactionTransferWriteSmoke: false,
     allowSmsTemplateWriteSmoke: false,
     allowBudgetDefinitionWriteSmoke: false,
+    allowBudgetSnapshotGenerationWriteSmoke: false,
     help: false,
   };
 
@@ -238,6 +256,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-budget-definition-write-smoke") {
       args.allowBudgetDefinitionWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-budget-snapshot-generation-write-smoke") {
+      args.allowBudgetSnapshotGenerationWriteSmoke = true;
       continue;
     }
 
@@ -755,6 +778,78 @@ const expectNoSensitiveEcho = (json: ResponseJson, values: Array<string | undefi
   }
 };
 
+const sqliteBudgetRowsForGeneration = (
+  rows: Record<string, unknown>[],
+): BudgetGenerationDefinition[] =>
+  rows.map((row) => ({
+    id: Number(row.id),
+    description: String(row.description),
+    categoryId: Number(row.categoryId),
+    accountId: row.accountId == null ? null : Number(row.accountId),
+    recipientId: row.recipientId == null ? null : Number(row.recipientId),
+    amount: Number(row.amount),
+    transactionCost:
+      row.transactionCost == null ? null : Number(row.transactionCost),
+    frequency: row.frequency as BudgetGenerationDefinition["frequency"],
+    frequencyDetails:
+      typeof row.frequencyDetails === "string" && row.frequencyDetails
+        ? (JSON.parse(row.frequencyDetails) as BudgetGenerationDefinition["frequencyDetails"])
+        : null,
+    isGoal: Number(row.isGoal),
+    isFlexible: row.isFlexible == null ? false : Number(row.isFlexible),
+    goalPercentage:
+      row.goalPercentage == null ? null : Number(row.goalPercentage),
+    goalDirection:
+      row.goalDirection == null
+        ? null
+        : (row.goalDirection as BudgetGenerationDefinition["goalDirection"]),
+    isActive: Number(row.isActive),
+    remainingCyclesTotal:
+      row.remainingCyclesTotal == null
+        ? null
+        : Number(row.remainingCyclesTotal),
+    dueDate: String(row.dueDate),
+    updatedAt: String(row.updatedAt),
+  }));
+
+const sqliteSnapshotIdentities = (
+  rows: Record<string, unknown>[],
+): ExistingSnapshotIdentity[] =>
+  rows.map((row) => ({
+    id: Number(row.id),
+    budgetId: Number(row.budgetId),
+    occurrenceDate: String(row.occurrenceDate),
+    dueDate: String(row.dueDate),
+  }));
+
+const generatedSnapshotComparable = (row: Record<string, unknown>) => ({
+  budgetId: Number(row.budgetId),
+  occurrenceDate: localDayKey(String(row.occurrenceDate)),
+  dueDate: localDayKey(String(row.dueDate)),
+  cycleIndex: Number(row.cycleIndex),
+  description: String(row.description),
+  categoryId: Number(row.categoryId),
+  accountId: row.accountId == null ? null : Number(row.accountId),
+  recipientId: row.recipientId == null ? null : Number(row.recipientId),
+  amount: Number(row.amount),
+  transactionCost:
+    row.transactionCost == null ? null : Number(row.transactionCost),
+  frequency: String(row.frequency),
+  frequencyDetails:
+    typeof row.frequencyDetails === "string" && row.frequencyDetails
+      ? JSON.parse(row.frequencyDetails)
+      : null,
+  isGoal: Number(row.isGoal) === 1,
+  isFlexible: Number(row.isFlexible) === 1,
+  goalPercentage:
+    row.goalPercentage == null ? null : Number(row.goalPercentage),
+  goalDirection: row.goalDirection ?? null,
+  remainingCyclesTotal:
+    row.remainingCyclesTotal == null ? null : Number(row.remainingCyclesTotal),
+  isHistorical: Number(row.isHistorical) === 1,
+  sourceBudgetUpdatedAt: String(row.sourceBudgetUpdatedAt),
+});
+
 const buildChecks = (
   baseUrl: string,
   token: string,
@@ -769,6 +864,7 @@ const buildChecks = (
   allowTransactionTransferWriteSmoke: boolean,
   allowSmsTemplateWriteSmoke: boolean,
   allowBudgetDefinitionWriteSmoke: boolean,
+  allowBudgetSnapshotGenerationWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -794,6 +890,9 @@ const buildChecks = (
       : []),
     ...(allowSmsTemplateWriteSmoke ? ["smsTemplateWrites"] : []),
     ...(allowBudgetDefinitionWriteSmoke ? ["budgetDefinitionWrites"] : []),
+    ...(allowBudgetSnapshotGenerationWriteSmoke
+      ? ["budgetSnapshotGenerationWrites"]
+      : []),
   ]);
   const writeCapabilityKeys = [
     "recipientActiveStateWrites",
@@ -805,6 +904,7 @@ const buildChecks = (
     "transactionTransferWrites",
     "smsTemplateWrites",
     "budgetDefinitionWrites",
+    "budgetSnapshotGenerationWrites",
   ] as const;
   let sampledTransactionId: number | undefined;
   let sampledBudgetId: number | undefined;
@@ -6224,6 +6324,415 @@ const buildChecks = (
         ]
       : []),
     {
+      name: "Budget snapshot generation dry-run and disabled write are safe",
+      run: async () => {
+        const dryRunPath =
+          "/prototype/repositories/budget-snapshots/lifecycle/dry-run/generate";
+        const writePath =
+          "/prototype/repositories/budget-snapshots/lifecycle/write/generate";
+        const asOf = "2026-07-22";
+        const tableNames = [
+          "transactions",
+          "budgets",
+          "budgetSnapshots",
+          "buckets",
+          "categories",
+          "accounts",
+          "paymentMethods",
+          "recipients",
+          "smsImportTemplates",
+        ] as const;
+        const before = new Map<string, string>();
+        for (const table of tableNames) {
+          before.set(
+            table,
+            rowsFingerprint(
+              await readAllTableRows(baseUrl, table, authedOptions),
+            ),
+          );
+        }
+
+        const duplicateSanity = calculateMissingBudgetSnapshotPlan({
+          budgets: [
+            {
+              id: 1,
+              description: "redacted fixture",
+              categoryId: 1,
+              amount: -1,
+              frequency: "once",
+              isGoal: false,
+              isFlexible: false,
+              isActive: true,
+              dueDate: "2026-07-22",
+              updatedAt: "2026-07-01T00:00:00.000Z",
+            },
+          ],
+          existingSnapshots: [
+            {
+              id: 1,
+              budgetId: 1,
+              occurrenceDate: "2026-07-22",
+              dueDate: "2026-07-22",
+            },
+            {
+              id: 2,
+              budgetId: 1,
+              occurrenceDate: "2026-07-22",
+              dueDate: "2026-07-22",
+            },
+          ],
+          asOf,
+        });
+        expect(
+          duplicateSanity.conflictCount > 0 &&
+            duplicateSanity.conflictCodes.includes(
+              "duplicate_occurrence_snapshots",
+            ),
+          "budget_snapshot_duplicate_conflict_sanity_failed",
+        );
+        const recurrenceFixture = {
+          id: 1,
+          description: "redacted fixture",
+          categoryId: 1,
+          amount: -1,
+          isGoal: false,
+          isFlexible: false,
+          isActive: true,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        const scheduleKeys = (
+          frequency: BudgetGenerationDefinition["frequency"],
+          dueDate: string,
+          horizon: string,
+          frequencyDetails?: BudgetGenerationDefinition["frequencyDetails"],
+        ) =>
+          calculateBudgetOccurrenceSchedule(
+            { ...recurrenceFixture, frequency, frequencyDetails, dueDate },
+            horizon,
+          ).map((row) => localDayKey(row.occurrenceDate));
+        expect(
+          JSON.stringify(
+            scheduleKeys("monthly", "2026-01-31", "2026-03-31", {
+              dayOfMonth: 31,
+            }),
+          ) === JSON.stringify(["2026-01-31", "2026-02-28", "2026-03-31"]) &&
+            JSON.stringify(
+              scheduleKeys("custom", "2026-01-01", "2026-01-11", {
+                intervalDays: 5,
+              }),
+            ) === JSON.stringify(["2026-01-01", "2026-01-06", "2026-01-11"]) &&
+            scheduleKeys("once", "2026-07-22", "2026-07-22").length === 1 &&
+            effectiveGoalDirection("expense", 100) === "expense" &&
+            effectiveGoalDirection("income", -100) === "income" &&
+            effectiveGoalDirection(null, -100) === "expense" &&
+            effectiveGoalDirection(null, 100) === "income",
+          "budget_snapshot_generation_recurrence_sanity_failed",
+        );
+
+        const missingToken = await requestJson(baseUrl, dryRunPath, {
+          method: "POST",
+          body: { asOf },
+          origin,
+        });
+        expectStatus(missingToken.status, 401);
+
+        const badOrigin = await requestJson(baseUrl, dryRunPath, {
+          method: "POST",
+          body: { asOf },
+          token,
+          origin: "http://unexpected-origin.invalid",
+        });
+        expectStatus(badOrigin.status, 403);
+
+        for (const testCase of [
+          { body: { asOf: "not-a-date" }, code: "asOf_invalid" },
+          {
+            body: { asOf, unexpected: true },
+            code: "unexpected_payload_field",
+          },
+        ]) {
+          const result = await requestJson(baseUrl, dryRunPath, {
+            ...authedOptions,
+            method: "POST",
+            body: testCase.body,
+          });
+          expectStatus(result.status, 400);
+          expect(result.json.code === testCase.code, `${testCase.code}_not_rejected`);
+        }
+
+        const dryRun = await requestJson(baseUrl, dryRunPath, {
+          ...authedOptions,
+          method: "POST",
+          body: { asOf },
+        });
+        expectStatus(dryRun.status, 200);
+        expect(
+          dryRun.json.ok === true &&
+            dryRun.json.dryRun === true &&
+            dryRun.json.wouldMutate === false &&
+            dryRun.json.normalizedAsOf === asOf &&
+            dryRun.json.historicalMutation === false &&
+            dryRun.json.transactionLinkMutation === false,
+          "budget_snapshot_generation_dry_run_invalid",
+        );
+        const serializedDryRun = JSON.stringify(dryRun.json);
+        const dryRunSafety = dryRun.json.safety as Record<string, unknown>;
+        expect(
+          !serializedDryRun.includes("description") &&
+            dryRunSafety.generatedIdsIncluded === false &&
+            dryRunSafety.rawRowsIncluded === false,
+          "budget_snapshot_generation_dry_run_not_redacted",
+        );
+
+        const invalidWrite = await requestJson(baseUrl, writePath, {
+          ...authedOptions,
+          method: "POST",
+          body: {
+            asOf,
+            confirmation: BUDGET_SNAPSHOT_GENERATION_CONFIRMATION,
+          },
+        });
+        expectStatus(invalidWrite.status, 400);
+        expect(
+          invalidWrite.json.code === "dry_run_reviewed_required",
+          "budget_snapshot_generation_write_validation_failed_open",
+        );
+
+        if (!allowBudgetSnapshotGenerationWriteSmoke) {
+          const disabled = await requestJson(baseUrl, writePath, {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              asOf,
+              dryRunReviewed: true,
+              confirmation: BUDGET_SNAPSHOT_GENERATION_CONFIRMATION,
+            },
+          });
+          expectStatus(disabled.status, 403);
+          expect(
+            disabled.json.code ===
+              "budget_snapshot_generation_writes_disabled",
+            "budget_snapshot_generation_write_not_disabled",
+          );
+        }
+
+        for (const unsupportedPath of [
+          "/prototype/repositories/budget-snapshots/lifecycle/write/prune",
+          "/prototype/repositories/budget-snapshots/lifecycle/write/delete",
+          "/prototype/repositories/budget-snapshots/lifecycle/write/update",
+          "/prototype/repositories/budget-snapshots/lifecycle/write/repair",
+        ]) {
+          const result = await requestJson(baseUrl, unsupportedPath, {
+            ...authedOptions,
+            method: "POST",
+            body: {},
+          });
+          expectStatus(result.status, 404);
+        }
+
+        for (const table of tableNames) {
+          expect(
+            rowsFingerprint(
+              await readAllTableRows(baseUrl, table, authedOptions),
+            ) === before.get(table),
+            `${table}_changed_during_snapshot_generation_normal_smoke`,
+          );
+        }
+      },
+    },
+    ...(allowBudgetSnapshotGenerationWriteSmoke
+      ? [
+          {
+            name: "Budget snapshot generation opt-in smoke is insert-only and idempotent",
+            run: async () => {
+              const dryRunPath =
+                "/prototype/repositories/budget-snapshots/lifecycle/dry-run/generate";
+              const writePath =
+                "/prototype/repositories/budget-snapshots/lifecycle/write/generate";
+              const tableNames = [
+                "transactions",
+                "budgets",
+                "budgetSnapshots",
+                "buckets",
+                "categories",
+                "accounts",
+                "paymentMethods",
+                "recipients",
+                "smsImportTemplates",
+              ] as const;
+              const rowsBefore = new Map<string, Record<string, unknown>[]>();
+              for (const table of tableNames) {
+                rowsBefore.set(
+                  table,
+                  await readAllTableRows(baseUrl, table, authedOptions),
+                );
+              }
+
+              let selectedAsOf: string | undefined;
+              let dryRun: Awaited<ReturnType<typeof requestJson>> | undefined;
+              for (const candidateAsOf of [
+                "2026-07-22",
+                "2027-07-22",
+                "2030-01-15",
+                "2035-01-15",
+              ]) {
+                const candidate = await requestJson(baseUrl, dryRunPath, {
+                  ...authedOptions,
+                  method: "POST",
+                  body: { asOf: candidateAsOf },
+                });
+                if (
+                  candidate.status === 200 &&
+                  Number(candidate.json.proposedSnapshotCount) > 0
+                ) {
+                  selectedAsOf = candidateAsOf;
+                  dryRun = candidate;
+                  break;
+                }
+              }
+              expect(
+                selectedAsOf !== undefined && dryRun !== undefined,
+                "budget_snapshot_generation_smoke_requires_missing_occurrence",
+              );
+              const budgetsBefore = rowsBefore.get("budgets") ?? [];
+              const snapshotsBefore = rowsBefore.get("budgetSnapshots") ?? [];
+              const expectedPlan = calculateMissingBudgetSnapshotPlan({
+                budgets: sqliteBudgetRowsForGeneration(budgetsBefore),
+                existingSnapshots: sqliteSnapshotIdentities(snapshotsBefore),
+                asOf: selectedAsOf as string,
+              });
+              expect(
+                expectedPlan.validationErrors.length === 0 &&
+                  expectedPlan.conflictCount === 0 &&
+                  expectedPlan.proposedSnapshotCount ===
+                    Number(dryRun?.json.proposedSnapshotCount),
+                "budget_snapshot_generation_expected_plan_invalid",
+              );
+
+              const writeBody = {
+                asOf: selectedAsOf,
+                dryRunReviewed: true,
+                confirmation: BUDGET_SNAPSHOT_GENERATION_CONFIRMATION,
+              };
+              const write = await requestJson(baseUrl, writePath, {
+                ...authedOptions,
+                method: "POST",
+                body: writeBody,
+              });
+              expectStatus(write.status, 200);
+              expect(
+                write.json.ok === true &&
+                  write.json.realWrite === true &&
+                  write.json.sqliteMutated === true &&
+                  Number(write.json.rowsInserted) ===
+                    expectedPlan.proposedSnapshotCount,
+                "budget_snapshot_generation_write_invalid",
+              );
+              const serializedWrite = JSON.stringify(write.json);
+              const writeSafety = write.json.safety as Record<string, unknown>;
+              expect(
+                !serializedWrite.includes("description") &&
+                  writeSafety.generatedIdsIncluded === false &&
+                  writeSafety.rawRowsIncluded === false,
+                "budget_snapshot_generation_write_not_redacted",
+              );
+
+              const snapshotsAfter = await readAllTableRows(
+                baseUrl,
+                "budgetSnapshots",
+                authedOptions,
+              );
+              const beforeIds = new Set(
+                snapshotsBefore.map((row) => Number(row.id)),
+              );
+              const inserted = snapshotsAfter.filter(
+                (row) => !beforeIds.has(Number(row.id)),
+              );
+              expect(
+                snapshotsAfter.length ===
+                  snapshotsBefore.length + expectedPlan.proposedSnapshotCount &&
+                  inserted.length === expectedPlan.proposedSnapshotCount &&
+                  new Set(inserted.map((row) => Number(row.id))).size ===
+                    inserted.length,
+                "budget_snapshot_generation_insert_count_invalid",
+              );
+              expect(
+                rowsFingerprint(
+                  snapshotsAfter.filter((row) => beforeIds.has(Number(row.id))),
+                ) === rowsFingerprint(snapshotsBefore),
+                "preexisting_budget_snapshot_changed",
+              );
+
+              const expectedRows = expectedPlan.candidates
+                .map((candidate) =>
+                  generatedSnapshotComparable({
+                    ...candidate.values,
+                    occurrenceDate: candidate.values.occurrenceDate.toISOString(),
+                    dueDate: candidate.values.dueDate.toISOString(),
+                    frequencyDetails: candidate.values.frequencyDetails
+                      ? JSON.stringify(candidate.values.frequencyDetails)
+                      : null,
+                    isGoal: candidate.values.isGoal ? 1 : 0,
+                    isFlexible: candidate.values.isFlexible ? 1 : 0,
+                    isHistorical: candidate.values.isHistorical ? 1 : 0,
+                    sourceBudgetUpdatedAt:
+                      candidate.values.sourceBudgetUpdatedAt instanceof Date
+                        ? candidate.values.sourceBudgetUpdatedAt.toISOString()
+                        : candidate.values.sourceBudgetUpdatedAt,
+                  }),
+                )
+                .sort((left, right) =>
+                  JSON.stringify(left).localeCompare(JSON.stringify(right)),
+                );
+              const insertedRows = inserted
+                .map(generatedSnapshotComparable)
+                .sort((left, right) =>
+                  JSON.stringify(left).localeCompare(JSON.stringify(right)),
+                );
+              expect(
+                rowsFingerprint(insertedRows) === rowsFingerprint(expectedRows),
+                "inserted_budget_snapshots_do_not_match_plan",
+              );
+
+              for (const table of tableNames.filter(
+                (table) => table !== "budgetSnapshots",
+              )) {
+                expect(
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ) === rowsFingerprint(rowsBefore.get(table) ?? []),
+                  `${table}_changed_during_snapshot_generation_write`,
+                );
+              }
+
+              const repeated = await requestJson(baseUrl, writePath, {
+                ...authedOptions,
+                method: "POST",
+                body: writeBody,
+              });
+              expectStatus(repeated.status, 200);
+              expect(
+                repeated.json.ok === true &&
+                  repeated.json.sqliteMutated === false &&
+                  Number(repeated.json.rowsInserted) === 0 &&
+                  Number(repeated.json.proposedSnapshotCount) === 0,
+                "budget_snapshot_generation_not_idempotent",
+              );
+              expect(
+                rowsFingerprint(
+                  await readAllTableRows(
+                    baseUrl,
+                    "budgetSnapshots",
+                    authedOptions,
+                  ),
+                ) === rowsFingerprint(snapshotsAfter),
+                "idempotent_generation_changed_snapshots",
+              );
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    {
       name: "SMS template dry-run and disabled write paths are safe",
       run: async () => {
         const path = "/prototype/repositories/sms-import-templates";
@@ -6739,6 +7248,7 @@ const main = async (): Promise<void> => {
     args.allowTransactionTransferWriteSmoke,
     args.allowSmsTemplateWriteSmoke,
     args.allowBudgetDefinitionWriteSmoke,
+    args.allowBudgetSnapshotGenerationWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

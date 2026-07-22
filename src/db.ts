@@ -1,4 +1,10 @@
 import Dexie from "dexie";
+import {
+  buildBudgetSnapshotValues,
+  getBudgetMaxCycles as getFiniteCycles,
+  getNextBudgetOccurrence as getNextOccurrenceDate,
+  normalizeToLocalDay as normalizeToDay,
+} from "../server/shared/budgetSnapshotGeneration.js";
 
 // Define TypeScript interfaces for each table
 
@@ -375,12 +381,6 @@ export const migratePaymentMethodsToAccounts = async (): Promise<{
   }
 };
 
-const normalizeToDay = (value: Date): Date => {
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
-};
-
 const getSnapshotKey = (budgetId: number, occurrenceDate: Date): string =>
   `${budgetId}:${normalizeToDay(occurrenceDate).getTime()}`;
 
@@ -396,64 +396,6 @@ let budgetSnapshotMigrationInFlight: Promise<{
   snapshotsDeduplicated: number;
   transactionsRelinkedFromDuplicates: number;
 }> | null = null;
-
-const getNextOccurrenceDate = (currentDate: Date, budget: Budget): Date => {
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-  const day = currentDate.getDate();
-
-  let nextYear = year;
-  let nextMonth = month;
-  let nextDay = day;
-
-  switch (budget.frequency) {
-    case "daily":
-      nextDay += 1;
-      break;
-    case "weekly":
-      nextDay += 7;
-      break;
-    case "monthly":
-      if (budget.frequencyDetails?.dayOfMonth) {
-        const requestedDay = budget.frequencyDetails.dayOfMonth;
-        nextMonth += 1;
-        if (nextMonth > 11) {
-          nextMonth = 0;
-          nextYear += 1;
-        }
-        const lastDayOfMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-        nextDay = Math.min(requestedDay, lastDayOfMonth);
-      }
-      break;
-    case "yearly":
-      nextYear += 1;
-      break;
-    case "custom":
-      if (budget.frequencyDetails?.intervalDays) {
-        nextDay += budget.frequencyDetails.intervalDays;
-      }
-      break;
-    default:
-      break;
-  }
-
-  return new Date(nextYear, nextMonth, nextDay);
-};
-
-const getFiniteCycles = (budget: Budget): number => {
-  if (
-    budget.remainingCyclesTotal === null ||
-    budget.remainingCyclesTotal === undefined
-  ) {
-    return Number.MAX_SAFE_INTEGER;
-  }
-
-  if (budget.remainingCyclesTotal < 1) {
-    return 0;
-  }
-
-  return budget.remainingCyclesTotal;
-};
 
 const getClosestOccurrenceAtOrBefore = (
   budget: Budget,
@@ -605,27 +547,21 @@ export const ensureBudgetSnapshotForOccurrence = async (
     }
 
     const now = new Date();
-    const snapshot: Omit<BudgetSnapshot, "id"> = {
-      budgetId: budget.id as number,
+    const sharedValues = buildBudgetSnapshotValues(
+      budget,
       occurrenceDate,
-      dueDate: occurrenceDate,
-      cycleIndex: options?.cycleIndex ?? 0,
-      description: budget.description,
-      categoryId: budget.categoryId,
-      accountId: budget.accountId,
-      recipientId: budget.recipientId,
-      amount: budget.amount,
-      transactionCost: budget.transactionCost,
-      frequency: budget.frequency,
-      frequencyDetails: budget.frequencyDetails,
-      isGoal: budget.isGoal,
-      isFlexible: budget.isFlexible,
-      goalPercentage: budget.goalPercentage,
-      goalDirection: budget.goalDirection,
-      remainingCyclesTotal: budget.remainingCyclesTotal ?? null,
-      isHistorical:
-        options?.isHistorical ?? occurrenceDate < normalizeToDay(now),
-      sourceBudgetUpdatedAt: budget.updatedAt,
+      options?.cycleIndex ?? 0,
+      options?.isHistorical ?? occurrenceDate < normalizeToDay(now),
+    );
+    const snapshot: Omit<BudgetSnapshot, "id"> = {
+      ...sharedValues,
+      accountId: sharedValues.accountId ?? undefined,
+      recipientId: sharedValues.recipientId ?? undefined,
+      transactionCost: sharedValues.transactionCost ?? undefined,
+      frequencyDetails: sharedValues.frequencyDetails ?? undefined,
+      goalPercentage: sharedValues.goalPercentage ?? undefined,
+      goalDirection: sharedValues.goalDirection ?? undefined,
+      sourceBudgetUpdatedAt: new Date(sharedValues.sourceBudgetUpdatedAt),
       createdAt: now,
       updatedAt: now,
     };

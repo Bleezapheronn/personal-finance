@@ -26,6 +26,8 @@ export const SMS_TEMPLATE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES" as const;
 export const BUDGET_DEFINITION_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUDGET_DEFINITION_WRITES" as const;
+export const BUDGET_SNAPSHOT_GENERATION_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_BUDGET_SNAPSHOT_GENERATION_WRITES" as const;
 
 export const ALLOWED_ORIGINS = new Set([
   "http://localhost:8100",
@@ -83,3 +85,6 @@ export const areSmsTemplateWritesEnabled = (): boolean =>
 
 export const areBudgetDefinitionWritesEnabled = (): boolean =>
   process.env[BUDGET_DEFINITION_WRITES_ENV_VAR] === "true";
+
+export const areBudgetSnapshotGenerationWritesEnabled = (): boolean =>
+  process.env[BUDGET_SNAPSHOT_GENERATION_WRITES_ENV_VAR] === "true";
