@@ -13,6 +13,8 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /prototype/repositories/budgets`
 - `GET /prototype/repositories/budgets/:id`
 - `GET /prototype/repositories/budgets/:id/snapshots`
+- `POST /prototype/repositories/budgets/delete/dry-run`
+- `POST /prototype/repositories/budgets/delete/write` (experimental, disabled by default)
 - `GET /prototype/repositories/budget-snapshots`
 - `GET /prototype/repositories/budget-snapshots/:id`
 - `POST /prototype/repositories/budget-snapshots/lifecycle/dry-run/generate`
@@ -1511,3 +1513,48 @@ The opt-in smoke dirties SQLite. Re-import or restore a clean native backup
 before parity work. In authoritative mode, complete the lifecycle operation,
 stop services, and rotate the authority checkpoint before restart. The prior
 checkpoint/native backup remains the rollback source.
+
+### Budget deletion Phase 1
+
+Budget deletion is a separate optional capability and is deliberately safer
+than the current Dexie page behavior. It is disabled unless the backend has
+`PERSONAL_FINANCE_ENABLE_BUDGET_DELETE_WRITES=true`; the dev UI additionally
+requires `VITE_PERSONAL_FINANCE_BUDGET_DELETE_WRITE_EXPERIMENT=true` in a
+verified SQLite rehearsal or authoritative mode.
+
+```text
+POST /prototype/repositories/budgets/delete/dry-run
+POST /prototype/repositories/budgets/delete/write
+```
+
+The dry-run inventories exact stored IDs only. Every target
+`budgetSnapshots.budgetId` row is included, while either a canonical
+`transactions.budgetSnapshotId` reference to one of those snapshots or a
+legacy direct `transactions.budgetId` reference blocks deletion. The write
+recalculates and fingerprints the complete plan, then deletes all unlinked
+target snapshots and the one Budget definition in a single SQLite
+transaction. Active and inactive Budgets use the same rule. Duplicate or
+out-of-schedule snapshots are included only when their exact `budgetId`
+ownership is valid and no transaction references them.
+
+This operation never clears or relinks a transaction, deletes a transaction,
+runs snapshot generation/pruning/dedupe/repair, rewrites history, or creates a
+checkpoint. Transactions and lookup rows remain byte-for-byte unchanged, so
+financial and report totals remain unchanged. Budget History loses the target
+Budget's now-deleted unused snapshot occurrences. Unexpected reference
+columns, Budget-related foreign keys or triggers, malformed relationships,
+stale plans, and affected-row mismatches fail closed.
+
+`budgetDeleteWrites` is optional: older authority manifests retain the
+original required capability set. Enabling it removes only
+`budget_definition_delete` from the unsupported-operation response;
+standalone snapshot deletion, editing, pruning, and repair remain unsupported.
+After an authoritative delete, stop services and manually rotate the
+checkpoint before restart. Recover from a prior checkpoint/native backup, or
+re-import from the matching Dexie backup. The opt-in mutation smoke dirties
+its outside-repository SQLite database:
+
+```powershell
+npm run test:budget-delete
+npm run smoke:api -- -- --token-file <token-file> --allow-budget-delete-write-smoke
+```

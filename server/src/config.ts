@@ -44,6 +44,8 @@ export const BUDGET_SNAPSHOT_GENERATION_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUDGET_SNAPSHOT_GENERATION_WRITES" as const;
 export const BUDGET_LIFECYCLE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUDGET_LIFECYCLE_WRITES" as const;
+export const BUDGET_DELETE_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_BUDGET_DELETE_WRITES" as const;
 
 export const ALLOWED_ORIGINS = new Set([
   "http://localhost:8100",
@@ -132,3 +134,6 @@ export const areBudgetSnapshotGenerationWritesEnabled = (): boolean =>
 
 export const areBudgetLifecycleWritesEnabled = (): boolean =>
   process.env[BUDGET_LIFECYCLE_WRITES_ENV_VAR] === "true";
+
+export const areBudgetDeleteWritesEnabled = (): boolean =>
+  process.env[BUDGET_DELETE_WRITES_ENV_VAR] === "true";

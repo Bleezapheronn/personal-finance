@@ -29,6 +29,7 @@
     "test:sqlite-authority-checkpoint": "tsx src/testSqliteAuthorityCheckpoint.ts",
     "test:transaction-delete": "tsx src/testTransactionDelete.ts",
     "test:budget-lifecycle": "tsx src/testBudgetLifecycle.ts",
+    "test:budget-delete": "tsx src/testBudgetDelete.ts",
     "test:recipient-lifecycle": "tsx src/testRecipientLifecycle.ts",
     "test:account-lifecycle": "tsx src/testAccountLifecycle.ts",
     "test:category-lifecycle": "tsx src/testCategoryLifecycle.ts",

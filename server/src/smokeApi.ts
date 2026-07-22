@@ -24,6 +24,7 @@ import { RECIPIENT_LIFECYCLE_CONFIRMATIONS } from "./lib/recipientLifecycle.js";
 import { ACCOUNT_LIFECYCLE_CONFIRMATIONS } from "./lib/accountLifecycle.js";
 import { CATEGORY_LIFECYCLE_CONFIRMATIONS } from "./lib/categoryLifecycle.js";
 import { BUCKET_LIFECYCLE_CONFIRMATIONS } from "./lib/bucketLifecycle.js";
+import { BUDGET_DELETE_WRITE_CONFIRMATION } from "./lib/budgetDelete.js";
 import {
   calculateBudgetOccurrenceSchedule,
   calculateMissingBudgetSnapshotPlan,
@@ -69,6 +70,7 @@ interface SmokeArgs {
   allowBudgetDefinitionWriteSmoke: boolean;
   allowBudgetSnapshotGenerationWriteSmoke: boolean;
   allowBudgetLifecycleWriteSmoke: boolean;
+  allowBudgetDeleteWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -186,6 +188,8 @@ Options:
                          Opt in to deterministic missing Budget snapshot generation smoke.
   --allow-budget-lifecycle-write-smoke
                          Opt in to safer atomic Budget lifecycle create/update smoke.
+  --allow-budget-delete-write-smoke
+                         Opt in to one unused Budget plus unlinked snapshots delete smoke.
   --help                 Show this help text.
 `;
 
@@ -209,6 +213,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowBudgetDefinitionWriteSmoke: false,
     allowBudgetSnapshotGenerationWriteSmoke: false,
     allowBudgetLifecycleWriteSmoke: false,
+    allowBudgetDeleteWriteSmoke: false,
     help: false,
   };
 
@@ -326,6 +331,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-budget-lifecycle-write-smoke") {
       args.allowBudgetLifecycleWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-budget-delete-write-smoke") {
+      args.allowBudgetDeleteWriteSmoke = true;
       continue;
     }
 
@@ -936,6 +946,7 @@ const buildChecks = (
   allowBudgetDefinitionWriteSmoke: boolean,
   allowBudgetSnapshotGenerationWriteSmoke: boolean,
   allowBudgetLifecycleWriteSmoke: boolean,
+  allowBudgetDeleteWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -960,10 +971,11 @@ const buildChecks = (
     ...(allowBucketDeleteMergeWriteSmoke ? ["bucketDeleteMergeWrites"] : []),
     ...(allowTransactionBasicWriteSmoke ||
     allowTransactionCostBudgetWriteSmoke ||
-    allowTransactionTransferWriteSmoke
+    allowTransactionTransferWriteSmoke ||
+    allowBudgetDeleteWriteSmoke
       ? ["transactionBasicWrites"]
       : []),
-    ...(allowTransactionCostBudgetWriteSmoke
+    ...(allowTransactionCostBudgetWriteSmoke || allowBudgetDeleteWriteSmoke
       ? ["transactionCostBudgetWrites"]
       : []),
     ...(allowTransactionTransferWriteSmoke
@@ -977,7 +989,10 @@ const buildChecks = (
     ...(allowBudgetSnapshotGenerationWriteSmoke
       ? ["budgetSnapshotGenerationWrites"]
       : []),
-    ...(allowBudgetLifecycleWriteSmoke ? ["budgetLifecycleWrites"] : []),
+    ...(allowBudgetLifecycleWriteSmoke || allowBudgetDeleteWriteSmoke
+      ? ["budgetLifecycleWrites"]
+      : []),
+    ...(allowBudgetDeleteWriteSmoke ? ["budgetDeleteWrites"] : []),
   ]);
   const writeCapabilityKeys = [
     "recipientActiveStateWrites",
@@ -987,6 +1002,7 @@ const buildChecks = (
     "accountWrites",
     "accountDeleteMergeWrites",
     "categoryDeleteMergeWrites",
+    "bucketDeleteMergeWrites",
     "transactionBasicWrites",
     "transactionCostBudgetWrites",
     "transactionTransferWrites",
@@ -995,6 +1011,7 @@ const buildChecks = (
     "budgetDefinitionWrites",
     "budgetSnapshotGenerationWrites",
     "budgetLifecycleWrites",
+    "budgetDeleteWrites",
   ] as const;
   let sampledTransactionId: number | undefined;
   let sampledBudgetId: number | undefined;
@@ -5899,7 +5916,7 @@ const buildChecks = (
             body: { ...basePayload, transferPairId: 1 },
             expectedStatus: 400,
           },
-          ...(!allowTransactionCostBudgetWriteSmoke
+          ...(!allowTransactionCostBudgetWriteSmoke && !allowBudgetDeleteWriteSmoke
             ? [
                 {
                   action: "create" as const,
@@ -5908,12 +5925,16 @@ const buildChecks = (
                 },
               ]
             : []),
-          {
-            action: "create",
-            body: { ...basePayload, paymentChannelId: 1 },
-            expectedStatus: 400,
-          },
-          ...(!allowTransactionCostBudgetWriteSmoke
+          ...(!allowTransactionCostBudgetWriteSmoke && !allowBudgetDeleteWriteSmoke
+            ? [
+                {
+                  action: "create" as const,
+                  body: { ...basePayload, paymentChannelId: 1 },
+                  expectedStatus: 400,
+                },
+              ]
+            : []),
+          ...(!allowTransactionCostBudgetWriteSmoke && !allowBudgetDeleteWriteSmoke
             ? [
                 {
                   action: "create" as const,
@@ -5970,7 +5991,8 @@ const buildChecks = (
     },
     ...(!allowTransactionBasicWriteSmoke &&
     !allowTransactionCostBudgetWriteSmoke &&
-    !allowTransactionTransferWriteSmoke
+    !allowTransactionTransferWriteSmoke &&
+    !allowBudgetDeleteWriteSmoke
       ? [
           {
             name: "transaction basic writes are disabled and non-mutating by default",
@@ -6042,7 +6064,7 @@ const buildChecks = (
           } satisfies SmokeCheck,
         ]
       : []),
-    ...(!allowTransactionCostBudgetWriteSmoke
+    ...(!allowTransactionCostBudgetWriteSmoke && !allowBudgetDeleteWriteSmoke
       ? [
           {
             name: "transaction cost and budget writes require explicit Phase 2 opt-in",
@@ -8851,6 +8873,184 @@ const buildChecks = (
         ]
       : []),
     {
+      name: "Budget deletion dry-run is protected, redacted, and non-mutating",
+      run: async () => {
+        const tableNames = [
+          "transactions", "budgets", "budgetSnapshots", "buckets", "categories",
+          "accounts", "paymentMethods", "recipients", "smsImportTemplates",
+        ] as const;
+        const baseline = new Map<string, string>();
+        const tableData = new Map<string, Record<string, unknown>[]>();
+        for (const table of tableNames) {
+          const tableRows = await readAllTableRows(baseUrl, table, authedOptions);
+          tableData.set(table, tableRows);
+          baseline.set(table, rowsFingerprint(tableRows));
+        }
+        const budgets = tableData.get("budgets") ?? [];
+        const snapshots = tableData.get("budgetSnapshots") ?? [];
+        const transactions = tableData.get("transactions") ?? [];
+        const referencedSnapshotIds = new Set(
+          transactions
+            .map((row) => row.budgetSnapshotId)
+            .filter((id): id is number => typeof id === "number"),
+        );
+        const eligibleBudget = budgets.find((budget) => {
+          const id = Number(budget.id);
+          const owned = snapshots.filter((snapshot) => Number(snapshot.budgetId) === id);
+          return (
+            !transactions.some((row) => Number(row.budgetId) === id) &&
+            !owned.some((snapshot) => referencedSnapshotIds.has(Number(snapshot.id)))
+          );
+        });
+        const sampledId = Number(eligibleBudget?.id ?? budgets[0]?.id);
+        if (!Number.isInteger(sampledId) || sampledId <= 0) {
+          throw new Error("budget_delete_fixture_missing");
+        }
+
+        const unauthenticated = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/delete/dry-run",
+          { method: "POST", body: { budgetId: sampledId }, origin },
+        );
+        expectStatus(unauthenticated.status, 401);
+        const badOrigin = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/delete/dry-run",
+          {
+            token,
+            origin: "http://unexpected-origin.invalid",
+            method: "POST",
+            body: { budgetId: sampledId },
+          },
+        );
+        expectStatus(badOrigin.status, 403);
+        const invalid = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { budgetId: -1 } },
+        );
+        expectStatus(invalid.status, 400);
+        const unknown = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { budgetId: 2_147_483_647 } },
+        );
+        expectStatus(unknown.status, 404);
+        const unexpected = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/delete/dry-run",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { budgetId: sampledId, snapshotIds: [] },
+          },
+        );
+        expectStatus(unexpected.status, 400);
+
+        const dry = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { budgetId: sampledId } },
+        );
+        expectStatus(dry.status, 200);
+        expect(dry.json.action === "deleteBudget", "budget_delete_action_invalid");
+        expect(dry.json.wouldMutate === false, "budget_delete_dry_run_would_mutate");
+        expect(dry.json.sqliteMutated === false, "budget_delete_dry_run_mutated");
+        expect(typeof dry.json.transactionDependencyCount === "number", "budget_delete_dependency_count_missing");
+        expect(typeof dry.json.snapshotCount === "number", "budget_delete_snapshot_count_missing");
+        const encoded = JSON.stringify(dry.json);
+        expect(
+          !encoded.includes(String(eligibleBudget?.description ?? "__none__")),
+          "budget_delete_response_not_redacted",
+        );
+
+        const canonicalBudgetId = snapshots
+          .filter((snapshot) => referencedSnapshotIds.has(Number(snapshot.id)))
+          .map((snapshot) => Number(snapshot.budgetId))
+          .find((id) => Number.isInteger(id) && id > 0);
+        if (canonicalBudgetId !== undefined) {
+          const canonical = await requestJson(
+            baseUrl,
+            "/prototype/repositories/budgets/delete/dry-run",
+            { ...authedOptions, method: "POST", body: { budgetId: canonicalBudgetId } },
+          );
+          expectStatus(canonical.status, 200);
+          expect(canonical.json.eligible === false, "canonical_link_delete_allowed");
+          expect(Number(canonical.json.canonicalTransactionReferenceCount) > 0, "canonical_link_count_missing");
+        }
+        const legacyBudgetId = transactions
+          .map((row) => row.budgetId)
+          .find((id): id is number => typeof id === "number" && id > 0);
+        if (legacyBudgetId !== undefined) {
+          const legacy = await requestJson(
+            baseUrl,
+            "/prototype/repositories/budgets/delete/dry-run",
+            { ...authedOptions, method: "POST", body: { budgetId: legacyBudgetId } },
+          );
+          expectStatus(legacy.status, 200);
+          expect(legacy.json.eligible === false, "legacy_link_delete_allowed");
+          expect(Number(legacy.json.legacyDirectTransactionReferenceCount) > 0, "legacy_link_count_missing");
+        }
+
+        const invalidWrite = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/delete/write",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              budgetId: sampledId,
+              dryRunReviewed: true,
+              confirmation: "wrong",
+              expectedPlanFingerprint: "0".repeat(64),
+            },
+          },
+        );
+        expectStatus(invalidWrite.status, 400);
+        for (const path of [
+          "/prototype/repositories/budgets/delete/bulk",
+          "/prototype/repositories/budgets/delete/unlink",
+          "/prototype/repositories/budgets/delete/relink",
+        ]) {
+          const unsupported = await requestJson(baseUrl, path, {
+            ...authedOptions,
+            method: "POST",
+            body: { budgetId: sampledId },
+          });
+          expectStatus(unsupported.status, 404);
+        }
+
+        for (const table of tableNames) {
+          expect(
+            rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)) === baseline.get(table),
+            `${table}_changed_by_budget_delete_dry_run`,
+          );
+        }
+      },
+    },
+    ...(!allowBudgetDeleteWriteSmoke
+      ? [{
+          name: "Budget deletion write is disabled by default",
+          run: async () => {
+            const response = await requestJson(
+              baseUrl,
+              "/prototype/repositories/budgets/delete/write",
+              {
+                ...authedOptions,
+                method: "POST",
+                body: {
+                  budgetId: 1,
+                  dryRunReviewed: true,
+                  confirmation: BUDGET_DELETE_WRITE_CONFIRMATION,
+                  expectedPlanFingerprint: "0".repeat(64),
+                },
+              },
+            );
+            expectStatus(response.status, 403);
+          },
+        } satisfies SmokeCheck]
+      : []),
+    {
       name: "Budget lifecycle dry-run is protected, redacted, and non-mutating",
       run: async () => {
         const categoryId = sampledLookupIds.get("categories");
@@ -8903,7 +9103,7 @@ const buildChecks = (
         }
       },
     },
-    ...(!allowBudgetLifecycleWriteSmoke
+    ...(!allowBudgetLifecycleWriteSmoke && !allowBudgetDeleteWriteSmoke
       ? [{
           name: "Budget lifecycle write is disabled by default",
           run: async () => {
@@ -8975,6 +9175,226 @@ const buildChecks = (
                 "budget_lifecycle_activity_coverage_invalid",
               );
             }
+          },
+        } satisfies SmokeCheck]
+      : []),
+    ...(allowBudgetDeleteWriteSmoke
+      ? [{
+          name: "opt-in Budget deletion removes only unused Budget lifecycle rows",
+          run: async () => {
+            const categoryId = sampledLookupIds.get("categories");
+            const accountId = sampledLookupIds.get("accounts");
+            const recipientId = sampledLookupIds.get("recipients");
+            if (!categoryId || !accountId || !recipientId) {
+              throw new Error("budget_delete_fixture_missing");
+            }
+            const tableNames = [
+              "transactions", "budgets", "budgetSnapshots", "buckets", "categories",
+              "accounts", "paymentMethods", "recipients", "smsImportTemplates",
+            ] as const;
+
+            const lifecycleCreate = async (isActive: boolean) => {
+              const sequence = Date.now() + Math.floor(Math.random() * 1000);
+              const payload = {
+                description: `Budget delete smoke ${sequence}`,
+                categoryId,
+                accountId,
+                recipientId,
+                amount: -13,
+                transactionCost: null,
+                frequency: "monthly",
+                frequencyDetails: { dayOfMonth: 15 },
+                isGoal: false,
+                isFlexible: false,
+                goalPercentage: null,
+                goalDirection: null,
+                remainingCyclesTotal: isActive ? 3 : null,
+                dueDate: "2026-08-15T00:00:00.000Z",
+                isActive,
+                asOf: "2026-07-22",
+              };
+              const dry = await requestJson(
+                baseUrl,
+                "/prototype/repositories/budgets/lifecycle/dry-run/create",
+                { ...authedOptions, method: "POST", body: payload },
+              );
+              expect(
+                dry.status === 200,
+                `budget_delete_fixture_lifecycle_dry_${dry.status}_${String(dry.json.code ?? "no_code")}`,
+              );
+              const write = await requestJson(
+                baseUrl,
+                "/prototype/repositories/budgets/lifecycle/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...payload,
+                    dryRunReviewed: true,
+                    confirmation: BUDGET_LIFECYCLE_CONFIRMATIONS.create,
+                    expectedPlanFingerprint: dry.json.planFingerprint,
+                  },
+                },
+              );
+              expect(
+                write.status === 200,
+                `budget_delete_fixture_lifecycle_write_${write.status}_${String(write.json.code ?? "no_code")}`,
+              );
+              expect(write.json.sqliteMutated === true, "budget_delete_fixture_create_failed");
+              return Number(write.json.targetId);
+            };
+
+            const deleteBudget = async (budgetId: number) => {
+              const dry = await requestJson(
+                baseUrl,
+                "/prototype/repositories/budgets/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { budgetId } },
+              );
+              expect(
+                dry.status === 200,
+                `budget_delete_fixture_delete_dry_${dry.status}_${String(dry.json.code ?? "no_code")}`,
+              );
+              expect(dry.json.eligible === true, "budget_delete_fixture_not_eligible");
+              expect(typeof dry.json.planFingerprint === "string", "budget_delete_plan_missing");
+              const write = await requestJson(
+                baseUrl,
+                "/prototype/repositories/budgets/delete/write",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    budgetId,
+                    dryRunReviewed: true,
+                    confirmation: BUDGET_DELETE_WRITE_CONFIRMATION,
+                    expectedPlanFingerprint: dry.json.planFingerprint,
+                  },
+                },
+              );
+              expect(
+                write.status === 200,
+                `budget_delete_fixture_delete_write_${write.status}_${String(write.json.code ?? "no_code")}`,
+              );
+              expect(write.json.sqliteMutated === true, "budget_delete_write_not_applied");
+              expect(write.json.transactionLinkMutation === false, "budget_delete_link_mutation_reported");
+              return dry.json;
+            };
+
+            const baseline = new Map<string, string>();
+            for (const table of tableNames) {
+              baseline.set(table, rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)));
+            }
+            const activeId = await lifecycleCreate(true);
+            const activePlan = await deleteBudget(activeId);
+            expect(Number(activePlan.snapshotCount) > 0, "active_budget_snapshots_missing");
+            const repeated = await requestJson(
+              baseUrl,
+              "/prototype/repositories/budgets/delete/dry-run",
+              { ...authedOptions, method: "POST", body: { budgetId: activeId } },
+            );
+            expectStatus(repeated.status, 404);
+            for (const table of tableNames) {
+              expect(
+                rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)) === baseline.get(table),
+                `${table}_changed_after_eligible_budget_delete`,
+              );
+            }
+
+            const inactiveId = await lifecycleCreate(false);
+            const inactivePlan = await deleteBudget(inactiveId);
+            expect(Number(inactivePlan.snapshotCount) === 0, "inactive_budget_generated_snapshots");
+
+            const linkedBudgetId = await lifecycleCreate(true);
+            const snapshotList = await requestJson(
+              baseUrl,
+              `/prototype/repositories/budget-snapshots?budgetId=${linkedBudgetId}&limit=20&offset=0`,
+              authedOptions,
+            );
+            expectStatus(snapshotList.status, 200);
+            const linkedSnapshotId = optionalIdFromListResponse(snapshotList.json);
+            if (!linkedSnapshotId) throw new Error("budget_delete_link_snapshot_missing");
+            const stalePlan = await requestJson(
+              baseUrl,
+              "/prototype/repositories/budgets/delete/dry-run",
+              { ...authedOptions, method: "POST", body: { budgetId: linkedBudgetId } },
+            );
+            expectStatus(stalePlan.status, 200);
+            const transactionPayload = {
+              classification: "expense",
+              categoryId,
+              accountId,
+              recipientId,
+              date: "2026-08-15T12:00:00.000Z",
+              amount: -1,
+              transactionCost: null,
+              description: `Budget delete linkage smoke ${Date.now()}`,
+              budgetSnapshotId: linkedSnapshotId,
+            };
+            const transactionDry = await requestJson(
+              baseUrl,
+              "/prototype/repositories/transactions/dry-run/create",
+              { ...authedOptions, method: "POST", body: transactionPayload },
+            );
+            expect(
+              transactionDry.status === 200,
+              `budget_delete_fixture_transaction_dry_${transactionDry.status}_${String(transactionDry.json.code ?? "no_code")}`,
+            );
+            const transactionWrite = await requestJson(
+              baseUrl,
+              "/prototype/repositories/transactions/write/create",
+              {
+                ...authedOptions,
+                method: "POST",
+                body: {
+                  ...transactionPayload,
+                  dryRunReviewed: true,
+                  confirmation: TRANSACTION_BASIC_CREATE_WRITE_CONFIRMATION,
+                },
+              },
+            );
+            expect(
+              transactionWrite.status === 200,
+              `budget_delete_fixture_transaction_write_${transactionWrite.status}_${String(transactionWrite.json.code ?? "no_code")}`,
+            );
+
+            const blocked = await requestJson(
+              baseUrl,
+              "/prototype/repositories/budgets/delete/dry-run",
+              { ...authedOptions, method: "POST", body: { budgetId: linkedBudgetId } },
+            );
+            expectStatus(blocked.status, 200);
+            expect(blocked.json.eligible === false, "linked_budget_delete_allowed");
+            expect(Number(blocked.json.canonicalTransactionReferenceCount) === 1, "canonical_dependency_missing");
+            expect(Number(blocked.json.legacyDirectTransactionReferenceCount) === 1, "legacy_dependency_missing");
+            const budgetsBeforeBlockedWrite = rowsFingerprint(
+              await readAllTableRows(baseUrl, "budgets", authedOptions),
+            );
+            const snapshotsBeforeBlockedWrite = rowsFingerprint(
+              await readAllTableRows(baseUrl, "budgetSnapshots", authedOptions),
+            );
+            const staleWrite = await requestJson(
+              baseUrl,
+              "/prototype/repositories/budgets/delete/write",
+              {
+                ...authedOptions,
+                method: "POST",
+                body: {
+                  budgetId: linkedBudgetId,
+                  dryRunReviewed: true,
+                  confirmation: BUDGET_DELETE_WRITE_CONFIRMATION,
+                  expectedPlanFingerprint: stalePlan.json.planFingerprint,
+                },
+              },
+            );
+            expectStatus(staleWrite.status, 409);
+            expect(staleWrite.json.code === "budget_delete_plan_stale", "stale_budget_delete_not_reported");
+            expect(
+              rowsFingerprint(await readAllTableRows(baseUrl, "budgets", authedOptions)) === budgetsBeforeBlockedWrite,
+              "blocked_budget_write_changed_budget",
+            );
+            expect(
+              rowsFingerprint(await readAllTableRows(baseUrl, "budgetSnapshots", authedOptions)) === snapshotsBeforeBlockedWrite,
+              "blocked_budget_write_changed_snapshots",
+            );
           },
         } satisfies SmokeCheck]
       : []),
@@ -9110,6 +9530,7 @@ const main = async (): Promise<void> => {
     args.allowBudgetDefinitionWriteSmoke,
     args.allowBudgetSnapshotGenerationWriteSmoke,
     args.allowBudgetLifecycleWriteSmoke,
+    args.allowBudgetDeleteWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

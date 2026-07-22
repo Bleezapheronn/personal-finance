@@ -29,6 +29,7 @@ All flags default off.
 | Budget Definitions | Create and update the definition row only | Delete, completion, transaction linking, lookup creation, every snapshot lifecycle mutation | `PERSONAL_FINANCE_ENABLE_BUDGET_DEFINITION_WRITES=true` | `VITE_PERSONAL_FINANCE_BUDGETS_WRITE_EXPERIMENT=true` | Passed: Budget definition opt-in mode | Passed | Discard or re-import SQLite; Dexie budgets, snapshots, Budget History, and transaction links are unaffected |
 | Budget Snapshot Generation | Deterministic insert of missing occurrences only | Existing-row update, pruning, delete, repair, dedupe, historical rewrite, transaction relinking, automatic scheduling | `PERSONAL_FINANCE_ENABLE_BUDGET_SNAPSHOT_GENERATION_WRITES=true` | None; protected endpoint/CLI only | Passed: generation and repeated idempotency opt-in mode | Manual UI action intentionally omitted | Discard or re-import SQLite; Dexie snapshots remain unchanged and SQLite Budget History is dirty until re-import |
 | Budget Lifecycle Policy v1 | Atomic definition create/update, target-Budget inclusive current/future unlinked cleanup, and one-year active coverage | Global pruning, linked/historical rewrite, page-load migration, dedupe, orphan repair, relinking, delete, automatic checkpoints | `PERSONAL_FINANCE_ENABLE_BUDGET_LIFECYCLE_WRITES=true` | `VITE_PERSONAL_FINANCE_BUDGET_LIFECYCLE_WRITE_EXPERIMENT=true` | Focused active/inactive, immutable-link, conflict, and idempotency checks; explicit opt-in API mutation mode | Manual dry-run and confirmation only | Stop services and rotate the authority checkpoint; otherwise restore the prior checkpoint/native backup or re-import SQLite. Dexie is unchanged |
+| Budget Deletion Phase 1 | Dry-run-first atomic removal of one unused Budget definition and every exact-owned unlinked snapshot | Linked snapshot deletion, legacy/direct unlinking, transaction deletion, selected snapshot deletion, repair, dedupe, orphan inference, global pruning, automatic checkpoints | `PERSONAL_FINANCE_ENABLE_BUDGET_DELETE_WRITES=true` | `VITE_PERSONAL_FINANCE_BUDGET_DELETE_WRITE_EXPERIMENT=true` | Focused dependency, stale-plan, redaction, immutability, and atomic deletion checks; explicit disposable mutation smoke required | Manual browser pass required | Stop services and rotate an authoritative checkpoint; otherwise restore the prior checkpoint/native backup or re-import SQLite. Dexie and all transaction rows remain unchanged |
 
 ## Hard Boundaries
 
@@ -117,8 +118,11 @@ The following work is intentionally unsupported or deferred:
   deletion, transfer-pair repair, and conversion between ordinary and transfer
   transactions. Phase 1 deletion supports only an eligible ordinary row or a
   fully verified reciprocal pair.
-- Budget-definition delete, completion, transaction linking, and lookup
-  creation from the HTTP write path.
+- Budget completion, transaction linking, and lookup creation from the HTTP
+  write path. Optional Budget Deletion Phase 1 removes only a dependency-free
+  definition and all of its exact-owned unlinked snapshots atomically; either
+  canonical `transactions.budgetSnapshotId` or legacy `transactions.budgetId`
+  dependencies block the operation.
 - Budget snapshot update, pruning, dedupe, repair, backfill, editing, deletion,
   historical rewriting/relinking, and automatic scheduling. Phase 1 supports
   only manual deterministic insertion of missing occurrences.
@@ -183,6 +187,7 @@ fresh backup used for verification.
    - `VITE_PERSONAL_FINANCE_TRANSACTIONS_TRANSFER_WRITE_EXPERIMENT`
    - `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT`
    - `VITE_PERSONAL_FINANCE_BUDGETS_WRITE_EXPERIMENT`
+   - `VITE_PERSONAL_FINANCE_BUDGET_DELETE_WRITE_EXPERIMENT`
 3. Restart Vite.
 4. Stop the local API if it is no longer needed.
 5. Delete or re-import disposable SQLite if it was mutated.
@@ -324,8 +329,9 @@ delete and same-Bucket exact-ID merge are available only through their separate
 optional capability; they never run Budget/snapshot lifecycle logic. Authority
 does not otherwise enable Bucket deletion/reorder, Category active-state
 changes, Account active-state/image changes,
-Transaction deletion or transfer repair, Budget
-deletion, snapshot edit/delete/prune/repair/relink, SMS import mutation, or any
+Transaction deletion or transfer repair, Budget deletion outside the optional
+dry-run-first dependency-free Phase 1 policy, standalone snapshot
+edit/delete/prune/repair/relink, SMS import mutation, or any
 fallback to a Dexie implementation.
 
 Rollback remains operator-driven:

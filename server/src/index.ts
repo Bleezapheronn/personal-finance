@@ -7,6 +7,7 @@ import {
   areCategoryDeleteMergeWritesEnabled,
   areBucketDeleteMergeWritesEnabled,
   areBudgetDefinitionWritesEnabled,
+  areBudgetDeleteWritesEnabled,
   areBudgetLifecycleWritesEnabled,
   areBudgetSnapshotGenerationWritesEnabled,
   areBucketCategoryWritesEnabled,
@@ -161,6 +162,14 @@ import {
   BudgetLifecycleRequestError,
   validateBudgetLifecyclePayload,
 } from "./lib/budgetLifecycle.js";
+import {
+  budgetDeleteDisabledResponse,
+  budgetDeleteDryRun,
+  budgetDeleteRealWrite,
+  budgetDeleteRequestErrorResponse,
+  BudgetDeleteRequestError,
+  validateBudgetDeletePayload,
+} from "./lib/budgetDelete.js";
 import {
   budgetSnapshotGenerationDryRun,
   budgetSnapshotGenerationRequestErrorResponse,
@@ -595,6 +604,9 @@ server.get("/prototype/sqlite/authority-readiness", async () => ({
           areCategoryDeleteMergeWritesEnabled() ||
           areBucketDeleteMergeWritesEnabled()
         );
+      }
+      if (operation === "budget_definition_delete") {
+        return !areBudgetDeleteWritesEnabled();
       }
       return true;
     },
@@ -1765,6 +1777,102 @@ for (const action of ["create", "update"] as const) {
     },
   );
 }
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/budgets/delete/dry-run",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code:
+          statusCode === 503
+            ? "sqlite_unavailable"
+            : "budget_delete_dry_run_failed",
+      });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+    try {
+      const response = budgetDeleteDryRun(opened.db, request.body);
+      if (response.code === "budget_not_found") {
+        return reply.code(404).send(response);
+      }
+      return response;
+    } catch (error) {
+      if (error instanceof BudgetDeleteRequestError) {
+        return reply
+          .code(error.statusCode)
+          .send(budgetDeleteRequestErrorResponse(error.code));
+      }
+      return reply
+        .code(500)
+        .send({ ok: false, code: "budget_delete_dry_run_failed" });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/budgets/delete/write",
+  async (request, reply) => {
+    try {
+      validateBudgetDeletePayload(request.body, true);
+    } catch (error) {
+      if (error instanceof BudgetDeleteRequestError) {
+        return reply
+          .code(error.statusCode)
+          .send(budgetDeleteRequestErrorResponse(error.code));
+      }
+      return reply
+        .code(400)
+        .send(budgetDeleteRequestErrorResponse("budget_delete_write_invalid"));
+    }
+    if (!areBudgetDeleteWritesEnabled()) {
+      return reply.code(403).send(budgetDeleteDisabledResponse());
+    }
+
+    let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+    try {
+      opened = openConfiguredWritableDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code:
+          statusCode === 503
+            ? "sqlite_unavailable"
+            : "budget_delete_write_failed",
+      });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+    try {
+      const response = budgetDeleteRealWrite(opened.db, request.body);
+      if (response.code === "budget_not_found") {
+        return reply.code(404).send(response);
+      }
+      return response.ok ? response : reply.code(409).send(response);
+    } catch (error) {
+      if (error instanceof BudgetDeleteRequestError) {
+        return reply
+          .code(error.statusCode)
+          .send(budgetDeleteRequestErrorResponse(error.code));
+      }
+      return reply
+        .code(500)
+        .send({ ok: false, code: "budget_delete_write_failed" });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
 
 server.post<{ Body: unknown }>(
   "/prototype/repositories/transactions/delete/dry-run",

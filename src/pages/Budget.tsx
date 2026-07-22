@@ -74,6 +74,13 @@ import {
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { isBudgetsWriteExperimentEnabled } from "../repositories/http/budgetDefinitionWriteExperiment";
+import {
+  budgetDeleteWriteErrorCode,
+  dryRunBudgetDelete,
+  isBudgetDeleteWriteExperimentEnabled,
+  type BudgetDeleteWriteResponse,
+  writeBudgetDelete,
+} from "../repositories/http/budgetDeleteWriteExperiment";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -589,6 +596,11 @@ const BudgetPage: React.FC = () => {
     rehearsalSelected ||
     (repositoryBackend === "http-readonly" &&
       (budgetReadExperimentEnabled || budgetDefinitionWriteExperimentActive));
+  const budgetDeleteWriteExperimentActive =
+    rehearsalSelected &&
+    rehearsal.ready &&
+    rehearsal.budgetDeleteWritesAvailable &&
+    isBudgetDeleteWriteExperimentEnabled();
 
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [budgetSnapshots, setBudgetSnapshots] = useState<BudgetSnapshot[]>([]);
@@ -618,6 +630,9 @@ const BudgetPage: React.FC = () => {
     linkedSnapshots: BudgetSnapshot[];
     unlinkedSnapshots: BudgetSnapshot[];
   } | null>(null);
+  const [sqliteDeletePlan, setSqliteDeletePlan] =
+    useState<BudgetDeleteWriteResponse | null>(null);
+  const [budgetDeleteBusy, setBudgetDeleteBusy] = useState(false);
 
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [selectedBudgetForCompletion, setSelectedBudgetForCompletion] =
@@ -762,7 +777,7 @@ const BudgetPage: React.FC = () => {
           transactionTruncated: transactionLoad.truncated,
         });
         setError("");
-        return;
+        return true;
       }
 
       // Run snapshot migration and pre-generate upcoming snapshots
@@ -936,9 +951,11 @@ const BudgetPage: React.FC = () => {
       setAccountImages(imageMap);
 
       setError("");
+      return true;
     } catch (err) {
       console.error("Failed to load budget data:", err);
       setError("Failed to load budgets");
+      return false;
     } finally {
       setLoading(false);
     }
@@ -1509,7 +1526,30 @@ const BudgetPage: React.FC = () => {
   };
 
   // Handle delete click - run preflight analysis
-  const handleDeleteClick = (budgetId: number) => {
+  const handleDeleteClick = async (budgetId: number) => {
+    if (budgetDeleteWriteExperimentActive) {
+      setBudgetDeleteBusy(true);
+      setError("");
+      try {
+        const plan = await dryRunBudgetDelete(budgetId);
+        if (!plan.eligible || !plan.planFingerprint) {
+          setError(
+            `Budget deletion blocked: ${plan.transactionDependencyCount} protected transaction dependency/dependencies and ${plan.conflictCount} conflict(s). No rows changed.`,
+          );
+          return;
+        }
+        setSqliteDeletePlan(plan);
+        setDeleteAnalysis(null);
+        setBudgetToDelete(budgetId);
+        setShowDeleteConfirm(true);
+      } catch (err) {
+        setError(budgetDeleteWriteErrorCode(err));
+      } finally {
+        setBudgetDeleteBusy(false);
+      }
+      return;
+    }
+
     if (budgetHttpReadonlyExperimentActive) {
       setError("Budget read experiment is read-only. Delete is disabled.");
       return;
@@ -1523,8 +1563,52 @@ const BudgetPage: React.FC = () => {
 
   // Handle delete confirmation - execute selected action
   const handleConfirmDelete = async (
-    action: "delete" | "deleteUnlinked" | "deactivate",
+    action: "delete" | "deleteUnlinked" | "deactivate" | "deleteSqlite",
   ) => {
+    if (action === "deleteSqlite") {
+      if (
+        !budgetDeleteWriteExperimentActive ||
+        budgetToDelete === undefined ||
+        !sqliteDeletePlan?.planFingerprint
+      ) {
+        setError("budget_delete_write_not_ready");
+        return;
+      }
+      setBudgetDeleteBusy(true);
+      setError("");
+      let sqliteMutated = false;
+      try {
+        await writeBudgetDelete(
+          budgetToDelete,
+          sqliteDeletePlan.planFingerprint,
+        );
+        sqliteMutated = true;
+        const refreshed = await loadData();
+        if (!refreshed) {
+          setError(
+            "Budget deletion completed, but refresh failed. SQLite may already have changed; verify it before retrying.",
+          );
+          return;
+        }
+        setSuccessMsg(
+          "Budget and its unlinked snapshots deleted from SQLite. Rotate the authority checkpoint before restart.",
+        );
+        setShowSuccessToast(true);
+        setShowDeleteConfirm(false);
+        setBudgetToDelete(undefined);
+        setSqliteDeletePlan(null);
+      } catch (err) {
+        setError(
+          sqliteMutated
+            ? "budget_delete_refresh_failed_sqlite_may_have_changed"
+            : budgetDeleteWriteErrorCode(err),
+        );
+      } finally {
+        setBudgetDeleteBusy(false);
+      }
+      return;
+    }
+
     if (budgetHttpReadonlyExperimentActive) {
       setError("Budget read experiment is read-only. Delete is disabled.");
       return;
@@ -2250,10 +2334,13 @@ const BudgetPage: React.FC = () => {
           onDidDismiss={() => {
             setShowDeleteConfirm(false);
             setDeleteAnalysis(null);
+            setSqliteDeletePlan(null);
           }}
           header="Delete Budget"
           message={
-            deleteAnalysis
+            sqliteDeletePlan
+              ? `This permanently removes the Budget and ${sqliteDeletePlan.snapshotCount} unlinked snapshot(s) from SQLite. Transaction dependencies: ${sqliteDeletePlan.transactionDependencyCount}. No transactions will be unlinked or deleted. Rotate the authority checkpoint before restart.`
+              : deleteAnalysis
               ? deleteAnalysis.totalSnapshots === 0
                 ? "This budget has no snapshots. Delete it?"
                 : deleteAnalysis.linkedSnapshots.length > 0 &&
@@ -2265,7 +2352,23 @@ const BudgetPage: React.FC = () => {
               : "Loading..."
           }
           buttons={
-            deleteAnalysis
+            sqliteDeletePlan
+              ? [
+                  {
+                    text: "Cancel",
+                    role: "cancel",
+                    handler: () => {
+                      setShowDeleteConfirm(false);
+                      setSqliteDeletePlan(null);
+                    },
+                  },
+                  {
+                    text: `Delete Budget + ${sqliteDeletePlan.snapshotCount} Snapshot(s)`,
+                    role: "destructive" as const,
+                    handler: () => handleConfirmDelete("deleteSqlite"),
+                  },
+                ]
+              : deleteAnalysis
               ? [
                   {
                     text: "Cancel",
@@ -2338,15 +2441,21 @@ const BudgetPage: React.FC = () => {
                   <IonText>
                     <h3>
                       {budgetDefinitionWriteExperimentActive
-                        ? "Budget Definitions SQLite write experiment is active"
+                        ? budgetDeleteWriteExperimentActive
+                          ? "Budget lifecycle SQLite write experiments are active"
+                          : "Budget Definitions SQLite write experiment is active"
                         : "Budget read experiment is active"}
                     </h3>
                     <p>
                       Backend: {repositoryBackend}.{" "}
                       {budgetDefinitionWriteExperimentActive
-                        ? rehearsal.authoritativeMode
-                          ? "SQLite authoritative mode is active. Supported Budget definition create/update writes use the verified local SQLite database. Delete and automatic snapshot lifecycle actions remain unavailable."
-                          : "Writes go to disposable local SQLite only. Dexie remains authoritative. Create/update definitions only; existing snapshots, Budget History, and transaction links remain unchanged. Delete and snapshot lifecycle actions are unavailable."
+                        ? budgetDeleteWriteExperimentActive
+                          ? rehearsal.authoritativeMode
+                            ? "SQLite authoritative mode is active. Budget create/update remains available, and an eligible unused Budget plus all of its unlinked snapshots may be deleted only after a reviewed dry-run. Transaction dependencies block deletion; no unlinking or repair runs."
+                            : "Writes go to disposable local SQLite only. Dexie remains authoritative. Budget create/update remains available, and eligible unused Budget deletion is dry-run-first. Transaction dependencies block deletion; no unlinking or repair runs."
+                          : rehearsal.authoritativeMode
+                            ? "SQLite authoritative mode is active. Supported Budget definition create/update writes use the verified local SQLite database. Delete and automatic snapshot lifecycle actions remain unavailable."
+                            : "Writes go to disposable local SQLite only. Dexie remains authoritative. Create/update definitions only; existing snapshots, Budget History, and transaction links remain unchanged. Delete and snapshot lifecycle actions are unavailable."
                         : budgetHttpReadonlyExperimentActive
                         ? "Budget inputs are loaded through selected-read http-readonly; budget edits and snapshot lifecycle actions are disabled. Switch back to Dexie for normal Budget behavior."
                         : "The experiment flag is on, but the selected backend is Dexie, so Budget uses the existing Dexie read and lifecycle path."}
@@ -2604,7 +2713,8 @@ const BudgetPage: React.FC = () => {
                               <IonCol
                                 style={{ paddingRight: 0, textAlign: "right" }}
                               >
-                                {!budgetHttpReadonlyExperimentActive && (
+                                {(!budgetHttpReadonlyExperimentActive ||
+                                  budgetDeleteWriteExperimentActive) && (
                                   <IonButton
                                     fill="clear"
                                     size="small"
@@ -2643,6 +2753,7 @@ const BudgetPage: React.FC = () => {
                                       handleDeleteClick(currentGoal.budget.id!);
                                     }}
                                     title="Delete Goal"
+                                    disabled={budgetDeleteBusy}
                                   >
                                     <IonIcon icon={trashOutline} slot="end" />
                                   </IonButton>
@@ -2882,7 +2993,8 @@ const BudgetPage: React.FC = () => {
                                   budgetDefinitionWriteExperimentActive) && (
                                   <IonRow className="item-actions">
                                     <IonCol className="item-actions-container">
-                                      {!budgetHttpReadonlyExperimentActive && (
+                                      {(!budgetHttpReadonlyExperimentActive ||
+                                        budgetDeleteWriteExperimentActive) && (
                                         <IonButton
                                           fill="clear"
                                           size="small"
@@ -2927,6 +3039,7 @@ const BudgetPage: React.FC = () => {
                                             handleDeleteClick(occ.budget.id!);
                                           }}
                                           title="Delete Budget Item"
+                                          disabled={budgetDeleteBusy}
                                         >
                                           <IonIcon
                                             icon={trashOutline}

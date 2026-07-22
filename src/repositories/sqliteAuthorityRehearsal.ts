@@ -99,6 +99,7 @@ export interface SqliteAuthorityRehearsalReadiness {
   unsupportedOperations: string[];
   transactionDeleteWritesAvailable: boolean;
   budgetLifecycleWritesAvailable: boolean;
+  budgetDeleteWritesAvailable: boolean;
   recipientDeleteMergeWritesAvailable: boolean;
   accountDeleteMergeWritesAvailable: boolean;
   categoryDeleteMergeWritesAvailable: boolean;
@@ -142,6 +143,7 @@ const initialReadiness = (
       unsupportedOperations: [],
       transactionDeleteWritesAvailable: false,
       budgetLifecycleWritesAvailable: false,
+      budgetDeleteWritesAvailable: false,
       recipientDeleteMergeWritesAvailable: false,
       accountDeleteMergeWritesAvailable: false,
       categoryDeleteMergeWritesAvailable: false,
@@ -166,6 +168,7 @@ const initialReadiness = (
     unsupportedOperations: [],
     transactionDeleteWritesAvailable: false,
     budgetLifecycleWritesAvailable: false,
+    budgetDeleteWritesAvailable: false,
     recipientDeleteMergeWritesAvailable: false,
     accountDeleteMergeWritesAvailable: false,
     categoryDeleteMergeWritesAvailable: false,
@@ -268,6 +271,7 @@ export const normalizeSqliteAuthorityRehearsalCapabilities = (
       capabilities.transactionDeleteWrites === true,
     budgetLifecycleWritesAvailable:
       capabilities.budgetLifecycleWrites === true,
+    budgetDeleteWritesAvailable: capabilities.budgetDeleteWrites === true,
     recipientDeleteMergeWritesAvailable:
       capabilities.recipientDeleteMergeWrites === true,
     accountDeleteMergeWritesAvailable:
@@ -340,6 +344,9 @@ export const normalizeSqliteAuthoritativeReadiness = (
           capabilities?.bucketDeleteMergeWrites === true
         );
       }
+      if (operation === "budget_definition_delete") {
+        return capabilities?.budgetDeleteWrites !== true;
+      }
       return true;
     },
   );
@@ -405,6 +412,7 @@ export const normalizeSqliteAuthoritativeReadiness = (
       capabilities?.transactionDeleteWrites === true,
     budgetLifecycleWritesAvailable:
       capabilities?.budgetLifecycleWrites === true,
+    budgetDeleteWritesAvailable: capabilities?.budgetDeleteWrites === true,
     recipientDeleteMergeWritesAvailable:
       capabilities?.recipientDeleteMergeWrites === true,
     accountDeleteMergeWritesAvailable:

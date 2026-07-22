@@ -141,6 +141,9 @@ const main = async (): Promise<void> => {
                   capabilities.bucketDeleteMergeWrites === true
                 );
               }
+              if (operation === "budget_definition_delete") {
+                return capabilities.budgetDeleteWrites !== true;
+              }
               return true;
             })
           : [];
