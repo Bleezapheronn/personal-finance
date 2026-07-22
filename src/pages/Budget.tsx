@@ -68,7 +68,7 @@ import { ensureBudgetSnapshotCoverage } from "../utils/budgetSnapshots";
 import { ImportModal } from "../components/ImportModal";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityRehearsalBackend,
+  isSqliteAuthorityControlledBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
@@ -580,7 +580,7 @@ const BudgetPage: React.FC = () => {
   const budgetReadExperimentEnabled = isBudgetReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
   const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(repositoryBackend);
+  const rehearsalSelected = isSqliteAuthorityControlledBackend(repositoryBackend);
   const budgetDefinitionWriteExperimentActive =
     (repositoryBackend === "http-readonly" &&
       isBudgetsWriteExperimentEnabled()) ||
@@ -2344,7 +2344,9 @@ const BudgetPage: React.FC = () => {
                     <p>
                       Backend: {repositoryBackend}.{" "}
                       {budgetDefinitionWriteExperimentActive
-                        ? "Writes go to disposable local SQLite only. Dexie remains authoritative. Create/update definitions only; existing snapshots, Budget History, and transaction links remain unchanged. Delete and snapshot lifecycle actions are unavailable."
+                        ? rehearsal.authoritativeMode
+                          ? "SQLite authoritative mode is active. Supported Budget definition create/update writes use the verified local SQLite database. Delete and automatic snapshot lifecycle actions remain unavailable."
+                          : "Writes go to disposable local SQLite only. Dexie remains authoritative. Create/update definitions only; existing snapshots, Budget History, and transaction links remain unchanged. Delete and snapshot lifecycle actions are unavailable."
                         : budgetHttpReadonlyExperimentActive
                         ? "Budget inputs are loaded through selected-read http-readonly; budget edits and snapshot lifecycle actions are disabled. Switch back to Dexie for normal Budget behavior."
                         : "The experiment flag is on, but the selected backend is Dexie, so Budget uses the existing Dexie read and lifecycle path."}

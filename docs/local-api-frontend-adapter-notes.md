@@ -1,5 +1,15 @@
 # Local API Frontend Adapter Notes
 
+SQLite Authority Cutover Phase 1 adds the explicit
+`http-sqlite-authoritative` backend. It remains disabled by default and needs
+`VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_ENABLED=true` plus a server that reports
+a verified cutover manifest, native backup, rollback availability, and every
+required capability. Failed verification leaves HTTP reads available where
+possible but disables all writes without falling back to Dexie. The persistent
+banner identifies active or blocked authority state without exposing paths or
+tokens. See `docs/sqlite-write-experiment-operational-readiness.md` for the one
+cutover and rollback runbook.
+
 This is prototype scaffolding only. Dexie / IndexedDB remains the default and
 authoritative data store. A separate, explicit SQLite authority rehearsal mode
 can route supported reads and writes through disposable local SQLite, but it is
@@ -37,7 +47,7 @@ VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT=true
   adapter experiments
 - `http-sqlite-rehearsal` - explicit all-area rehearsal mode; selected reads
   use HTTP and mutations remain globally blocked until the acknowledgement,
-  local API configuration, disposable SQLite availability, and all nine
+  local API configuration, disposable SQLite availability, and all ten
   backend write capabilities pass
 
 Missing or unknown backend values fall back to `dexie`. Existing pages still use

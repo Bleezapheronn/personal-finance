@@ -13,7 +13,9 @@ import {
   areTransactionCostBudgetWritesEnabled,
   areTransactionTransferWritesEnabled,
   getServerPort,
+  getSqliteCutoverManifestPath,
   getSqlitePath,
+  isSqliteAuthorityEnabled,
   READONLY_MODE,
   SERVER_HOST,
   SERVICE_MODE,
@@ -27,6 +29,11 @@ import {
   readKnownTableRowCounts,
   readPaginatedKnownTable,
 } from "./lib/sqlite.js";
+import {
+  evaluateSqliteAuthorityReadiness,
+  type SqliteAuthorityReadiness,
+} from "./lib/sqliteAuthorityCutover.js";
+import { readWriteCapabilities } from "./lib/writeCapabilities.js";
 import {
   getLookupConfig,
   getLookupRowById,
@@ -464,14 +471,55 @@ server.get("/health", async () => {
   };
 });
 
+let sqliteAuthorityReadiness: SqliteAuthorityReadiness =
+  evaluateSqliteAuthorityReadiness({
+    authorityEnabled: false,
+    capabilities: readWriteCapabilities(),
+  });
+
+server.addHook("preHandler", async (request, reply) => {
+  if (
+    isSqliteAuthorityEnabled() &&
+    request.url.split("?", 1)[0].includes("/write/") &&
+    !sqliteAuthorityReadiness.ready
+  ) {
+    return reply.code(503).send({
+      ok: false,
+      code: "sqlite_authority_not_ready",
+    });
+  }
+});
+
 server.get("/metadata", async () => {
   return {
     service: SERVICE_NAME,
     mode: SERVICE_MODE,
     apiVersion: API_VERSION,
-    readonly: READONLY_MODE,
+    readonly: !sqliteAuthorityReadiness.authoritative,
+    storageMode: sqliteAuthorityReadiness.storageMode,
+    authoritative: sqliteAuthorityReadiness.authoritative,
+    cutoverVerified: sqliteAuthorityReadiness.cutoverVerified,
+    backupVerified: sqliteAuthorityReadiness.backupVerified,
+    rollbackAvailable: sqliteAuthorityReadiness.rollbackAvailable,
+    missingRequirements: [...sqliteAuthorityReadiness.missingRequirements],
   };
 });
+
+server.get("/prototype/sqlite/authority-readiness", async () => ({
+  ok: true,
+  mode: SERVICE_MODE,
+  authorityEnabled: sqliteAuthorityReadiness.authorityEnabled,
+  ready: sqliteAuthorityReadiness.ready,
+  storageMode: sqliteAuthorityReadiness.storageMode,
+  authoritative: sqliteAuthorityReadiness.authoritative,
+  cutoverVerified: sqliteAuthorityReadiness.cutoverVerified,
+  backupVerified: sqliteAuthorityReadiness.backupVerified,
+  rollbackAvailable: sqliteAuthorityReadiness.rollbackAvailable,
+  missingRequirements: [...sqliteAuthorityReadiness.missingRequirements],
+  requiredCapabilities: [...sqliteAuthorityReadiness.requiredCapabilities],
+  unsupportedOperations: [...sqliteAuthorityReadiness.unsupportedOperations],
+  code: sqliteAuthorityReadiness.code,
+}));
 
 server.get("/prototype/write-capabilities", async () => {
   let sqliteAvailable = false;
@@ -489,7 +537,7 @@ server.get("/prototype/write-capabilities", async () => {
     database?.close();
   }
 
-  return buildWriteCapabilitiesResponse(sqliteAvailable);
+  return buildWriteCapabilitiesResponse(sqliteAvailable, sqliteAuthorityReadiness);
 });
 
 server.get("/prototype/sqlite/row-counts", async (_request, reply) => {
@@ -2577,6 +2625,13 @@ for (const resource of lookupResources) {
 const start = async (): Promise<void> => {
   const port = getServerPort();
   await readOrCreateToken();
+
+  sqliteAuthorityReadiness = evaluateSqliteAuthorityReadiness({
+    authorityEnabled: isSqliteAuthorityEnabled(),
+    sqlitePath: getSqlitePath(),
+    manifestPath: getSqliteCutoverManifestPath(),
+    capabilities: readWriteCapabilities(),
+  });
 
   await server.listen({
     host: SERVER_HOST,

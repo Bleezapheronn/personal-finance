@@ -12,6 +12,7 @@ import {
 } from "./backup.js";
 import { localDayKey, normalizeToLocalDay } from "./dates.js";
 import { assertRequiredTablesExist } from "./sqlite.js";
+import { openReadOnlyDatabase } from "./sqlite.js";
 
 const JSON_TEXT_FIELDS = new Set([
   "budgets.frequencyDetails",
@@ -234,4 +235,16 @@ export const logicalVerificationsMatch = (
     left.databaseIdentityFingerprint === right.databaseIdentityFingerprint &&
     stableJson(leftComparable) === stableJson(rightComparable)
   );
+};
+
+export const readSqliteLogicalVerificationAtPath = (
+  databasePath: string,
+  asOf: Date = new Date(),
+): SqliteLogicalVerification => {
+  const db = openReadOnlyDatabase(databasePath);
+  try {
+    return readSqliteLogicalVerification(db, asOf);
+  } finally {
+    db.close();
+  }
 };

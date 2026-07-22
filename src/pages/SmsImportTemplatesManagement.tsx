@@ -43,7 +43,7 @@ import {
 } from "../repositories";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityRehearsalBackend,
+  isSqliteAuthorityControlledBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
@@ -203,7 +203,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
   const selectedBackend = getRepositoryBackend();
   const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
+  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
   const smsTemplatesReadExperimentEnabled =
     isSmsTemplatesReadExperimentEnabled();
   const smsTemplatesWriteExperimentEnabled =
@@ -401,10 +401,10 @@ const SmsImportTemplatesManagement: React.FC = () => {
       if (smsTemplatesSqliteWriteExperimentActive) {
         if (editingTemplate?.id) {
           await updateSmsTemplateInDisposableSqlite(editingTemplate.id, input);
-          setToastMessage("Template updated in disposable SQLite");
+          setToastMessage(rehearsal.authoritativeMode ? "Template updated in authoritative SQLite" : "Template updated in disposable SQLite");
         } else {
           await createSmsTemplateInDisposableSqlite(input);
-          setToastMessage("Template created in disposable SQLite");
+          setToastMessage(rehearsal.authoritativeMode ? "Template created in authoritative SQLite" : "Template created in disposable SQLite");
         }
       } else if (editingTemplate?.id) {
         const now = new Date();
@@ -745,7 +745,9 @@ const SmsImportTemplatesManagement: React.FC = () => {
                 <p>
                   <IonIcon icon={warningOutline} />{" "}
                   {smsTemplatesSqliteWriteExperimentActive
-                    ? "SMS Import Templates SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Saving templates does not import or modify transactions."
+                    ? rehearsal.authoritativeMode
+                      ? "SQLite authoritative mode is active. Supported SMS Template writes use the verified local SQLite database. Saving templates does not import or modify transactions."
+                      : "SMS Import Templates SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Saving templates does not import or modify transactions."
                     : smsTemplatesReadExperimentHttpReadonly
                     ? "SMS Templates read experiment is active. List is loaded through selected-read `http-readonly`; writes, imports, and test-parse actions are disabled. Switch back to Dexie to edit."
                     : "SMS Templates read experiment flag is active with the Dexie backend. Existing Dexie write, import, and test-parse behavior remains available."}

@@ -64,11 +64,28 @@ export const readWriteCapabilities = (): WriteCapabilities => ({
     areBudgetSnapshotGenerationWritesEnabled(),
 });
 
-export const buildWriteCapabilitiesResponse = (sqliteAvailable: boolean) => ({
+interface AuthorityStatusForCapabilities {
+  authorityEnabled: boolean;
+  storageMode: "sqlite-disposable" | "sqlite-authoritative";
+  authoritative: boolean;
+  cutoverVerified: boolean;
+  backupVerified: boolean;
+  rollbackAvailable: boolean;
+  missingRequirements: string[];
+}
+
+export const buildWriteCapabilitiesResponse = (
+  sqliteAvailable: boolean,
+  authorityStatus?: AuthorityStatusForCapabilities,
+) => ({
   ok: true,
   mode: "prototype" as const,
-  storageMode: "sqlite-disposable" as const,
-  authoritative: false as const,
+  storageMode: authorityStatus?.storageMode ?? ("sqlite-disposable" as const),
+  authoritative: authorityStatus?.authoritative ?? false,
+  cutoverVerified: authorityStatus?.cutoverVerified ?? false,
+  backupVerified: authorityStatus?.backupVerified ?? false,
+  rollbackAvailable: authorityStatus?.rollbackAvailable ?? false,
+  missingRequirements: authorityStatus?.missingRequirements ?? [],
   capabilities: readWriteCapabilities(),
   unsupportedOperations: [...SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS],
   safety: {

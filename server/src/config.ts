@@ -8,6 +8,10 @@ export const READONLY_MODE = true as const;
 export const TOKEN_HEADER_NAME = "x-personal-finance-token" as const;
 export const TOKEN_FILE_NAME = ".server-token" as const;
 export const SQLITE_PATH_ENV_VAR = "PERSONAL_FINANCE_SQLITE_PATH" as const;
+export const SQLITE_AUTHORITY_ENABLED_ENV_VAR =
+  "PERSONAL_FINANCE_SQLITE_AUTHORITY_ENABLED" as const;
+export const SQLITE_CUTOVER_MANIFEST_PATH_ENV_VAR =
+  "PERSONAL_FINANCE_SQLITE_CUTOVER_MANIFEST_PATH" as const;
 export const RECIPIENT_ACTIVE_STATE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES" as const;
 export const RECIPIENT_CREATE_UPDATE_WRITES_ENV_VAR =
@@ -57,6 +61,16 @@ export const getDataDir = (): string => {
 export const getSqlitePath = (): string | undefined => {
   const sqlitePath = process.env[SQLITE_PATH_ENV_VAR];
   return sqlitePath && sqlitePath.trim().length > 0 ? sqlitePath : undefined;
+};
+
+export const isSqliteAuthorityEnabled = (): boolean =>
+  process.env[SQLITE_AUTHORITY_ENABLED_ENV_VAR] === "true";
+
+export const getSqliteCutoverManifestPath = (): string | undefined => {
+  const manifestPath = process.env[SQLITE_CUTOVER_MANIFEST_PATH_ENV_VAR];
+  return manifestPath && manifestPath.trim().length > 0
+    ? manifestPath
+    : undefined;
 };
 
 export const areRecipientActiveStateWritesEnabled = (): boolean =>

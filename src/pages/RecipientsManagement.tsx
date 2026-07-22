@@ -44,7 +44,7 @@ import { MergeRecipientsModal } from "../components/MergeRecipientsModal";
 import { recipientRepository, transactionRepository } from "../repositories";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityRehearsalBackend,
+  isSqliteAuthorityControlledBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
@@ -182,7 +182,7 @@ const RecipientsManagement: React.FC = () => {
 
   const selectedBackend = getRepositoryBackend();
   const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
+  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
   const recipientsReadExperimentEnabled = isRecipientsReadExperimentEnabled();
   const recipientsWriteExperimentEnabled = isRecipientsWriteExperimentEnabled();
   const recipientsSqliteWriteExperimentActive =
@@ -234,10 +234,10 @@ const RecipientsManagement: React.FC = () => {
     try {
       if (currentRecipient?.id) {
         await updateRecipientInDisposableSqlite(currentRecipient.id, input);
-        setToastMessage("Recipient updated in disposable SQLite.");
+        setToastMessage(rehearsal.authoritativeMode ? "Recipient updated in authoritative SQLite." : "Recipient updated in disposable SQLite.");
       } else {
         await createRecipientInDisposableSqlite(input);
-        setToastMessage("Recipient created in disposable SQLite.");
+        setToastMessage(rehearsal.authoritativeMode ? "Recipient created in authoritative SQLite." : "Recipient created in disposable SQLite.");
       }
 
       setEditingRecipient(null);
@@ -387,7 +387,7 @@ const RecipientsManagement: React.FC = () => {
         setLoading(true);
         await deactivateRecipientInDisposableSqlite(recipientId);
         setDeleteState({ type: "none" });
-        setToastMessage("Recipient deactivated in disposable SQLite.");
+        setToastMessage(rehearsal.authoritativeMode ? "Recipient deactivated in authoritative SQLite." : "Recipient deactivated in disposable SQLite.");
         setShowToast(true);
         await fetchRecipients();
       } catch (error) {
@@ -463,10 +463,10 @@ const RecipientsManagement: React.FC = () => {
         setLoading(true);
         if (recipient.isActive === false) {
           await activateRecipientInDisposableSqlite(recipient.id);
-          setToastMessage("Recipient activated in disposable SQLite.");
+          setToastMessage(rehearsal.authoritativeMode ? "Recipient activated in authoritative SQLite." : "Recipient activated in disposable SQLite.");
         } else {
           await deactivateRecipientInDisposableSqlite(recipient.id);
-          setToastMessage("Recipient deactivated in disposable SQLite.");
+          setToastMessage(rehearsal.authoritativeMode ? "Recipient deactivated in authoritative SQLite." : "Recipient deactivated in disposable SQLite.");
         }
         setShowToast(true);
         await fetchRecipients();
@@ -852,7 +852,9 @@ const RecipientsManagement: React.FC = () => {
                     }}
                   >
                     {recipientsSqliteWriteExperimentActive
-                      ? "Recipients SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
+                      ? rehearsal.authoritativeMode
+                        ? "SQLite authoritative mode is active. Supported Recipient create/update/active-state writes use the verified local SQLite database; delete and merge remain disabled."
+                        : "Recipients SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
                       : recipientsHttpReadonlyWithoutWrites
                         ? "Recipients read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie or enable the dev write experiment to edit."
                         : "Recipients experiment flag is active with the Dexie backend. Existing Dexie write behavior remains available."}

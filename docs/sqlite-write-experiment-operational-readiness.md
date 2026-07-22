@@ -235,6 +235,85 @@ If any check fails, discard the incomplete backup/restored outputs, keep Dexie
 authoritative, and create a fresh disposable SQLite import before retrying.
 Never replace the API's configured database while the API is running.
 
+## Authority Cutover Phase 1
+
+Phase 1 adds an explicit `http-sqlite-authoritative` mode without changing the
+default. Missing or unknown frontend backend configuration still resolves to
+Dexie. Authority requires both sides to opt in:
+
+```text
+VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND=http-sqlite-authoritative
+VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_ENABLED=true
+PERSONAL_FINANCE_SQLITE_AUTHORITY_ENABLED=true
+PERSONAL_FINANCE_SQLITE_CUTOVER_MANIFEST_PATH=<outside-repo manifest>
+```
+
+Vite and the API must be restarted after configuration changes. The browser
+never receives the configured SQLite or manifest path. Server startup verifies
+the active candidate and the mandatory pre-cutover native backup against the
+redacted manifest, then verifies every required capability. Any failure leaves
+the frontend on HTTP reads in a blocked state, disables all mutation controls,
+and prevents server mutation routes from running. There is no fallback to
+Dexie writes and no mixed persistence.
+
+Prepare cutover from `server/`:
+
+```powershell
+npm run prepare:sqlite-authority-cutover -- -- --backup <matching-full-backup.json> --sqlite <candidate.sqlite> --backup-output <pre-cutover-backup.sqlite> --manifest <cutover-manifest.json>
+```
+
+The matching full backup, candidate, backup, and manifest must be different,
+outside-repository paths. The native backup and cutover manifest must share a
+directory because the manifest records only the backup basename. Outputs must
+not exist. Preparation first runs the complete six-part backup-to-SQLite
+verification suite, then checks the current prototype schema contract and
+zero structural-integrity issue counts. It creates and verifies a native
+backup without changing the candidate or any environment file. The manifest
+contains parity status, fingerprints, counts, capability and
+unsupported-operation names, backup verification, and a rollback instruction
+identifier only. It contains no raw rows, names, descriptions, contacts,
+tokens, environment values, or full paths.
+
+Run the read-only startup gate against the running API:
+
+```powershell
+npm run verify:sqlite-authority -- -- --token-file <token-file>
+```
+
+In verified authoritative mode, selected reads and the already implemented
+narrow SQLite writes are used without individual frontend experiment flags.
+Dexie startup migrations, page-entry snapshot generation/pruning, Settings,
+Transaction Details, and Dexie-touching diagnostics remain blocked or bypassed.
+Snapshot generation remains only the explicit protected SQLite operation; it
+does not run automatically.
+
+All unsupported operations listed above remain unavailable. In particular,
+authority does not enable recipient delete/merge, lookup deletion/reorder,
+Account reference migration, Transaction deletion or transfer repair, Budget
+deletion, snapshot edit/delete/prune/repair/relink, SMS import mutation, or any
+fallback to a Dexie implementation.
+
+Rollback remains operator-driven:
+
+1. Stop Vite and the API.
+2. Create a native backup and manifest for the current authoritative SQLite.
+3. Run `verify:sqlite-authority-rollback` with current SQLite, the cutover
+   manifest, and the current backup pair.
+4. Set the frontend backend to `dexie` and disable its authority flag.
+5. Disable the server authority flag.
+6. Restart Vite and confirm Dexie remains unchanged.
+7. Preserve authoritative SQLite, the pre-cutover backup, the current-state
+   backup, and manifests outside Git for future reconciliation.
+
+Phase 1 is local and reversible, but it is not synchronization. SQLite changes
+are not copied into Dexie, and reconciliation remains a separate future
+project. The cutover manifest is immutable and content-bound. Once a supported
+authoritative write changes SQLite, restarting against that original manifest
+fails closed. Before ending the rehearsal session, create and verify the
+post-write native backup, then return to Dexie mode. A future long-lived
+authority phase needs a separately approved checkpoint or reconciliation
+design; Phase 1 does not silently bless changed content.
+
 ## Not Ready For Authority Migration
 
 SQLite must not become authoritative until all of the following are complete:

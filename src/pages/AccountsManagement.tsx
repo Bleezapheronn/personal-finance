@@ -61,7 +61,7 @@ import {
 import { accountRepository, transactionRepository } from "../repositories";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityRehearsalBackend,
+  isSqliteAuthorityControlledBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
@@ -188,7 +188,7 @@ const AccountsManagement: React.FC = () => {
 
   const selectedBackend = getRepositoryBackend();
   const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
+  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
   const accountsReadExperimentEnabled = isAccountsReadExperimentEnabled();
   const accountsWriteExperimentEnabled = isAccountsWriteExperimentEnabled();
   const accountsSqliteWriteExperimentActive =
@@ -313,10 +313,18 @@ const AccountsManagement: React.FC = () => {
     try {
       if (currentAccount?.id) {
         await updateAccountInDisposableSqlite(currentAccount.id, values);
-        setToastMessage("Account updated in disposable SQLite");
+        setToastMessage(
+          rehearsal.authoritativeMode
+            ? "Account updated in authoritative SQLite"
+            : "Account updated in disposable SQLite",
+        );
       } else {
         await createAccountInDisposableSqlite(values);
-        setToastMessage("Account created in disposable SQLite");
+        setToastMessage(
+          rehearsal.authoritativeMode
+            ? "Account created in authoritative SQLite"
+            : "Account created in disposable SQLite",
+        );
       }
       await fetchAccounts();
       setShowToast(true);
@@ -622,7 +630,9 @@ const AccountsManagement: React.FC = () => {
                 <p>
                   <IonIcon icon={warningOutline} />{" "}
                   {accountsSqliteWriteExperimentActive
-                    ? "Accounts SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
+                    ? rehearsal.authoritativeMode
+                      ? "SQLite authoritative mode is active. Supported Account create/update writes use the verified local SQLite database; unsupported Account operations remain disabled."
+                      : "Accounts SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
                     : accountsReadExperimentHttpReadonly
                       ? "Accounts read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie to edit."
                     : "Accounts read experiment flag is active with the Dexie backend. Existing Dexie write behavior remains available."}

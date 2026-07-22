@@ -48,7 +48,7 @@ import {
   SqliteAuthorityRehearsalProvider,
   useSqliteAuthorityRehearsal,
 } from "./contexts/SqliteAuthorityRehearsalContext";
-import { isSqliteAuthorityRehearsalBackend } from "./repositories/adapterSelection";
+import { isSqliteAuthorityControlledBackend } from "./repositories/adapterSelection";
 
 import {
   migrateBudgetSnapshots,
@@ -198,7 +198,7 @@ const InnerApp: React.FC = () => {
               {rehearsal.selected ? <Redirect to="/transactions" /> : <Settings />}
             </Route>
             <Route path="/local-api-diagnostics">
-              <LocalApiDiagnostics />
+              {rehearsal.authoritativeMode ? <Redirect to="/transactions" /> : <LocalApiDiagnostics />}
             </Route>
             <Route exact path="/">
               <Redirect to="/transactions" />
@@ -227,8 +227,8 @@ const InnerApp: React.FC = () => {
 const App: React.FC = () => {
   // Run migrations on app startup
   useEffect(() => {
-    if (isSqliteAuthorityRehearsalBackend()) {
-      console.info("SQLite authority rehearsal selected; Dexie startup migrations skipped.");
+    if (isSqliteAuthorityControlledBackend()) {
+      console.info("SQLite HTTP authority mode selected; Dexie startup migrations skipped.");
       return;
     }
 

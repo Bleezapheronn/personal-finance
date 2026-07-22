@@ -70,7 +70,7 @@ import {
 } from "../utils/devPreview";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityRehearsalBackend,
+  isSqliteAuthorityControlledBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
@@ -552,7 +552,7 @@ const Transactions: React.FC = () => {
   const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
   const selectedBackend = getRepositoryBackend();
   const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
+  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
   const transactionsReadExperimentEnabled =
     isTransactionsReadExperimentEnabled();
   const transactionsBasicWriteExperimentEnabled =
@@ -1596,7 +1596,9 @@ const Transactions: React.FC = () => {
               >
                 <p style={{ marginTop: 0 }}>
                   {transactionsSqliteWriteExperimentActive
-                    ? transactionsTransferWriteExperimentActive
+                    ? rehearsal.authoritativeMode
+                      ? "SQLite authoritative mode is active. Supported Transaction and paired Transfer writes use the verified local SQLite database. Delete, import/export mutation, and transfer repair remain disabled."
+                      : transactionsTransferWriteExperimentActive
                       ? "Transactions SQLite transfer experiment is active. Transfers are written as atomic reciprocal transaction pairs in disposable local SQLite. Dexie remains authoritative. Transfer delete and pair repair remain unsupported."
                       : transactionsCostBudgetWriteExperimentActive
                       ? "Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Single-row income/expense transactions may include transaction costs and links to existing budget snapshots. Transfers and delete remain unsupported."
@@ -2472,7 +2474,9 @@ const Transactions: React.FC = () => {
                                       style={{ marginRight: "0" }}
                                       onClick={() => handleEdit(txn)}
                                       title={
-                                        txn.isTransfer
+                                        rehearsal.authoritativeMode
+                                          ? "Edit transaction in authoritative SQLite"
+                                          : txn.isTransfer
                                           ? "Edit atomic transfer pair in disposable SQLite"
                                           : transactionsCostBudgetWriteExperimentActive
                                           ? "Edit transaction in disposable SQLite"

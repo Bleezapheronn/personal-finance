@@ -277,6 +277,73 @@ does not make SQLite authoritative. Run the focused no-data test suite with:
 npm run test:sqlite-backup-restore
 ```
 
+## SQLite Authority Cutover Phase 1
+
+Authority cutover is an explicit local operator workflow. It is disabled by
+default, does not edit environment files, does not update Dexie, and does not
+add synchronization or dual-write. Prepare a verified candidate only while
+the API is stopped or every mutation flag is disabled:
+
+```powershell
+npm run prepare:sqlite-authority-cutover -- -- --backup C:\dev\personal-finance-data\backups\matching-full-backup.json --sqlite C:\dev\personal-finance-data\temp\candidate.sqlite --backup-output C:\dev\personal-finance-data\backups\candidate-pre-cutover.sqlite --manifest C:\dev\personal-finance-data\backups\candidate-cutover-manifest.json
+```
+
+The command first compares the candidate to the supplied matching Dexie full
+backup using all six existing `verify:sqlite` checks. It then verifies zero
+structural-integrity issues, the current schema contract and user version, all
+known table counts and fingerprints, financial/report/Budget History
+summaries, transfer integrity, and transaction-to-snapshot linkage. It creates
+and verifies a native pre-cutover backup before writing the redacted manifest.
+All paths must be outside the repository and all outputs must be new. The
+native backup and cutover manifest must be in the same directory because only
+the backup basename is recorded.
+
+To start the server in authoritative mode, configure all ten existing write
+capabilities plus:
+
+```text
+PERSONAL_FINANCE_SQLITE_PATH=<verified candidate>
+PERSONAL_FINANCE_SQLITE_AUTHORITY_ENABLED=true
+PERSONAL_FINANCE_SQLITE_CUTOVER_MANIFEST_PATH=<cutover manifest>
+```
+
+The server verifies the active database, adjacent pre-cutover backup,
+manifest, and capabilities before listening. It exposes protected
+`GET /prototype/sqlite/authority-readiness` plus safe status fields in metadata
+and write capabilities. Paths, manifest contents, tokens, and raw rows are
+never returned. If verification fails, the server still supports protected
+reads where possible but centrally rejects every `/write/` route with
+`sqlite_authority_not_ready`.
+
+Verify a running authoritative server without mutation:
+
+```powershell
+npm run verify:sqlite-authority -- -- --token-file C:\dev\personal-finance-data\.server-token
+```
+
+Before rollback, stop Vite and the API, create another native backup of the
+current authoritative SQLite, then verify both the original pre-cutover backup
+and the current-state backup:
+
+```powershell
+npm run verify:sqlite-authority-rollback -- -- --sqlite <current.sqlite> --cutover-manifest <cutover-manifest.json> --current-backup <current-backup.sqlite> --current-backup-manifest <current-backup.sqlite.manifest.json>
+```
+
+Rollback configuration is manual: set the frontend backend to `dexie`, disable
+the frontend and server authority flags, restart Vite, and retain SQLite and
+both manifests outside Git for future reconciliation. Never replace a database
+under a running API process. Unsupported delete, merge, repair, reorder,
+snapshot-pruning/editing/deletion, import/export mutation, and reference
+migration operations remain unavailable and never fall back to Dexie.
+
+The cutover manifest is immutable and content-bound. After a supported write,
+the original manifest will intentionally block a later authoritative restart.
+Create and verify the post-write native backup before stopping the Phase 1
+session, then roll back to Dexie. Continuing authoritative operation across
+restarts requires a future approved checkpoint/reconciliation design; the
+server never treats changed SQLite content as verified merely because it came
+from the configured filename.
+
 ## API Smoke Test
 
 The API smoke-test CLI checks a running local API server. Start the server first with `PERSONAL_FINANCE_SQLITE_PATH` pointing at a verified disposable SQLite database outside the repository.
@@ -310,7 +377,7 @@ npm run verify:sqlite-rehearsal
 ```
 
 It calls `/health`, `/metadata`, `/prototype/write-capabilities`, and
-`/prototype/sqlite/row-counts`. It requires all nine existing backend write
+`/prototype/sqlite/row-counts`. It requires all ten existing backend write
 capabilities, `storageMode: "sqlite-disposable"`, `authoritative: false`, and
 an available configured SQLite database. It sends no mutation request and does
 not print the token, URL, database path, row data, or raw responses.
@@ -374,7 +441,7 @@ $TOKEN = npm run token:show --silent
 curl -H "x-personal-finance-token: $TOKEN" http://127.0.0.1:3147/prototype/write-capabilities
 ```
 
-The response contains booleans for the nine existing write flags, a fixed
+The response contains booleans for the ten existing write flags, a fixed
 `sqlite-disposable` storage label, `authoritative: false`, safe unsupported
 operation codes, and non-sensitive safety booleans. It never returns
 environment values, tokens, paths, filenames, or raw configuration. The route

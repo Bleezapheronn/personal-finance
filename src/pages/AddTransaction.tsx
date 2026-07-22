@@ -63,7 +63,7 @@ import {
 import {
   getRepositoryBackend,
   isHttpSelectedReadRepositoryBackend,
-  isSqliteAuthorityRehearsalBackend,
+  isSqliteAuthorityControlledBackend,
 } from "../repositories/adapterSelection";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
@@ -305,7 +305,7 @@ const AddTransaction: React.FC = () => {
   const duplicatePrefill = location.state?.duplicatePrefill;
   const selectedBackend = getRepositoryBackend();
   const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
+  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
   const transactionsBasicWriteExperimentEnabled =
     isTransactionsBasicWriteExperimentEnabled();
   const transactionsCostBudgetWriteExperimentEnabled =
@@ -1621,7 +1621,9 @@ const AddTransaction: React.FC = () => {
               }}
             >
               {transactionsSqliteWriteExperimentActive
-                ? transactionsTransferWriteExperimentActive
+                ? rehearsal.authoritativeMode
+                  ? "SQLite authoritative mode is active. Supported Transaction and paired Transfer writes use the verified local SQLite database. Delete, import/export mutation, and transfer repair remain disabled."
+                  : transactionsTransferWriteExperimentActive
                   ? "Transactions SQLite transfer experiment is active. Transfers are written as atomic reciprocal transaction pairs in disposable local SQLite. Dexie remains authoritative. Transfer delete and pair repair remain unsupported."
                   : transactionsCostBudgetWriteExperimentActive
                   ? "Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Single-row income/expense transactions may include transaction costs and links to existing budget snapshots. Transfers and delete remain unsupported."

@@ -63,7 +63,7 @@ interface VerificationResult {
   error?: string;
 }
 
-interface VerificationSummary {
+export interface VerificationSummary {
   generatedAt: string;
   backupFile: string;
   sqliteFile: string;
@@ -211,7 +211,7 @@ const buildChecks = (
   },
 ];
 
-const runVerification = (
+export const runSqlitePrototypeVerification = (
   backupPath: string,
   sqlitePath: string,
   outputDir: string | undefined,
@@ -297,7 +297,12 @@ const main = (): void => {
   assertFileExists(sqlitePath, "SQLite file");
   assertOutsideRepoUnlessAllowed(outputDir, args.allowRepoOutputForTests, "verification output directory");
 
-  const summary = runVerification(backupPath, sqlitePath, outputDir, args.sampleSize);
+  const summary = runSqlitePrototypeVerification(
+    backupPath,
+    sqlitePath,
+    outputDir,
+    args.sampleSize,
+  );
 
   if (outputDir) {
     writeJsonReport(path.join(outputDir, "sqlite-verification-summary.json"), summary);

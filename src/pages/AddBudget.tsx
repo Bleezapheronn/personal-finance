@@ -44,7 +44,7 @@ import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import {
   getRepositoryBackend,
   isHttpSelectedReadRepositoryBackend,
-  isSqliteAuthorityRehearsalBackend,
+  isSqliteAuthorityControlledBackend,
 } from "../repositories/adapterSelection";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
@@ -129,7 +129,7 @@ const AddBudget: React.FC = () => {
   const isFromTransaction = Boolean(transactionId);
   const repositoryBackend = getRepositoryBackend();
   const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(repositoryBackend);
+  const rehearsalSelected = isSqliteAuthorityControlledBackend(repositoryBackend);
   const budgetDefinitionHttpMode =
     isHttpSelectedReadRepositoryBackend(repositoryBackend);
   const budgetDefinitionWriteExperimentActive =
@@ -863,7 +863,9 @@ const AddBudget: React.FC = () => {
           sqliteWriteConfirmed = true;
           writtenId = Number(writeResponse.targetId);
           setSuccessToastMessage(
-            "Budget definition updated in disposable SQLite. Existing snapshots and Budget History were not changed.",
+            rehearsal.authoritativeMode
+              ? "Budget definition updated in authoritative SQLite. Existing snapshots and Budget History were not changed."
+              : "Budget definition updated in disposable SQLite. Existing snapshots and Budget History were not changed.",
           );
         } else {
           const writeResponse =
@@ -871,7 +873,9 @@ const AddBudget: React.FC = () => {
           sqliteWriteConfirmed = true;
           writtenId = Number(writeResponse.targetId);
           setSuccessToastMessage(
-            "Budget definition created in disposable SQLite. No snapshot or Budget History occurrence was generated.",
+            rehearsal.authoritativeMode
+              ? "Budget definition created in authoritative SQLite. No snapshot or Budget History occurrence was generated."
+              : "Budget definition created in disposable SQLite. No snapshot or Budget History occurrence was generated.",
           );
         }
         const refreshed = await getSelectedReadRepositories(
@@ -974,7 +978,9 @@ const AddBudget: React.FC = () => {
                 <h3>Budget Definitions SQLite write experiment</h3>
                 <p>
                   {budgetDefinitionWriteExperimentActive
-                    ? "Writes go to disposable local SQLite only. Dexie remains authoritative. Creating or editing a definition does not generate, update, prune, delete, or relink budget snapshots."
+                    ? rehearsal.authoritativeMode
+                      ? "SQLite authoritative mode is active. Supported Budget definition writes use the verified local SQLite database. This form does not generate, prune, delete, or relink Budget snapshots."
+                      : "Writes go to disposable local SQLite only. Dexie remains authoritative. Creating or editing a definition does not generate, update, prune, delete, or relink budget snapshots."
                     : "The HTTP backend is selected, but Budget definition writes are disabled. No write will be attempted."}
                 </p>
                 <p>

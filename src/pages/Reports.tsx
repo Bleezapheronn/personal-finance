@@ -38,7 +38,7 @@ import {
 import { reportRepository } from "../repositories";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityRehearsalBackend,
+  isSqliteAuthorityControlledBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
@@ -232,7 +232,7 @@ const Reports: React.FC = () => {
   } | null>(null);
   const reportsExperimentEnabled = isReportsReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
-  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(repositoryBackend);
+  const rehearsalSelected = isSqliteAuthorityControlledBackend(repositoryBackend);
   const reportsHttpReadonlyExperimentActive =
     rehearsalSelected ||
     (reportsExperimentEnabled && repositoryBackend === "http-readonly");

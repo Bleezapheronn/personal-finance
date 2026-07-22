@@ -11,6 +11,9 @@
     "check:no-runtime-artifacts": "node scripts/check-no-runtime-artifacts.mjs",
     "check:local-api-safety": "node scripts/check-local-api-safety.mjs",
     "verify:sqlite-rehearsal": "node scripts/verify-sqlite-rehearsal.mjs",
+    "prepare:sqlite-authority-cutover": "npm --prefix server run prepare:sqlite-authority-cutover --",
+    "verify:sqlite-authority": "npm --prefix server run verify:sqlite-authority --",
+    "verify:sqlite-authority-rollback": "npm --prefix server run verify:sqlite-authority-rollback --",
     "test.e2e": "cypress run",
     "test.unit": "vitest",
     "lint": "eslint"

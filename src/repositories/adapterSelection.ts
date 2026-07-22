@@ -1,7 +1,8 @@
 export type RepositoryBackend =
   | "dexie"
   | "http-readonly"
-  | "http-sqlite-rehearsal";
+  | "http-sqlite-rehearsal"
+  | "http-sqlite-authoritative";
 
 const REPOSITORY_BACKEND_ENV_VAR = "VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND";
 const DEFAULT_REPOSITORY_BACKEND: RepositoryBackend = "dexie";
@@ -10,6 +11,7 @@ const repositoryBackendValues = new Set<RepositoryBackend>([
   "dexie",
   "http-readonly",
   "http-sqlite-rehearsal",
+  "http-sqlite-authoritative",
 ]);
 
 const getEnvValue = (key: string): string | undefined => {
@@ -45,6 +47,16 @@ export const isHttpReadonlyRepositoryBackend = (): boolean =>
 export const isSqliteAuthorityRehearsalBackend = (
   backend: RepositoryBackend = getRepositoryBackend(),
 ): boolean => backend === "http-sqlite-rehearsal";
+
+export const isSqliteAuthoritativeBackend = (
+  backend: RepositoryBackend = getRepositoryBackend(),
+): boolean => backend === "http-sqlite-authoritative";
+
+export const isSqliteAuthorityControlledBackend = (
+  backend: RepositoryBackend = getRepositoryBackend(),
+): boolean =>
+  isSqliteAuthorityRehearsalBackend(backend) ||
+  isSqliteAuthoritativeBackend(backend);
 
 export const isHttpSelectedReadRepositoryBackend = (
   backend: RepositoryBackend = getRepositoryBackend(),

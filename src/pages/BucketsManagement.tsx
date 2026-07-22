@@ -51,7 +51,7 @@ import {
 } from "../components/AddCategoryModal";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityRehearsalBackend,
+  isSqliteAuthorityControlledBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
@@ -245,7 +245,7 @@ const BucketsManagement: React.FC = () => {
 
   const selectedBackend = getRepositoryBackend();
   const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityRehearsalBackend(selectedBackend);
+  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
   const bucketsCategoriesReadExperimentEnabled =
     isBucketsCategoriesReadExperimentEnabled();
   const bucketsCategoriesWriteExperimentEnabled =
@@ -422,10 +422,10 @@ const BucketsManagement: React.FC = () => {
         };
         if (isEditMode) {
           await updateBucketInDisposableSqlite(bucketId!, input);
-          setToastMessage("Bucket updated in disposable SQLite");
+          setToastMessage(rehearsal.authoritativeMode ? "Bucket updated in authoritative SQLite" : "Bucket updated in disposable SQLite");
         } else {
           await createBucketInDisposableSqlite(input);
-          setToastMessage("Bucket created in disposable SQLite");
+          setToastMessage(rehearsal.authoritativeMode ? "Bucket created in authoritative SQLite" : "Bucket created in disposable SQLite");
         }
       } else if (isEditMode) {
         // UPDATE MODE: Keep existing displayOrder
@@ -570,10 +570,10 @@ const BucketsManagement: React.FC = () => {
     try {
       if (currentCategory?.id) {
         await updateCategoryInDisposableSqlite(currentCategory.id, input);
-        setToastMessage("Category updated in disposable SQLite");
+        setToastMessage(rehearsal.authoritativeMode ? "Category updated in authoritative SQLite" : "Category updated in disposable SQLite");
       } else {
         await createCategoryInDisposableSqlite(input);
-        setToastMessage("Category created in disposable SQLite");
+        setToastMessage(rehearsal.authoritativeMode ? "Category created in authoritative SQLite" : "Category created in disposable SQLite");
       }
       await fetchCategories();
       setShowToast(true);
@@ -1103,7 +1103,9 @@ const BucketsManagement: React.FC = () => {
                     }}
                   >
                     {bucketsCategoriesSqliteWriteExperimentActive
-                      ? "Buckets and Categories SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
+                      ? rehearsal.authoritativeMode
+                        ? "SQLite authoritative mode is active. Supported Bucket and Category create/update writes use the verified local SQLite database; delete and reorder remain disabled."
+                        : "Buckets and Categories SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
                       : bucketsCategoriesReadExperimentHttpReadonly
                         ? "Buckets/Categories read experiment is active. List is loaded through selected-read `http-readonly`; writes and reorder actions are disabled. Switch back to Dexie to edit."
                       : "Buckets/Categories experiment flag is active with the Dexie backend. Existing Dexie write and reorder behavior remains available."}
