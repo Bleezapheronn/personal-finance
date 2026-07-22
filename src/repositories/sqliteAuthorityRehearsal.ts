@@ -97,6 +97,7 @@ export interface SqliteAuthorityRehearsalReadiness {
   missingCapabilities: SqliteRehearsalCapability[];
   missingRequirements: string[];
   unsupportedOperations: string[];
+  transactionDeleteWritesAvailable: boolean;
   code?: string;
   message: string;
 }
@@ -134,6 +135,7 @@ const initialReadiness = (
       missingCapabilities: [],
       missingRequirements: [],
       unsupportedOperations: [],
+      transactionDeleteWritesAvailable: false,
       message: "SQLite authority mode is not selected.",
     };
   }
@@ -152,6 +154,7 @@ const initialReadiness = (
     missingCapabilities: [],
     missingRequirements: acknowledged ? [] : [acknowledgementRequirement],
     unsupportedOperations: [],
+    transactionDeleteWritesAvailable: false,
     code: acknowledged ? undefined : `${acknowledgementRequirement}_missing`,
     message: acknowledged
       ? "Checking required local API authority status."
@@ -246,6 +249,8 @@ export const normalizeSqliteAuthorityRehearsalCapabilities = (
     missingCapabilities,
     missingRequirements: [],
     unsupportedOperations: [...response.unsupportedOperations] as string[],
+    transactionDeleteWritesAvailable:
+      capabilities.transactionDeleteWrites === true,
     code: ready ? undefined : "required_write_capabilities_missing",
     message: ready
       ? "All required disposable SQLite write capabilities are available."
@@ -283,6 +288,11 @@ export const normalizeSqliteAuthoritativeReadiness = (
   const safety = capabilitiesResponse.safety as
     | Record<string, unknown>
     | undefined;
+  const requiredUnsupportedOperations = REQUIRED_SQLITE_UNSUPPORTED_OPERATIONS.filter(
+    (operation) =>
+      operation !== "transaction_delete" ||
+      capabilities?.transactionDeleteWrites !== true,
+  );
   const valid =
     metadata.mode === "prototype" &&
     metadata.storageMode === "sqlite-authoritative" &&
@@ -314,7 +324,7 @@ export const normalizeSqliteAuthoritativeReadiness = (
     REQUIRED_SQLITE_REHEARSAL_CAPABILITIES.every((key) =>
       reportedRequiredCapabilities.includes(key),
     ) &&
-    REQUIRED_SQLITE_UNSUPPORTED_OPERATIONS.every((operation) =>
+    requiredUnsupportedOperations.every((operation) =>
       unsupportedOperations.includes(operation),
     );
 
@@ -341,6 +351,8 @@ export const normalizeSqliteAuthoritativeReadiness = (
     missingCapabilities: [],
     missingRequirements: [],
     unsupportedOperations,
+    transactionDeleteWritesAvailable:
+      capabilities?.transactionDeleteWrites === true,
     message:
       "Verified SQLite authoritative mode is active. Dexie writes remain disabled.",
   };

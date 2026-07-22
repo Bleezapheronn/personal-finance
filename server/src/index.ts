@@ -11,6 +11,7 @@ import {
   areSmsTemplateWritesEnabled,
   areTransactionBasicWritesEnabled,
   areTransactionCostBudgetWritesEnabled,
+  areTransactionDeleteWritesEnabled,
   areTransactionTransferWritesEnabled,
   getServerPort,
   getSqliteCutoverManifestPath,
@@ -159,6 +160,14 @@ import {
   TransactionTransferWriteRequestError,
   validateTransactionTransferWritePayload,
 } from "./lib/transactionTransferWrite.js";
+import {
+  transactionDeleteDisabledResponse,
+  transactionDeleteDryRun,
+  transactionDeleteRealWrite,
+  transactionDeleteRequestErrorResponse,
+  TransactionDeleteRequestError,
+  validateTransactionDeleteWritePayload,
+} from "./lib/transactionDelete.js";
 import {
   smsTemplateDryRun,
   smsTemplateDryRunRequestErrorResponse,
@@ -517,7 +526,11 @@ server.get("/prototype/sqlite/authority-readiness", async () => ({
   rollbackAvailable: sqliteAuthorityReadiness.rollbackAvailable,
   missingRequirements: [...sqliteAuthorityReadiness.missingRequirements],
   requiredCapabilities: [...sqliteAuthorityReadiness.requiredCapabilities],
-  unsupportedOperations: [...sqliteAuthorityReadiness.unsupportedOperations],
+  unsupportedOperations: sqliteAuthorityReadiness.unsupportedOperations.filter(
+    (operation) =>
+      operation !== "transaction_delete" ||
+      !areTransactionDeleteWritesEnabled(),
+  ),
   code: sqliteAuthorityReadiness.code,
 }));
 
@@ -1267,6 +1280,104 @@ for (const action of ["create", "update"] as const) {
     },
   );
 }
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/transactions/delete/dry-run",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code:
+          statusCode === 503
+            ? "sqlite_unavailable"
+            : "transaction_delete_dry_run_failed",
+      });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+    try {
+      const response = transactionDeleteDryRun(opened.db, request.body);
+      if (response.code === "transaction_not_found") {
+        return reply.code(404).send(response);
+      }
+      return response.ok ? response : reply.code(409).send(response);
+    } catch (error) {
+      if (error instanceof TransactionDeleteRequestError) {
+        return reply
+          .code(error.statusCode)
+          .send(transactionDeleteRequestErrorResponse(error.code));
+      }
+      return reply.code(500).send({
+        ok: false,
+        code: "transaction_delete_dry_run_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/transactions/delete/write",
+  async (request, reply) => {
+    try {
+      validateTransactionDeleteWritePayload(request.body);
+    } catch (error) {
+      if (error instanceof TransactionDeleteRequestError) {
+        return reply
+          .code(error.statusCode)
+          .send(transactionDeleteRequestErrorResponse(error.code));
+      }
+      return reply
+        .code(400)
+        .send(transactionDeleteRequestErrorResponse("transaction_delete_write_invalid"));
+    }
+    if (!areTransactionDeleteWritesEnabled()) {
+      return reply.code(403).send(transactionDeleteDisabledResponse());
+    }
+
+    let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+    try {
+      opened = openConfiguredWritableDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code:
+          statusCode === 503
+            ? "sqlite_unavailable"
+            : "transaction_delete_write_failed",
+      });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+    try {
+      const response = transactionDeleteRealWrite(opened.db, request.body);
+      if (response.code === "transaction_not_found") {
+        return reply.code(404).send(response);
+      }
+      return response.ok ? response : reply.code(409).send(response);
+    } catch (error) {
+      if (error instanceof TransactionDeleteRequestError) {
+        return reply
+          .code(error.statusCode)
+          .send(transactionDeleteRequestErrorResponse(error.code));
+      }
+      return reply.code(500).send({
+        ok: false,
+        code: "transaction_delete_write_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
 
 server.post<{ Body: unknown }>(
   "/prototype/repositories/budget-snapshots/lifecycle/dry-run/generate",

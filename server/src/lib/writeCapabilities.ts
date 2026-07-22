@@ -8,6 +8,7 @@ import {
   areSmsTemplateWritesEnabled,
   areTransactionBasicWritesEnabled,
   areTransactionCostBudgetWritesEnabled,
+  areTransactionDeleteWritesEnabled,
   areTransactionTransferWritesEnabled,
 } from "../config.js";
 
@@ -25,7 +26,13 @@ export const WRITE_CAPABILITY_KEYS = [
 ] as const;
 
 export type WriteCapabilityKey = (typeof WRITE_CAPABILITY_KEYS)[number];
-export type WriteCapabilities = Record<WriteCapabilityKey, boolean>;
+export const OPTIONAL_WRITE_CAPABILITY_KEYS = [
+  "transactionDeleteWrites",
+] as const;
+export type OptionalWriteCapabilityKey =
+  (typeof OPTIONAL_WRITE_CAPABILITY_KEYS)[number];
+export type WriteCapabilities = Record<WriteCapabilityKey, boolean> &
+  Record<OptionalWriteCapabilityKey, boolean>;
 
 export const SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS = [
   "recipient_delete",
@@ -58,6 +65,7 @@ export const readWriteCapabilities = (): WriteCapabilities => ({
   transactionBasicWrites: areTransactionBasicWritesEnabled(),
   transactionCostBudgetWrites: areTransactionCostBudgetWritesEnabled(),
   transactionTransferWrites: areTransactionTransferWritesEnabled(),
+  transactionDeleteWrites: areTransactionDeleteWritesEnabled(),
   smsTemplateWrites: areSmsTemplateWritesEnabled(),
   budgetDefinitionWrites: areBudgetDefinitionWritesEnabled(),
   budgetSnapshotGenerationWrites:
@@ -87,7 +95,11 @@ export const buildWriteCapabilitiesResponse = (
   rollbackAvailable: authorityStatus?.rollbackAvailable ?? false,
   missingRequirements: authorityStatus?.missingRequirements ?? [],
   capabilities: readWriteCapabilities(),
-  unsupportedOperations: [...SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS],
+  unsupportedOperations: SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS.filter(
+    (operation) =>
+      operation !== "transaction_delete" ||
+      !areTransactionDeleteWritesEnabled(),
+  ),
   safety: {
     endpointReadOnly: true as const,
     sqliteAvailable,

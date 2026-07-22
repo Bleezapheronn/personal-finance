@@ -919,8 +919,9 @@ budget or snapshot linkage.
 Update accepts one member ID, validates the complete reciprocal pair and any
 inbound references, preserves both IDs and pair links, and updates both rows
 atomically. The routes never mutate Account, lookup, Budget, or snapshot rows.
-Transfer delete, repair, bulk operations, dual-write, and Dexie writes are not
-implemented.
+Transfer repair, bulk operations, dual-write, and Dexie writes are not
+implemented. Verified pair deletion is available only through the separate
+transaction-delete capability described below.
 
 Normal `smoke:api` remains non-mutating. Mutation testing is explicit:
 
@@ -932,6 +933,59 @@ Run the server against an outside-repo disposable SQLite database with both
 backend flags enabled, preferably on a unique test port. The opt-in smoke
 creates and updates a pair and dirties that database. Re-import a separate
 SQLite database from the matching fresh backup before parity verification.
+
+## Experimental Transaction Deletion
+
+Dry-run-first deletion uses protected routes that determine ordinary versus
+transfer-pair behavior from current SQLite state:
+
+```text
+POST /prototype/repositories/transactions/delete/dry-run
+POST /prototype/repositories/transactions/delete/write
+```
+
+Real deletion is disabled unless
+`PERSONAL_FINANCE_ENABLE_TRANSACTION_DELETE_WRITES=true` exactly. The optional
+runtime capability is reported as `transactionDeleteWrites`; it is not added
+to the original ten authority-required manifest capabilities, so existing
+Phase 1 cutover and Phase 2 checkpoint manifests remain valid. The frontend
+experiment flag is
+`VITE_PERSONAL_FINANCE_TRANSACTIONS_DELETE_WRITE_EXPERIMENT=true`.
+
+An eligible ordinary transaction deletes exactly one transaction row. A
+transfer deletes exactly two rows in one SQLite transaction, but only after
+reciprocal links, flags, signs, magnitudes, distinct accounts, source-only fee
+placement, shared fields, references, and absence of conflicting third links
+are verified. Missing, malformed, ambiguous, self-referential, or Budget-linked
+transfer pairs fail closed; neither row is deleted and no repair is attempted.
+
+Dry-run returns a redacted summary and opaque plan fingerprint. Write requires
+that reviewed fingerprint plus an internal confirmation value, then reloads
+and revalidates current state. Account, Recipient, Category, Bucket, Budget,
+BudgetSnapshot, PaymentMethod, and SMS Template rows are never changed. Linked
+Budget snapshots remain present and unchanged. Reports, balances, and Budget
+History derive their new values solely from the removed transaction
+contribution using `amount + transactionCost` semantics.
+
+Deletion is permanent within the current SQLite checkpoint. An authoritative
+delete changes the logical fingerprint, so stop services and manually create
+and verify the next authority checkpoint before restart. No endpoint creates or
+modifies a manifest automatically. Recovery uses the verified native backup or
+checkpoint rollback procedure.
+
+Normal smoke is non-mutating. Explicit mutation smoke requires the delete,
+basic transaction, and transfer backend flags and a disposable database:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-transaction-delete-write-smoke
+```
+
+The mutation smoke creates and removes a synthetic ordinary row and reciprocal
+transfer pair, then verifies the complete database returns to its prior logical
+row state. The database must still be treated as dirty and re-imported before
+clean parity work. Bulk deletion, one-sided transfer deletion, pair repair,
+soft delete, undo, snapshot mutation, relinking, dual-write, and Dexie
+synchronization remain unsupported.
 
 Requests with no `Origin` header are allowed for local CLI use when the token is valid. Browser-style requests with an unexpected `Origin` are rejected. Allowed local development origins are:
 
@@ -1021,8 +1075,10 @@ missing parent budgets, and inconsistent existing links are rejected.
 
 Phase 2 never creates, updates, generates, repairs, prunes, or deletes a Budget
 or budget snapshot. Linking, changing, or unlinking modifies only the three
-linkage columns on the target transaction. Transfers, paired rows, transaction
-delete, and bulk operations remain unavailable.
+linkage columns on the target transaction. Transfers and paired-row updates
+remain governed by their separate routes. Transaction deletion is governed by
+the separate deletion routes and capability above; bulk operations remain
+unavailable.
 
 Normal smoke remains non-mutating. Successful mutation smoke is explicit:
 

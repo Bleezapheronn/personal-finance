@@ -27,6 +27,7 @@
     "verify:sqlite-authority-checkpoint": "tsx src/verifySqliteAuthorityCheckpoint.ts",
     "verify:sqlite-authority-checkpoint-chain": "tsx src/verifySqliteAuthorityCheckpointChain.ts",
     "test:sqlite-authority-checkpoint": "tsx src/testSqliteAuthorityCheckpoint.ts",
+    "test:transaction-delete": "tsx src/testTransactionDelete.ts",
     "verify:sqlite": "tsx src/verifySqlitePrototype.ts",
     "smoke:api": "tsx src/smokeApi.ts",
     "token:show": "tsx src/tokenCli.ts show",

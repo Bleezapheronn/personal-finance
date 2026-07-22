@@ -24,7 +24,7 @@ All flags default off.
 | Buckets | Create, update | Delete, reorder, active-state changes, cascade/reference rewrites | `PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true` | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true` | Passed: bucket/category opt-in mode | Passed | Discard or re-import SQLite; Dexie and related financial rows are unaffected |
 | Categories | Create, update, including an existing bucket link | Delete, active-state changes, cascade/reference rewrites | `PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true` | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true` | Passed: bucket/category opt-in mode | Passed | Discard or re-import SQLite; Dexie and existing transaction/budget links are unaffected |
 | Accounts | Create and update non-image fields: name, currency, credit classification, optional credit limit | Delete, merge, active-state changes, images, reference migration, reconciliation | `PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES=true` | `VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT=true` | Passed: Account opt-in mode | Passed, with image/icon omission remaining visible | Discard or re-import SQLite; Dexie, transactions, and derived balances are unaffected |
-| Transactions | Ordinary income/expense create/update; nonpositive transaction costs; link/change/unlink existing budget snapshots; atomic paired-transfer create/update | Delete, duplicate, bulk/import/export writes, transfer-pair repair, ordinary/transfer conversion, snapshot creation or repair | `PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_TRANSFER_WRITES=true` as required by the operation | `VITE_PERSONAL_FINANCE_TRANSACTIONS_BASIC_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_TRANSFER_WRITE_EXPERIMENT=true` as required | Passed: basic, cost/budget-link, and transfer opt-in modes | Passed | Discard or re-import SQLite; Dexie transactions remain unchanged, while SQLite-derived totals must be treated as dirty until re-import |
+| Transactions | Ordinary income/expense create/update; nonpositive transaction costs; link/change/unlink existing budget snapshots; atomic paired-transfer create/update; dry-run-first ordinary one-row and verified reciprocal-pair two-row deletion | Duplicate, bulk/import/export writes, transfer-pair repair, one-sided transfer deletion, ordinary/transfer conversion, snapshot creation or repair | `PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_TRANSFER_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_DELETE_WRITES=true` as required by the operation | `VITE_PERSONAL_FINANCE_TRANSACTIONS_BASIC_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_TRANSFER_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_DELETE_WRITE_EXPERIMENT=true` as required | Passed: basic, cost/budget-link, and transfer opt-in modes; deletion mode is an explicit disposable mutation run | Existing transaction experiments passed; deletion requires manual browser verification | Discard or re-import SQLite; Dexie transactions remain unchanged, while SQLite-derived totals must be treated as dirty until re-import |
 | SMS Import Templates | Create, update, activate, deactivate, reference-safe delete | Parser priority changes, SMS-history execution/import, transaction mutation | `PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES=true` | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT=true` | Passed: template CRUD/active-state opt-in mode | Passed | Discard or re-import SQLite; Dexie templates, SMS data, and transactions are unaffected |
 | Budget Definitions | Create and update the definition row only | Delete, completion, transaction linking, lookup creation, every snapshot lifecycle mutation | `PERSONAL_FINANCE_ENABLE_BUDGET_DEFINITION_WRITES=true` | `VITE_PERSONAL_FINANCE_BUDGETS_WRITE_EXPERIMENT=true` | Passed: Budget definition opt-in mode | Passed | Discard or re-import SQLite; Dexie budgets, snapshots, Budget History, and transaction links are unaffected |
 | Budget Snapshot Generation | Deterministic insert of missing occurrences only | Existing-row update, pruning, delete, repair, dedupe, historical rewrite, transaction relinking, automatic scheduling | `PERSONAL_FINANCE_ENABLE_BUDGET_SNAPSHOT_GENERATION_WRITES=true` | None; protected endpoint/CLI only | Passed: generation and repeated idempotency opt-in mode | Manual UI action intentionally omitted | Discard or re-import SQLite; Dexie snapshots remain unchanged and SQLite Budget History is dirty until re-import |
@@ -46,6 +46,17 @@ All flags default off.
   requested and must use a disposable database.
 - No write experiment changes Dexie, makes SQLite authoritative, or proves that
   the current browser-token model is suitable outside local development.
+
+Transaction deletion is a separate optional capability rather than an
+authority-baseline requirement. Older cutover and checkpoint manifests retain
+their original ten required capabilities and remain structurally valid when
+deletion is disabled. An ordinary delete removes one transaction row; a valid
+reciprocal transfer delete removes both rows atomically. Malformed pairs fail
+closed without repair, and linked Budget snapshots and all lookup rows remain
+unchanged. A successful authoritative deletion changes the active logical
+fingerprint. Keep services stopped after the write and manually create and
+verify the next checkpoint before restart; deletion never rotates a checkpoint
+or edits a manifest automatically.
 
 ## Reversible Authority Rehearsal
 
@@ -88,8 +99,10 @@ The following work is intentionally unsupported or deferred:
   cascades, and reference rewrites.
 - Account delete, merge, active-state changes, image writes, reconciliation,
   and transaction/account reference migration.
-- Transaction delete, duplicate/bulk/import/export mutation, transfer-pair
-  repair, and conversion between ordinary and transfer transactions.
+- Transaction duplicate/bulk/import/export mutation, one-sided transfer
+  deletion, transfer-pair repair, and conversion between ordinary and transfer
+  transactions. Phase 1 deletion supports only an eligible ordinary row or a
+  fully verified reciprocal pair.
 - Budget-definition delete, completion, transaction linking, and lookup
   creation from the HTTP write path.
 - Budget snapshot update, pruning, dedupe, repair, backfill, editing, deletion,

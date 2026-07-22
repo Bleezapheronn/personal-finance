@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { isDirectRun, safeCliErrorMessage } from "./lib/cli.js";
 import {
+  OPTIONAL_WRITE_CAPABILITY_KEYS,
   SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS,
   WRITE_CAPABILITY_KEYS,
 } from "./lib/writeCapabilities.js";
@@ -118,13 +119,22 @@ const main = async (): Promise<void> => {
           value.authoritative !== true ||
           !capabilities ||
           WRITE_CAPABILITY_KEYS.some((key) => capabilities[key] !== true) ||
-          Object.keys(capabilities).length !== WRITE_CAPABILITY_KEYS.length ||
+          OPTIONAL_WRITE_CAPABILITY_KEYS.some(
+            (key) => typeof capabilities[key] !== "boolean",
+          ) ||
+          Object.keys(capabilities).length !==
+            WRITE_CAPABILITY_KEYS.length + OPTIONAL_WRITE_CAPABILITY_KEYS.length ||
           !Array.isArray(unsupportedOperations) ||
-          SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS.some(
+          SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS.filter(
+            (operation) =>
+              operation !== "transaction_delete" ||
+              capabilities.transactionDeleteWrites !== true,
+          ).some(
             (operation) => !unsupportedOperations.includes(operation),
           ) ||
           unsupportedOperations.length !==
-            SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS.length
+            SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS.length -
+              (capabilities.transactionDeleteWrites === true ? 1 : 0)
         ) throw new Error("authority_capabilities_invalid");
       },
     },

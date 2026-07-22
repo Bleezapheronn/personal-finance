@@ -9,6 +9,7 @@ import {
   TRANSACTION_TRANSFER_CREATE_WRITE_CONFIRMATION,
   TRANSACTION_TRANSFER_UPDATE_WRITE_CONFIRMATION,
 } from "./lib/transactionTransferWrite.js";
+import { TRANSACTION_DELETE_WRITE_CONFIRMATION } from "./lib/transactionDelete.js";
 import { SMS_TEMPLATE_WRITE_CONFIRMATIONS } from "./lib/smsTemplateWrite.js";
 import {
   BUDGET_DEFINITION_CREATE_CONFIRMATION,
@@ -54,6 +55,7 @@ interface SmokeArgs {
   allowTransactionBasicWriteSmoke: boolean;
   allowTransactionCostBudgetWriteSmoke: boolean;
   allowTransactionTransferWriteSmoke: boolean;
+  allowTransactionDeleteWriteSmoke: boolean;
   allowSmsTemplateWriteSmoke: boolean;
   allowBudgetDefinitionWriteSmoke: boolean;
   allowBudgetSnapshotGenerationWriteSmoke: boolean;
@@ -125,6 +127,11 @@ interface ResponseJson {
   smsImportTemplate?: unknown;
   budget?: unknown;
   budgetSnapshot?: unknown;
+  planFingerprint?: unknown;
+  rowsProposedForDeletion?: unknown;
+  transferPairValidated?: unknown;
+  sourceTransactionId?: unknown;
+  destinationTransactionId?: unknown;
 }
 
 const usage = `Usage:
@@ -151,6 +158,8 @@ Options:
                          Opt in to disposable SQLite transaction cost/budget-link create/update write smoke.
   --allow-transaction-transfer-write-smoke
                          Opt in to disposable SQLite paired transfer create/update write smoke.
+  --allow-transaction-delete-write-smoke
+                         Opt in to ordinary and reciprocal-pair SQLite delete smoke.
   --allow-sms-template-write-smoke
                          Opt in to disposable SQLite SMS template CRUD write smoke.
   --allow-budget-definition-write-smoke
@@ -171,6 +180,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowTransactionBasicWriteSmoke: false,
     allowTransactionCostBudgetWriteSmoke: false,
     allowTransactionTransferWriteSmoke: false,
+    allowTransactionDeleteWriteSmoke: false,
     allowSmsTemplateWriteSmoke: false,
     allowBudgetDefinitionWriteSmoke: false,
     allowBudgetSnapshotGenerationWriteSmoke: false,
@@ -246,6 +256,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-transaction-transfer-write-smoke") {
       args.allowTransactionTransferWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-transaction-delete-write-smoke") {
+      args.allowTransactionDeleteWriteSmoke = true;
       continue;
     }
 
@@ -862,6 +877,7 @@ const buildChecks = (
   allowTransactionBasicWriteSmoke: boolean,
   allowTransactionCostBudgetWriteSmoke: boolean,
   allowTransactionTransferWriteSmoke: boolean,
+  allowTransactionDeleteWriteSmoke: boolean,
   allowSmsTemplateWriteSmoke: boolean,
   allowBudgetDefinitionWriteSmoke: boolean,
   allowBudgetSnapshotGenerationWriteSmoke: boolean,
@@ -888,6 +904,9 @@ const buildChecks = (
     ...(allowTransactionTransferWriteSmoke
       ? ["transactionTransferWrites"]
       : []),
+    ...(allowTransactionDeleteWriteSmoke
+      ? ["transactionDeleteWrites"]
+      : []),
     ...(allowSmsTemplateWriteSmoke ? ["smsTemplateWrites"] : []),
     ...(allowBudgetDefinitionWriteSmoke ? ["budgetDefinitionWrites"] : []),
     ...(allowBudgetSnapshotGenerationWriteSmoke
@@ -902,6 +921,7 @@ const buildChecks = (
     "transactionBasicWrites",
     "transactionCostBudgetWrites",
     "transactionTransferWrites",
+    "transactionDeleteWrites",
     "smsTemplateWrites",
     "budgetDefinitionWrites",
     "budgetSnapshotGenerationWrites",
@@ -7155,9 +7175,304 @@ const buildChecks = (
         ]
       : []),
     {
-      name: "transaction delete transfer repair and bulk write routes are not implemented",
+      name: "transaction delete dry-runs are protected redacted and non-mutating",
       run: async () => {
-        for (const action of ["delete", "transfer", "repair", "bulk"] as const) {
+        const transactionsBefore = await readAllTableRows(
+          baseUrl,
+          "transactions",
+          authedOptions,
+        );
+        const ordinary = transactionsBefore.find(
+          (row) =>
+            row.isTransfer !== 1 &&
+            row.isTransfer !== true &&
+            row.transferPairId == null,
+        );
+        const transfer = transactionsBefore.find(
+          (row) =>
+            (row.isTransfer === 1 || row.isTransfer === true) &&
+            typeof row.transferPairId === "number",
+        );
+        if (!ordinary || !transfer) {
+          throw new Error("transaction_delete_smoke_fixture_missing");
+        }
+
+        const unauthorized = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions/delete/dry-run",
+          { method: "POST", body: { id: ordinary.id } },
+        );
+        expectStatus(unauthorized.status, 401);
+        const badOrigin = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions/delete/dry-run",
+          {
+            token,
+            origin: "http://unexpected-origin.invalid",
+            method: "POST",
+            body: { id: ordinary.id },
+          },
+        );
+        expectStatus(badOrigin.status, 403);
+        const invalid = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { id: -1 } },
+        );
+        expectStatus(invalid.status, 400);
+        const unexpected = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { id: ordinary.id, mode: "ordinary" } },
+        );
+        expectStatus(unexpected.status, 400);
+        const missing = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { id: 2147483647 } },
+        );
+        expectStatus(missing.status, 404);
+
+        for (const [candidate, classification, rowCount] of [
+          [ordinary, "ordinary", 1],
+          [transfer, "transferPair", 2],
+        ] as const) {
+          const dryRun = await requestJson(
+            baseUrl,
+            "/prototype/repositories/transactions/delete/dry-run",
+            { ...authedOptions, method: "POST", body: { id: candidate.id } },
+          );
+          expectStatus(dryRun.status, 200);
+          expect(
+            dryRun.json.ok === true &&
+              dryRun.json.classification === classification &&
+              dryRun.json.rowsProposedForDeletion === rowCount &&
+              dryRun.json.wouldMutate === false &&
+              dryRun.json.sqliteMutated === false &&
+              typeof dryRun.json.planFingerprint === "string",
+            "transaction_delete_dry_run_invalid",
+          );
+          const body = JSON.stringify(dryRun.json);
+          for (const forbidden of [
+            "description",
+            "transactionReference",
+            "accountName",
+            "recipientName",
+            "confirmation",
+          ]) {
+            expect(!body.includes(forbidden), `transaction_delete_leaked_${forbidden}`);
+          }
+        }
+
+        const invalidWrite = await requestJson(
+          baseUrl,
+          "/prototype/repositories/transactions/delete/write",
+          { ...authedOptions, method: "POST", body: { id: ordinary.id } },
+        );
+        expectStatus(invalidWrite.status, 400);
+        expect(
+          rowsFingerprint(
+            await readAllTableRows(baseUrl, "transactions", authedOptions),
+          ) === rowsFingerprint(transactionsBefore),
+          "transaction_delete_dry_run_mutated",
+        );
+      },
+    },
+    ...(!allowTransactionDeleteWriteSmoke
+      ? [
+          {
+            name: "transaction delete write is disabled by default",
+            run: async () => {
+              const response = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/delete/write",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: 1,
+                    expectedPlanFingerprint: "0".repeat(64),
+                    dryRunReviewed: true,
+                    confirmation: TRANSACTION_DELETE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(response.status, 403);
+              expect(
+                response.json.code === "transaction_delete_writes_disabled",
+                "transaction_delete_not_disabled",
+              );
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    ...(allowTransactionDeleteWriteSmoke
+      ? [
+          {
+            name: "ordinary and reciprocal transfer deletion mutate only transaction rows",
+            run: async () => {
+              const tableNames = [
+                "transactions",
+                "budgets",
+                "budgetSnapshots",
+                "buckets",
+                "categories",
+                "accounts",
+                "paymentMethods",
+                "recipients",
+                "smsImportTemplates",
+              ] as const;
+              const baseline = new Map<string, string>();
+              for (const table of tableNames) {
+                baseline.set(
+                  table,
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ),
+                );
+              }
+              const accounts = await readAllTableRows(baseUrl, "accounts", authedOptions);
+              const categories = await readAllTableRows(baseUrl, "categories", authedOptions);
+              const recipients = await readAllTableRows(baseUrl, "recipients", authedOptions);
+              expect(accounts.length >= 2 && categories.length > 0 && recipients.length > 0, "transaction_delete_write_fixture_missing");
+              const date = new Date().toISOString();
+              const ordinaryPayload = {
+                classification: "expense",
+                date,
+                amount: -7.25,
+                categoryId: Number(categories[0].id),
+                accountId: Number(accounts[0].id),
+                recipientId: Number(recipients[0].id),
+                description: "transaction delete smoke",
+              };
+              const createDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/dry-run/create",
+                { ...authedOptions, method: "POST", body: ordinaryPayload },
+              );
+              expectStatus(createDryRun.status, 200);
+              const createWrite = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...ordinaryPayload,
+                    dryRunReviewed: true,
+                    confirmation: TRANSACTION_BASIC_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(createWrite.status, 200);
+              const ordinaryId = Number(createWrite.json.targetId);
+              const ordinaryDeletePlan = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { id: ordinaryId } },
+              );
+              expectStatus(ordinaryDeletePlan.status, 200);
+              const ordinaryDelete = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/delete/write",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: ordinaryId,
+                    expectedPlanFingerprint: ordinaryDeletePlan.json.planFingerprint,
+                    dryRunReviewed: true,
+                    confirmation: TRANSACTION_DELETE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(ordinaryDelete.status, 200);
+              expect(ordinaryDelete.json.rowsChanged === 1, "ordinary_delete_write_invalid");
+              const repeatedOrdinary = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { id: ordinaryId } },
+              );
+              expectStatus(repeatedOrdinary.status, 404);
+
+              const transferPayload = {
+                sourceAccountId: Number(accounts[0].id),
+                destinationAccountId: Number(accounts[1].id),
+                sourceRecipientId: Number(recipients[0].id),
+                destinationRecipientId: Number(recipients[0].id),
+                date,
+                amount: 8.5,
+                transactionCost: -0.5,
+                categoryId: Number(categories[0].id),
+                description: "transaction delete transfer smoke",
+              };
+              const transferDryRun = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/transfers/dry-run/create",
+                { ...authedOptions, method: "POST", body: transferPayload },
+              );
+              expectStatus(transferDryRun.status, 200);
+              const transferWrite = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/transfers/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    ...transferPayload,
+                    dryRunReviewed: true,
+                    confirmation: TRANSACTION_TRANSFER_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(transferWrite.status, 200);
+              const sourceId = Number(transferWrite.json.sourceTransactionId);
+              const pairDeletePlan = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { id: sourceId } },
+              );
+              expectStatus(pairDeletePlan.status, 200);
+              expect(pairDeletePlan.json.transferPairValidated === true, "transfer_delete_pair_not_validated");
+              const pairDelete = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/delete/write",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    id: sourceId,
+                    expectedPlanFingerprint: pairDeletePlan.json.planFingerprint,
+                    dryRunReviewed: true,
+                    confirmation: TRANSACTION_DELETE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(pairDelete.status, 200);
+              expect(pairDelete.json.rowsChanged === 2, "transfer_delete_write_invalid");
+              const repeatedPair = await requestJson(
+                baseUrl,
+                "/prototype/repositories/transactions/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { id: sourceId } },
+              );
+              expectStatus(repeatedPair.status, 404);
+
+              for (const table of tableNames) {
+                expect(
+                  rowsFingerprint(
+                    await readAllTableRows(baseUrl, table, authedOptions),
+                  ) === baseline.get(table),
+                  `${table}_changed_after_transaction_delete_smoke`,
+                );
+              }
+            },
+          } satisfies SmokeCheck,
+        ]
+      : []),
+    {
+      name: "transaction bulk delete and transfer repair routes are not implemented",
+      run: async () => {
+        for (const action of ["transfer", "repair", "bulk"] as const) {
           const response = await requestJson(
             baseUrl,
             `/prototype/repositories/transactions/write/${action}`,
@@ -7277,6 +7592,7 @@ const main = async (): Promise<void> => {
     args.allowTransactionBasicWriteSmoke,
     args.allowTransactionCostBudgetWriteSmoke,
     args.allowTransactionTransferWriteSmoke,
+    args.allowTransactionDeleteWriteSmoke,
     args.allowSmsTemplateWriteSmoke,
     args.allowBudgetDefinitionWriteSmoke,
     args.allowBudgetSnapshotGenerationWriteSmoke,

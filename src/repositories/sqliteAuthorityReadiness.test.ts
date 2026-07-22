@@ -28,13 +28,15 @@ const readiness = {
   ready: true,
   ...metadata,
   requiredCapabilities: [...REQUIRED_SQLITE_REHEARSAL_CAPABILITIES],
-  unsupportedOperations: [...REQUIRED_SQLITE_UNSUPPORTED_OPERATIONS],
+  unsupportedOperations: REQUIRED_SQLITE_UNSUPPORTED_OPERATIONS.filter(
+    (operation) => operation !== "transaction_delete",
+  ),
 };
 
 const capabilities = {
   ok: true,
   ...metadata,
-  capabilities: enabledCapabilities,
+  capabilities: { ...enabledCapabilities, transactionDeleteWrites: true },
   unsupportedOperations: [...REQUIRED_SQLITE_UNSUPPORTED_OPERATIONS],
   safety: {
     endpointReadOnly: true,
@@ -62,6 +64,7 @@ describe("SQLite authoritative frontend readiness", () => {
     );
     expect(result.ready).toBe(true);
     expect(result.authoritativeMode).toBe(true);
+    expect(result.transactionDeleteWritesAvailable).toBe(true);
   });
 
   it("fails closed when frontend authority meets a disposable server", () => {

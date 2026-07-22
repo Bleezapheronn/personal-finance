@@ -84,6 +84,14 @@ import {
   type TransactionBudgetSnapshotReference,
 } from "../repositories/http/transactionBasicWriteExperiment";
 import { isTransactionsTransferWriteExperimentEnabled } from "../repositories/http/transactionTransferWriteExperiment";
+import {
+  dryRunTransactionDelete,
+  isTransactionsDeleteWriteExperimentEnabled,
+  loadTransactionDeleteWriteCapability,
+  transactionDeleteWriteErrorCode,
+  type TransactionDeleteResponse,
+  writeReviewedTransactionDelete,
+} from "../repositories/http/transactionDeleteWriteExperiment";
 import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
@@ -516,6 +524,10 @@ const Transactions: React.FC = () => {
     number | undefined
   >(undefined);
   const [isTransferDelete, setIsTransferDelete] = useState(false);
+  const [sqliteDeletePlan, setSqliteDeletePlan] =
+    useState<TransactionDeleteResponse | null>(null);
+  const [transactionDeleteCapabilityAvailable, setTransactionDeleteCapabilityAvailable] =
+    useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [visibleTransactionWindowDays, setVisibleTransactionWindowDays] =
@@ -561,6 +573,8 @@ const Transactions: React.FC = () => {
     isTransactionsCostBudgetWriteExperimentEnabled();
   const transactionsTransferWriteExperimentEnabled =
     isTransactionsTransferWriteExperimentEnabled();
+  const transactionsDeleteWriteExperimentEnabled =
+    isTransactionsDeleteWriteExperimentEnabled();
   const transactionsSqliteWriteExperimentActive =
     (transactionsBasicWriteExperimentEnabled &&
       selectedBackend === "http-readonly") ||
@@ -574,8 +588,39 @@ const Transactions: React.FC = () => {
   const transactionsHttpSelectedReadActive =
     rehearsalSelected ||
     ((transactionsReadExperimentEnabled ||
-      transactionsBasicWriteExperimentEnabled) &&
+      transactionsBasicWriteExperimentEnabled ||
+      transactionsDeleteWriteExperimentEnabled) &&
       selectedBackend === "http-readonly");
+  const transactionsDeleteWriteActive =
+    transactionsHttpSelectedReadActive &&
+    ((transactionsDeleteWriteExperimentEnabled &&
+      transactionDeleteCapabilityAvailable) ||
+      (rehearsalSelected &&
+        rehearsal.ready &&
+        rehearsal.transactionDeleteWritesAvailable));
+
+  useEffect(() => {
+    let active = true;
+    if (
+      !transactionsDeleteWriteExperimentEnabled ||
+      selectedBackend !== "http-readonly"
+    ) {
+      setTransactionDeleteCapabilityAvailable(false);
+      return () => {
+        active = false;
+      };
+    }
+    void loadTransactionDeleteWriteCapability()
+      .then((available) => {
+        if (active) setTransactionDeleteCapabilityAvailable(available);
+      })
+      .catch(() => {
+        if (active) setTransactionDeleteCapabilityAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedBackend, transactionsDeleteWriteExperimentEnabled]);
 
   const fetchTransactions = async () => {
     setLoading(true);
@@ -656,10 +701,12 @@ const Transactions: React.FC = () => {
       setTransactions(sortedTransactions);
       setVisibleTransactionWindowDays(TRANSACTION_BATCH_DAYS);
       setError("");
+      return true;
     } catch (err) {
       setError("Failed to load transactions.");
       setTransactionsReadExperimentLoad(null);
       console.error(err);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -815,12 +862,27 @@ const Transactions: React.FC = () => {
   const handleDeleteClick = async (id?: number) => {
     if (id === undefined) return;
     if (transactionsHttpSelectedReadActive) {
-      showTransactionsReadExperimentActionDisabled();
+      if (!transactionsDeleteWriteActive) {
+        setError(
+          "Transaction deletion is unavailable because the SQLite delete capability is disabled.",
+        );
+        return;
+      }
+      try {
+        const plan = await dryRunTransactionDelete(id);
+        setSqliteDeletePlan(plan);
+        setIsTransferDelete(plan.classification === "transferPair");
+        setTransactionToDelete(id);
+        setShowDeleteConfirm(true);
+      } catch (err) {
+        setError(transactionDeleteWriteErrorCode(err));
+      }
       return;
     }
 
     const isTransfer = await transactionRepository.isTransferTransaction(id);
     setIsTransferDelete(isTransfer);
+    setSqliteDeletePlan(null);
     setTransactionToDelete(id);
     setShowDeleteConfirm(true);
   };
@@ -898,10 +960,40 @@ const Transactions: React.FC = () => {
   const handleConfirmDelete = async () => {
     if (transactionToDelete === undefined) return;
     if (transactionsHttpSelectedReadActive) {
-      showTransactionsReadExperimentActionDisabled();
-      setShowDeleteConfirm(false);
-      setTransactionToDelete(undefined);
-      setIsTransferDelete(false);
+      if (
+        !transactionsDeleteWriteActive ||
+        typeof sqliteDeletePlan?.planFingerprint !== "string"
+      ) {
+        setError("transaction_delete_review_required");
+        setShowDeleteConfirm(false);
+        return;
+      }
+      try {
+        const result = await writeReviewedTransactionDelete(
+          transactionToDelete,
+          sqliteDeletePlan.planFingerprint,
+        );
+        const refreshed = await fetchTransactions();
+        if (!refreshed) {
+          setError(
+            "SQLite deletion completed, but the transaction list refresh failed.",
+          );
+        } else {
+          setSuccessMsg(
+            result.rowsChanged === 2
+              ? "Transfer pair deleted from SQLite. Rotate the authority checkpoint before restart."
+              : "Transaction deleted from SQLite. Rotate the authority checkpoint before restart.",
+          );
+          setShowSuccessToast(true);
+        }
+      } catch (err) {
+        setError(transactionDeleteWriteErrorCode(err));
+      } finally {
+        setShowDeleteConfirm(false);
+        setTransactionToDelete(undefined);
+        setIsTransferDelete(false);
+        setSqliteDeletePlan(null);
+      }
       return;
     }
 
@@ -1535,7 +1627,11 @@ const Transactions: React.FC = () => {
           onDidDismiss={() => setShowDeleteConfirm(false)}
           header="Confirm Delete"
           message={
-            isTransferDelete
+            sqliteDeletePlan
+              ? `${
+                  isTransferDelete ? "Verified transfer pair" : "Transaction"
+                }: ${sqliteDeletePlan.rowsProposedForDeletion ?? 0} row(s) will be deleted. This is permanent within the current SQLite checkpoint.`
+              : isTransferDelete
               ? "Are you sure you want to delete this transfer transaction? This will remove both the outgoing and incoming transactions. This action cannot be undone."
               : "Are you sure you want to delete this transaction? This action cannot be undone."
           }
@@ -1547,6 +1643,7 @@ const Transactions: React.FC = () => {
                 setShowDeleteConfirm(false);
                 setTransactionToDelete(undefined);
                 setIsTransferDelete(false);
+                setSqliteDeletePlan(null);
               },
             },
             {
@@ -1586,7 +1683,9 @@ const Transactions: React.FC = () => {
         {error && <IonText color="danger">{error}</IonText>}
 
         {(transactionsReadExperimentEnabled ||
-          transactionsBasicWriteExperimentEnabled) && (
+          transactionsBasicWriteExperimentEnabled ||
+          transactionsDeleteWriteExperimentEnabled ||
+          rehearsalSelected) && (
           <IonCard style={{ margin: 0, marginBottom: "16px" }}>
             <IonCardContent>
               <IonText
@@ -1597,14 +1696,18 @@ const Transactions: React.FC = () => {
                 <p style={{ marginTop: 0 }}>
                   {transactionsSqliteWriteExperimentActive
                     ? rehearsal.authoritativeMode
-                      ? "SQLite authoritative mode is active. Supported Transaction and paired Transfer writes use the verified local SQLite database. Delete, import/export mutation, and transfer repair remain disabled."
+                      ? transactionsDeleteWriteActive
+                        ? "SQLite authoritative mode is active. Supported Transaction, paired Transfer, and dry-run-first deletion writes use the verified local SQLite database. Import/export mutation and transfer repair remain disabled."
+                        : "SQLite authoritative mode is active. Supported Transaction and paired Transfer writes use the verified local SQLite database. Delete, import/export mutation, and transfer repair remain disabled."
                       : transactionsTransferWriteExperimentActive
-                      ? "Transactions SQLite transfer experiment is active. Transfers are written as atomic reciprocal transaction pairs in disposable local SQLite. Dexie remains authoritative. Transfer delete and pair repair remain unsupported."
+                      ? "Transactions SQLite transfer experiment is active. Transfers are written as atomic reciprocal transaction pairs in local SQLite. Dexie remains authoritative by default. Deletion is available only when its separate capability is enabled; pair repair remains unsupported."
                       : transactionsCostBudgetWriteExperimentActive
-                      ? "Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Single-row income/expense transactions may include transaction costs and links to existing budget snapshots. Transfers and delete remain unsupported."
+                      ? "Transactions SQLite write experiment is active. Writes go to local SQLite only. Dexie remains authoritative by default. Single-row income/expense transactions may include transaction costs and links to existing budget snapshots. Deletion requires its separate capability."
                       : "Basic Transactions SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Transfers, transaction costs, and budget-linked transactions are not supported."
                     : transactionsHttpSelectedReadActive
-                      ? "Transactions read experiment is active. The selected-read list is HTTP read-only and transaction writes are disabled."
+                      ? transactionsDeleteWriteActive
+                        ? "Transactions SQLite deletion experiment is active. Eligible ordinary rows and verified reciprocal transfer pairs can be deleted after a dry-run review. Dexie remains unchanged."
+                        : "Transactions read experiment is active. The selected-read list is HTTP read-only and transaction writes are disabled."
                       : "Transactions experiment flag is active with the Dexie backend. Existing Dexie behavior remains available."}
                 </p>
                 <p style={{ marginBottom: 0, color: "#666", fontSize: "0.85rem" }}>
@@ -1626,6 +1729,12 @@ const Transactions: React.FC = () => {
                     {transactionsCostBudgetWriteExperimentActive
                       ? " Existing snapshots may be linked or unlinked; no snapshot is generated or modified."
                       : " Advanced transactions are read-only."}
+                  </p>
+                )}
+                {transactionsDeleteWriteActive && (
+                  <p style={{ marginBottom: 0, color: "#666", fontSize: "0.85rem" }}>
+                    Delete is SQLite-only and permanent within the current
+                    checkpoint. Rotate the authority checkpoint before restart.
                   </p>
                 )}
               </IonText>
@@ -2488,6 +2597,22 @@ const Transactions: React.FC = () => {
                                   </IonCol>
                                 </IonRow>
                               )}
+                            {transactionsDeleteWriteActive && (
+                              <IonRow className="item-actions">
+                                <IonCol className="item-actions-container">
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    style={{ marginRight: "0" }}
+                                    color="danger"
+                                    onClick={() => handleDeleteClick(txn.id)}
+                                    title="Delete from SQLite after safety review"
+                                  >
+                                    <IonIcon slot="end" icon={trashOutline} />
+                                  </IonButton>
+                                </IonCol>
+                              </IonRow>
+                            )}
                           </IonCol>
                         </IonRow>
                       </IonGrid>
