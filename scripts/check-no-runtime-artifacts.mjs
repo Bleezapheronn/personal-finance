@@ -70,6 +70,10 @@ const suspiciousPathPatterns = [
     pattern: /(^|\/)[^/]*(cutover|authority)[^/]*manifest[^/]*\.json$/i,
     reason: "generated SQLite authority manifest JSON",
   },
+  {
+    pattern: /(^|\/)[^/]*checkpoint[^/]*\.json$/i,
+    reason: "generated SQLite authority checkpoint JSON",
+  },
   { pattern: /(^|\/)transactions_[^/]*\.csv$/i, reason: "generated export CSV" },
   { pattern: /(^|\/)budgets_[^/]*\.csv$/i, reason: "generated export CSV" },
   { pattern: /\.(log|tmp|temp)$/i, reason: "generated log/temp file" },

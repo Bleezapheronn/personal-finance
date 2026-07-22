@@ -23,6 +23,7 @@ import {
   readSqliteBackupManifest,
 } from "./sqliteBackupRestore.js";
 import {
+  fingerprintLogicalValue,
   logicalVerificationsMatch,
   readSqliteLogicalVerification,
   readSqliteLogicalVerificationAtPath,
@@ -36,8 +37,11 @@ import {
 } from "./writeCapabilities.js";
 
 export const SQLITE_AUTHORITY_CUTOVER_MANIFEST_VERSION = 1 as const;
+export const SQLITE_AUTHORITY_CHECKPOINT_MANIFEST_VERSION = 2 as const;
 export const SQLITE_AUTHORITY_ROLLBACK_INSTRUCTIONS_ID =
   "sqlite-authority-phase1-rollback" as const;
+export const SQLITE_AUTHORITY_CHECKPOINT_RECOVERY_NOTES_ID =
+  "sqlite-authority-checkpoint-recovery" as const;
 
 export interface SqliteAuthorityCutoverManifest {
   manifestVersion: 1;
@@ -58,6 +62,50 @@ export interface SqliteAuthorityCutoverManifest {
   nativeBackupVerified: true;
   overallReadiness: "ready";
   rollbackInstructionsId: typeof SQLITE_AUTHORITY_ROLLBACK_INSTRUCTIONS_ID;
+}
+
+export interface SqliteAuthorityCheckpointManifest {
+  manifestVersion: 2;
+  manifestKind: "sqlite-authority-checkpoint";
+  authorityLineageId: string;
+  checkpointSequence: number;
+  checkpointId: string;
+  predecessorCheckpointId: string;
+  createdAt: string;
+  normalizedAsOf: string;
+  databaseIdentityFingerprint: string;
+  backupDatabaseIdentityFingerprint: string;
+  databaseVerification: SqliteLogicalVerification;
+  backupVerification: SqliteLogicalVerification;
+  backupFileName: string;
+  userVersion: number;
+  schemaVersion: number;
+  requiredCapabilities: WriteCapabilityKey[];
+  unsupportedOperations: string[];
+  nativeBackupVerified: true;
+  backupVerificationResult: "pass";
+  checkpointStatus: "ready";
+  recoveryNotesId: typeof SQLITE_AUTHORITY_CHECKPOINT_RECOVERY_NOTES_ID;
+  label?: string;
+}
+
+export type SqliteAuthorityManifest =
+  | SqliteAuthorityCutoverManifest
+  | SqliteAuthorityCheckpointManifest;
+
+export interface SqliteAuthorityManifestDescriptor {
+  manifest: SqliteAuthorityManifest;
+  authorityLineageId: string;
+  checkpointSequence: number;
+  checkpointId: string;
+  predecessorCheckpointId?: string;
+  createdAt: string;
+  normalizedAsOf: string;
+  databaseVerification: SqliteLogicalVerification;
+  backupVerification: SqliteLogicalVerification;
+  backupFileName: string;
+  requiredCapabilities: WriteCapabilityKey[];
+  unsupportedOperations: string[];
 }
 
 export interface SqliteAuthorityReadiness {
@@ -89,7 +137,7 @@ export interface SqliteAuthorityRollbackResult {
   rollbackInstructionsId: typeof SQLITE_AUTHORITY_ROLLBACK_INSTRUCTIONS_ID;
 }
 
-const strictLocalDay = (value: string): Date => {
+export const strictSqliteAuthorityLocalDay = (value: string): Date => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error("cutover_manifest_as_of_invalid");
   }
@@ -141,7 +189,7 @@ const removeSqliteArtifacts = (databasePath: string): void => {
   }
 };
 
-const assertPrototypeSchemaContract = (
+export const assertSqliteAuthoritySchemaContract = (
   candidate: SqliteLogicalVerification,
   asOf: Date,
 ): void => {
@@ -186,6 +234,59 @@ const verificationShapeIsValid = (
 const sameStringArray = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((value, index) => value === right[index]);
 
+const SHA256_HEX = /^[a-f0-9]{64}$/;
+
+export const derivePhaseOneAuthorityLineageId = (
+  manifest: SqliteAuthorityCutoverManifest,
+): string =>
+  fingerprintLogicalValue({
+    kind: "sqlite-authority-lineage",
+    manifestVersion: manifest.manifestVersion,
+    createdAt: manifest.createdAt,
+    normalizedAsOf: manifest.normalizedAsOf,
+    candidateDatabaseIdentityFingerprint:
+      manifest.candidateDatabaseIdentityFingerprint,
+    backupDatabaseIdentityFingerprint:
+      manifest.backupDatabaseIdentityFingerprint,
+    backupFileName: manifest.backupFileName,
+  });
+
+export const derivePhaseOneCheckpointId = (
+  manifest: SqliteAuthorityCutoverManifest,
+): string =>
+  fingerprintLogicalValue({
+    kind: "sqlite-authority-checkpoint",
+    authorityLineageId: derivePhaseOneAuthorityLineageId(manifest),
+    checkpointSequence: 0,
+    createdAt: manifest.createdAt,
+    normalizedAsOf: manifest.normalizedAsOf,
+    databaseIdentityFingerprint:
+      manifest.candidateDatabaseIdentityFingerprint,
+    backupDatabaseIdentityFingerprint:
+      manifest.backupDatabaseIdentityFingerprint,
+  });
+
+export const deriveAuthorityCheckpointId = (
+  manifest: Omit<SqliteAuthorityCheckpointManifest, "checkpointId">,
+): string =>
+  fingerprintLogicalValue({
+    kind: manifest.manifestKind,
+    authorityLineageId: manifest.authorityLineageId,
+    checkpointSequence: manifest.checkpointSequence,
+    predecessorCheckpointId: manifest.predecessorCheckpointId,
+    createdAt: manifest.createdAt,
+    normalizedAsOf: manifest.normalizedAsOf,
+    databaseIdentityFingerprint: manifest.databaseIdentityFingerprint,
+    backupDatabaseIdentityFingerprint:
+      manifest.backupDatabaseIdentityFingerprint,
+    backupFileName: manifest.backupFileName,
+    userVersion: manifest.userVersion,
+    schemaVersion: manifest.schemaVersion,
+    requiredCapabilities: manifest.requiredCapabilities,
+    unsupportedOperations: manifest.unsupportedOperations,
+    ...(manifest.label ? { label: manifest.label } : {}),
+  });
+
 export const readSqliteAuthorityCutoverManifest = (
   manifestPath: string,
 ): SqliteAuthorityCutoverManifest => {
@@ -223,7 +324,7 @@ export const readSqliteAuthorityCutoverManifest = (
     throw new Error("cutover_manifest_invalid");
   }
 
-  strictLocalDay(value.normalizedAsOf);
+  strictSqliteAuthorityLocalDay(value.normalizedAsOf);
   if (
     value.candidateVerification.normalizedAsOf !== value.normalizedAsOf ||
     value.backupVerification.normalizedAsOf !== value.normalizedAsOf ||
@@ -242,6 +343,129 @@ export const readSqliteAuthorityCutoverManifest = (
 
   return value as unknown as SqliteAuthorityCutoverManifest;
 };
+
+const checkpointLabelIsValid = (value: unknown): value is string | undefined =>
+  value === undefined ||
+  (typeof value === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value));
+
+const verifyCheckpointManifestShape = (
+  value: unknown,
+): SqliteAuthorityCheckpointManifest => {
+  if (
+    !isPlainObject(value) ||
+    value.manifestVersion !== SQLITE_AUTHORITY_CHECKPOINT_MANIFEST_VERSION ||
+    value.manifestKind !== "sqlite-authority-checkpoint" ||
+    typeof value.authorityLineageId !== "string" ||
+    !SHA256_HEX.test(value.authorityLineageId) ||
+    !Number.isInteger(value.checkpointSequence) ||
+    (value.checkpointSequence as number) < 1 ||
+    typeof value.checkpointId !== "string" ||
+    !SHA256_HEX.test(value.checkpointId) ||
+    typeof value.predecessorCheckpointId !== "string" ||
+    !SHA256_HEX.test(value.predecessorCheckpointId) ||
+    typeof value.createdAt !== "string" ||
+    Number.isNaN(new Date(value.createdAt).getTime()) ||
+    typeof value.normalizedAsOf !== "string" ||
+    typeof value.databaseIdentityFingerprint !== "string" ||
+    typeof value.backupDatabaseIdentityFingerprint !== "string" ||
+    !verificationShapeIsValid(value.databaseVerification) ||
+    !verificationShapeIsValid(value.backupVerification) ||
+    typeof value.backupFileName !== "string" ||
+    value.backupFileName !== path.basename(value.backupFileName) ||
+    value.backupFileName.length === 0 ||
+    !Number.isInteger(value.userVersion) ||
+    !Number.isInteger(value.schemaVersion) ||
+    !stringArray(value.requiredCapabilities) ||
+    !stringArray(value.unsupportedOperations) ||
+    value.nativeBackupVerified !== true ||
+    value.backupVerificationResult !== "pass" ||
+    value.checkpointStatus !== "ready" ||
+    value.recoveryNotesId !== SQLITE_AUTHORITY_CHECKPOINT_RECOVERY_NOTES_ID ||
+    !checkpointLabelIsValid(value.label)
+  ) {
+    throw new Error("authority_checkpoint_manifest_invalid");
+  }
+
+  strictSqliteAuthorityLocalDay(value.normalizedAsOf);
+  const manifest = value as unknown as SqliteAuthorityCheckpointManifest;
+  if (
+    manifest.databaseVerification.normalizedAsOf !== manifest.normalizedAsOf ||
+    manifest.backupVerification.normalizedAsOf !== manifest.normalizedAsOf ||
+    manifest.databaseVerification.databaseIdentityFingerprint !==
+      manifest.databaseIdentityFingerprint ||
+    manifest.backupVerification.databaseIdentityFingerprint !==
+      manifest.backupDatabaseIdentityFingerprint ||
+    manifest.databaseVerification.userVersion !== manifest.userVersion ||
+    manifest.databaseVerification.schemaVersion !== manifest.schemaVersion ||
+    !sameStringArray(manifest.requiredCapabilities, WRITE_CAPABILITY_KEYS) ||
+    !sameStringArray(
+      manifest.unsupportedOperations,
+      SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS,
+    )
+  ) {
+    throw new Error("authority_checkpoint_manifest_invalid");
+  }
+  const { checkpointId: _checkpointId, ...checkpointWithoutId } = manifest;
+  if (deriveAuthorityCheckpointId(checkpointWithoutId) !== manifest.checkpointId) {
+    throw new Error("authority_checkpoint_manifest_invalid");
+  }
+  return manifest;
+};
+
+export const readSqliteAuthorityManifest = (
+  manifestPath: string,
+): SqliteAuthorityManifest => {
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
+  } catch {
+    throw new Error("authority_manifest_invalid");
+  }
+  if (isPlainObject(value) && value.manifestVersion === 1) {
+    return readSqliteAuthorityCutoverManifest(manifestPath);
+  }
+  return verifyCheckpointManifestShape(value);
+};
+
+export const describeSqliteAuthorityManifest = (
+  manifest: SqliteAuthorityManifest,
+): SqliteAuthorityManifestDescriptor => {
+  if (manifest.manifestVersion === 1) {
+    return {
+      manifest,
+      authorityLineageId: derivePhaseOneAuthorityLineageId(manifest),
+      checkpointSequence: 0,
+      checkpointId: derivePhaseOneCheckpointId(manifest),
+      createdAt: manifest.createdAt,
+      normalizedAsOf: manifest.normalizedAsOf,
+      databaseVerification: manifest.candidateVerification,
+      backupVerification: manifest.backupVerification,
+      backupFileName: manifest.backupFileName,
+      requiredCapabilities: [...manifest.requiredCapabilities],
+      unsupportedOperations: [...manifest.unsupportedOperations],
+    };
+  }
+  return {
+    manifest,
+    authorityLineageId: manifest.authorityLineageId,
+    checkpointSequence: manifest.checkpointSequence,
+    checkpointId: manifest.checkpointId,
+    predecessorCheckpointId: manifest.predecessorCheckpointId,
+    createdAt: manifest.createdAt,
+    normalizedAsOf: manifest.normalizedAsOf,
+    databaseVerification: manifest.databaseVerification,
+    backupVerification: manifest.backupVerification,
+    backupFileName: manifest.backupFileName,
+    requiredCapabilities: [...manifest.requiredCapabilities],
+    unsupportedOperations: [...manifest.unsupportedOperations],
+  };
+};
+
+export const readSqliteAuthorityManifestDescriptor = (
+  manifestPath: string,
+): SqliteAuthorityManifestDescriptor =>
+  describeSqliteAuthorityManifest(readSqliteAuthorityManifest(manifestPath));
 
 export const prepareSqliteAuthorityCutover = async (options: {
   sourceBackupPath: string;
@@ -304,7 +528,7 @@ export const prepareSqliteAuthorityCutover = async (options: {
     throw new Error("sqlite_authority_source_backup_verification_failed");
   }
   const candidateBefore = readSqliteLogicalVerificationAtPath(candidatePath, asOf);
-  assertPrototypeSchemaContract(candidateBefore, asOf);
+  assertSqliteAuthoritySchemaContract(candidateBefore, asOf);
   if (
     Object.values(candidateBefore.integritySummary).some(
       (issueCount) => issueCount !== 0,
@@ -454,10 +678,10 @@ export const evaluateSqliteAuthorityReadiness = (options: {
       options.allowRepoPathsForTests === true,
       "SQLite cutover manifest",
     );
-    const manifest = readSqliteAuthorityCutoverManifest(manifestPath);
-    const asOf = strictLocalDay(manifest.normalizedAsOf);
+    const manifest = readSqliteAuthorityManifestDescriptor(manifestPath);
+    const asOf = strictSqliteAuthorityLocalDay(manifest.normalizedAsOf);
     const candidate = readSqliteLogicalVerificationAtPath(sqlitePath, asOf);
-    if (!logicalVerificationsMatch(candidate, manifest.candidateVerification)) {
+    if (!logicalVerificationsMatch(candidate, manifest.databaseVerification)) {
       return blockedReadiness(
         ["active_sqlite_manifest_match"],
         "active_sqlite_manifest_mismatch",
@@ -526,7 +750,9 @@ export const verifySqliteAuthorityRollback = (options: {
     options.allowRepoPathsForTests === true,
     "SQLite cutover manifest",
   );
-  const cutoverManifest = readSqliteAuthorityCutoverManifest(cutoverManifestPath);
+  const cutoverManifest = readSqliteAuthorityManifestDescriptor(
+    cutoverManifestPath,
+  );
   const cutoverBackupPath = path.resolve(
     path.dirname(cutoverManifestPath),
     cutoverManifest.backupFileName,
@@ -537,7 +763,9 @@ export const verifySqliteAuthorityRollback = (options: {
     options.allowRepoPathsForTests === true,
     "SQLite pre-cutover backup",
   );
-  const cutoverAsOf = strictLocalDay(cutoverManifest.normalizedAsOf);
+  const cutoverAsOf = strictSqliteAuthorityLocalDay(
+    cutoverManifest.normalizedAsOf,
+  );
   const cutoverBackup = readSqliteLogicalVerificationAtPath(
     cutoverBackupPath,
     cutoverAsOf,
@@ -568,7 +796,7 @@ export const verifySqliteAuthorityRollback = (options: {
     "Current rollback backup manifest",
   );
   const nativeManifest = readSqliteBackupManifest(currentBackupManifestPath);
-  const asOf = strictLocalDay(nativeManifest.normalizedAsOf);
+  const asOf = strictSqliteAuthorityLocalDay(nativeManifest.normalizedAsOf);
   const current = readSqliteLogicalVerificationAtPath(currentSqlitePath, asOf);
   const currentBackup = readSqliteLogicalVerificationAtPath(currentBackupPath, asOf);
   if (

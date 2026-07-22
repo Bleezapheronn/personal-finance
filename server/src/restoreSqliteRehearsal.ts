@@ -1,5 +1,6 @@
 import path from "node:path";
 import { isDirectRun, safeCliErrorMessage } from "./lib/cli.js";
+import { restoreSqliteAuthorityCheckpointBackup } from "./lib/sqliteAuthorityCheckpoint.js";
 import { restoreSqliteNativeBackup } from "./lib/sqliteBackupRestore.js";
 
 export interface RestoreSqliteArgs {
@@ -60,12 +61,21 @@ const main = async (): Promise<void> => {
     console.error(restoreSqliteUsage);
     throw new Error("--backup, --output, and --manifest are required.");
   }
-  const result = await restoreSqliteNativeBackup({
+  const options = {
     backupPath: path.resolve(args.backup),
     outputPath: path.resolve(args.output),
     manifestPath: path.resolve(args.manifest),
     allowRepoOutputForTests: args.allowRepoOutputForTests,
-  });
+  };
+  let result;
+  try {
+    result = await restoreSqliteNativeBackup(options);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "backup_manifest_invalid") {
+      throw error;
+    }
+    result = await restoreSqliteAuthorityCheckpointBackup(options);
+  }
   console.log("SQLite restore rehearsal: PASS");
   console.log(`Backup: ${result.backupFile}`);
   console.log(`Restored: ${result.restoredFile}`);

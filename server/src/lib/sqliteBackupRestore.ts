@@ -273,6 +273,25 @@ export const restoreSqliteNativeBackup = async (options: {
   manifestPath: string;
   allowRepoOutputForTests?: boolean;
 }): Promise<SqliteRestoreResult> => {
+  const manifestPath = path.resolve(options.manifestPath);
+  assertFileExists(manifestPath, "SQLite backup manifest");
+  const manifest = readSqliteBackupManifest(manifestPath);
+  return restoreSqliteVerifiedBackup({
+    backupPath: options.backupPath,
+    outputPath: options.outputPath,
+    manifestPath,
+    expectedVerification: manifest.backupVerification,
+    allowRepoOutputForTests: options.allowRepoOutputForTests,
+  });
+};
+
+export const restoreSqliteVerifiedBackup = async (options: {
+  backupPath: string;
+  outputPath: string;
+  manifestPath: string;
+  expectedVerification: SqliteLogicalVerification;
+  allowRepoOutputForTests?: boolean;
+}): Promise<SqliteRestoreResult> => {
   const backupPath = path.resolve(options.backupPath);
   const outputPath = path.resolve(options.outputPath);
   const manifestPath = path.resolve(options.manifestPath);
@@ -289,16 +308,15 @@ export const restoreSqliteNativeBackup = async (options: {
     { path: manifestPath, label: "SQLite backup manifest" },
   ]);
 
-  const manifest = readSqliteBackupManifest(manifestPath);
-  const asOf = strictLocalDay(manifest.normalizedAsOf);
+  const asOf = strictLocalDay(options.expectedVerification.normalizedAsOf);
   const backupVerification = verifyDatabaseAtPath(backupPath, asOf);
   if (
     !logicalVerificationsMatch(
       backupVerification,
-      manifest.backupVerification,
+      options.expectedVerification,
     ) ||
     backupVerification.schemaVersion !==
-      manifest.backupVerification.schemaVersion
+      options.expectedVerification.schemaVersion
   ) {
     throw new Error("sqlite_backup_manifest_mismatch");
   }
@@ -320,7 +338,7 @@ export const restoreSqliteNativeBackup = async (options: {
     if (
       !logicalVerificationsMatch(backupVerification, restoredVerification) ||
       !logicalVerificationsMatch(
-        manifest.backupVerification,
+        options.expectedVerification,
         restoredVerification,
       )
     ) {

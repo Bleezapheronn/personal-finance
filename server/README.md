@@ -344,6 +344,76 @@ restarts requires a future approved checkpoint/reconciliation design; the
 server never treats changed SQLite content as verified merely because it came
 from the configured filename.
 
+### Authority Checkpoint Rotation Phase 2
+
+Phase 2 permits an operator to checkpoint legitimate authoritative writes
+without changing or deleting the Phase 1 cutover files. There is no automatic
+checkpoint scheduling or post-write hook. Because the prototype has no
+reliable write-quiescing control, stop both Vite and the API before checkpoint
+creation and keep them stopped until the rotated checkpoint has passed startup
+verification.
+
+Create checkpoint 1 from the current SQLite and checkpoint 0 manifest. Every
+input and output must be outside the repository, both outputs must be new, and
+the backup and new manifest must share a directory:
+
+```powershell
+npm run create:sqlite-authority-checkpoint -- -- --sqlite <current.sqlite> --current-manifest <checkpoint-0.json> --backup-output <checkpoint-1.sqlite> --manifest-output <checkpoint-1.json> --label checkpoint-1
+```
+
+The command validates the predecessor manifest and its backup, the current
+schema, required tables, SQLite integrity, transfer and snapshot linkage, and
+Budget History conflict counts. The current database may differ from its
+predecessor after supported writes. The command uses SQLite's online backup,
+proves the source stayed logically unchanged, verifies the new backup, and
+writes the new manifest with exclusive-create semantics. Any incomplete new
+output is removed on failure; the source, predecessor manifest, and predecessor
+backup are never changed.
+
+The immutable Phase 1 manifest is interpreted as checkpoint sequence `0`.
+Its lineage and checkpoint IDs are deterministic hashes of canonical,
+non-sensitive Phase 1 facts, so the file does not need to be rewritten. Each
+version 2 manifest retains that lineage ID, increments the sequence by exactly
+one, and records only the predecessor checkpoint ID. It contains the current
+and backup logical fingerprints and verifications, schema/user versions,
+capability and unsupported-operation contracts, backup basename, status, and
+an optional restricted label. It contains no predecessor path, full path, raw
+row, token, or environment value.
+
+Verify one checkpoint and optionally its active database:
+
+```powershell
+npm run verify:sqlite-authority-checkpoint -- -- --manifest <checkpoint-1.json> --sqlite <current.sqlite>
+```
+
+Verify an explicit ordered chain and the final active database. The command
+does not scan directories or follow predecessor paths:
+
+```powershell
+npm run verify:sqlite-authority-checkpoint-chain -- -- --manifest <checkpoint-0.json> --manifest <checkpoint-1.json> --manifest <checkpoint-2.json> --sqlite <current.sqlite>
+```
+
+Configure `PERSONAL_FINANCE_SQLITE_CUTOVER_MANIFEST_PATH` with the latest
+checkpoint manifest, start the API, and run `verify:sqlite-authority`. Startup
+accepts either the original Phase 1 manifest or a valid version 2 checkpoint,
+and still fails closed if the active SQLite, adjacent checkpoint backup,
+manifest, schema, or required capabilities do not match.
+
+To roll back to an earlier SQLite checkpoint, stop Vite and the API, preserve
+the newer current database with a new native backup when possible, and restore
+the selected checkpoint backup to a fresh path:
+
+```powershell
+npm run restore:sqlite-rehearsal -- -- --backup <checkpoint-1.sqlite> --manifest <checkpoint-1.json> --output <fresh-checkpoint-1-restore.sqlite>
+```
+
+Point the server at that fresh database and the matching checkpoint manifest,
+start it, run authority verification, then start Vite and confirm the expected
+state. Never overwrite the newer database, backup, or manifest. Rollback to
+unchanged Dexie remains available. Checkpoints do not synchronize SQLite with
+Dexie, reconcile divergent histories, upload files, or authorize unsupported
+operations; all files remain operator-managed outside Git.
+
 ## API Smoke Test
 
 The API smoke-test CLI checks a running local API server. Start the server first with `PERSONAL_FINANCE_SQLITE_PATH` pointing at a verified disposable SQLite database outside the repository.

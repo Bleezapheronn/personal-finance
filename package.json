@@ -14,6 +14,9 @@
     "prepare:sqlite-authority-cutover": "npm --prefix server run prepare:sqlite-authority-cutover --",
     "verify:sqlite-authority": "npm --prefix server run verify:sqlite-authority --",
     "verify:sqlite-authority-rollback": "npm --prefix server run verify:sqlite-authority-rollback --",
+    "create:sqlite-authority-checkpoint": "npm --prefix server run create:sqlite-authority-checkpoint --",
+    "verify:sqlite-authority-checkpoint": "npm --prefix server run verify:sqlite-authority-checkpoint --",
+    "verify:sqlite-authority-checkpoint-chain": "npm --prefix server run verify:sqlite-authority-checkpoint-chain --",
     "test.e2e": "cypress run",
     "test.unit": "vitest",
     "lint": "eslint"

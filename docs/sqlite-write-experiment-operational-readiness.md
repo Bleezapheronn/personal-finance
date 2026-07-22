@@ -314,6 +314,82 @@ post-write native backup, then return to Dexie mode. A future long-lived
 authority phase needs a separately approved checkpoint or reconciliation
 design; Phase 1 does not silently bless changed content.
 
+## Authority Checkpoint Rotation Phase 2
+
+Checkpoint rotation is an explicit offline operator step for preserving and
+authorizing supported writes made after a prior authority checkpoint. It does
+not edit an old manifest, overwrite an old backup, schedule work, run after
+each write, or change the default Dexie backend.
+
+There is no reliable application write-quiescing switch. Use this required
+quiet-period procedure:
+
+1. Stop Vite and the API.
+2. Confirm the current SQLite, predecessor authority manifest, and predecessor
+   backup are preserved outside Git.
+3. Create the next checkpoint at fresh output paths:
+
+   ```powershell
+   npm run create:sqlite-authority-checkpoint -- -- --sqlite <current.sqlite> --current-manifest <current-authority-manifest.json> --backup-output <next-checkpoint.sqlite> --manifest-output <next-checkpoint.json> [--label <safe-label>]
+   ```
+
+4. Verify the new checkpoint and the explicit chain:
+
+   ```powershell
+   npm run verify:sqlite-authority-checkpoint -- -- --manifest <next-checkpoint.json> --sqlite <current.sqlite>
+   npm run verify:sqlite-authority-checkpoint-chain -- -- --manifest <checkpoint-0.json> --manifest <checkpoint-1.json> [--manifest <checkpoint-n.json>] --sqlite <current.sqlite>
+   ```
+
+5. Configure the API with the same current SQLite and the new manifest, start
+   it, and run `verify:sqlite-authority`.
+6. Start Vite in authoritative mode, confirm the persistent banner and expected
+   data, then resume writes.
+
+SQLite online backup captures a transactionally consistent state, but writes
+that commit after that snapshot are not represented. That is why the services
+must stay stopped until the new checkpoint is the configured, verified startup
+state.
+
+The original Phase 1 manifest is checkpoint `0`. Its stable lineage ID and
+checkpoint ID are derived from canonical non-sensitive manifest facts without
+rewriting it. Later manifests use version 2, retain the lineage, increase the
+sequence by one, and reference the prior checkpoint ID without recording its
+path. They include logical database and native-backup verification, table and
+derived fingerprints, integrity summaries, schema/user versions, capability
+contracts, a backup basename, status, and a recovery-note identifier. Optional
+labels are restricted to short alphanumeric, dot, underscore, and hyphen text.
+
+The checkpoint creator validates that the supplied predecessor manifest and
+its adjacent backup are real members of the stated lineage. Since SQLite does
+not contain an embedded lineage marker, it cannot cryptographically prove that
+an arbitrarily supplied current database descended from that predecessor once
+legitimate writes have changed its fingerprint. The required stopped-service
+procedure, explicit predecessor selection, supported schema contract, zero
+structural/history conflict counts, immutable files, and subsequent chain and
+startup verification are the Phase 2 provenance boundary.
+
+Rollback to a selected SQLite checkpoint remains non-destructive:
+
+1. Stop Vite and the API.
+2. Preserve the newer current SQLite with a native backup and manifest when
+   possible.
+3. Restore the selected checkpoint backup into a fresh database path using its
+   matching authority manifest:
+
+   ```powershell
+   npm run restore:sqlite-rehearsal -- -- --backup <selected-checkpoint.sqlite> --manifest <selected-checkpoint.json> --output <fresh-restored.sqlite>
+   ```
+
+4. Configure the fresh restored path and selected checkpoint manifest.
+5. Start the API and run authority verification.
+6. Start Vite, confirm expected data, and retain every newer database,
+   checkpoint, and backup for possible reconciliation.
+
+Rollback to unchanged Dexie remains the Phase 1 procedure. Phase 2 adds no
+automatic backup retention, checkpoint deletion, synchronization, dual-write,
+cloud upload, arbitrary filesystem endpoint, UI path picker, schema migration,
+snapshot pruning/repair, or new entity mutation route.
+
 ## Not Ready For Authority Migration
 
 SQLite must not become authoritative until all of the following are complete:
