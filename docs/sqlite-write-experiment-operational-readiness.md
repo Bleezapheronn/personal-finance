@@ -95,7 +95,10 @@ prints no token, URL, path, filename, row, or raw response.
 
 The following work is intentionally unsupported or deferred:
 
-- Recipient delete, merge, and transaction recipient-reference reassignment.
+- Recipient deletion is unused-only. Explicit one-source/one-target merge may
+  reassign exact `transactions`, `budgets`, and `budgetSnapshots` recipient IDs
+  only when the optional Phase 2 capability is enabled. Bulk, automatic,
+  fuzzy, chained, or inferred Recipient merge remains unsupported.
 - Bucket or Category delete, bucket reorder, unsupported active-state changes,
   cascades, and reference rewrites.
 - Account delete, merge, active-state changes, image writes, reconciliation,
@@ -301,8 +304,10 @@ Transaction Details, and Dexie-touching diagnostics remain blocked or bypassed.
 Snapshot generation remains only the explicit protected SQLite operation; it
 does not run automatically.
 
-All unsupported operations listed above remain unavailable. In particular,
-authority does not enable recipient delete/merge, lookup deletion/reorder,
+All unsupported operations listed above remain unavailable unless removed by
+an explicitly enabled optional capability. Recipient delete/merge remains off
+by default and becomes available only through its separate dry-run-first
+capability. Authority does not otherwise enable lookup deletion/reorder,
 Account reference migration, Transaction deletion or transfer repair, Budget
 deletion, snapshot edit/delete/prune/repair/relink, SMS import mutation, or any
 fallback to a Dexie implementation.

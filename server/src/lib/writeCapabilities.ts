@@ -6,6 +6,7 @@ import {
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
+  areRecipientDeleteMergeWritesEnabled,
   areSmsTemplateWritesEnabled,
   areTransactionBasicWritesEnabled,
   areTransactionCostBudgetWritesEnabled,
@@ -30,6 +31,7 @@ export type WriteCapabilityKey = (typeof WRITE_CAPABILITY_KEYS)[number];
 export const OPTIONAL_WRITE_CAPABILITY_KEYS = [
   "transactionDeleteWrites",
   "budgetLifecycleWrites",
+  "recipientDeleteMergeWrites",
 ] as const;
 export type OptionalWriteCapabilityKey =
   (typeof OPTIONAL_WRITE_CAPABILITY_KEYS)[number];
@@ -62,6 +64,7 @@ export const SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS = [
 export const readWriteCapabilities = (): WriteCapabilities => ({
   recipientActiveStateWrites: areRecipientActiveStateWritesEnabled(),
   recipientCreateUpdateWrites: areRecipientCreateUpdateWritesEnabled(),
+  recipientDeleteMergeWrites: areRecipientDeleteMergeWritesEnabled(),
   bucketCategoryWrites: areBucketCategoryWritesEnabled(),
   accountWrites: areAccountWritesEnabled(),
   transactionBasicWrites: areTransactionBasicWritesEnabled(),
@@ -99,9 +102,19 @@ export const buildWriteCapabilitiesResponse = (
   missingRequirements: authorityStatus?.missingRequirements ?? [],
   capabilities: readWriteCapabilities(),
   unsupportedOperations: SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS.filter(
-    (operation) =>
-      operation !== "transaction_delete" ||
-      !areTransactionDeleteWritesEnabled(),
+    (operation) => {
+      if (operation === "transaction_delete") {
+        return !areTransactionDeleteWritesEnabled();
+      }
+      if (
+        operation === "recipient_delete" ||
+        operation === "recipient_merge" ||
+        operation === "recipient_reference_reassignment"
+      ) {
+        return !areRecipientDeleteMergeWritesEnabled();
+      }
+      return true;
+    },
   ),
   safety: {
     endpointReadOnly: true as const,

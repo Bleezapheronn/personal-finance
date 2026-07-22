@@ -114,6 +114,21 @@ const main = async (): Promise<void> => {
         const value = await getJson("/prototype/write-capabilities");
         const capabilities = value.capabilities as Record<string, unknown> | undefined;
         const unsupportedOperations = value.unsupportedOperations;
+        const expectedUnsupportedOperations = capabilities
+          ? SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS.filter((operation) => {
+              if (operation === "transaction_delete") {
+                return capabilities.transactionDeleteWrites !== true;
+              }
+              if (
+                operation === "recipient_delete" ||
+                operation === "recipient_merge" ||
+                operation === "recipient_reference_reassignment"
+              ) {
+                return capabilities.recipientDeleteMergeWrites !== true;
+              }
+              return true;
+            })
+          : [];
         if (
           value.storageMode !== "sqlite-authoritative" ||
           value.authoritative !== true ||
@@ -125,16 +140,10 @@ const main = async (): Promise<void> => {
           Object.keys(capabilities).length !==
             WRITE_CAPABILITY_KEYS.length + OPTIONAL_WRITE_CAPABILITY_KEYS.length ||
           !Array.isArray(unsupportedOperations) ||
-          SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS.filter(
-            (operation) =>
-              operation !== "transaction_delete" ||
-              capabilities.transactionDeleteWrites !== true,
-          ).some(
+          expectedUnsupportedOperations.some(
             (operation) => !unsupportedOperations.includes(operation),
           ) ||
-          unsupportedOperations.length !==
-            SQLITE_REHEARSAL_UNSUPPORTED_OPERATIONS.length -
-              (capabilities.transactionDeleteWrites === true ? 1 : 0)
+          unsupportedOperations.length !== expectedUnsupportedOperations.length
         ) throw new Error("authority_capabilities_invalid");
       },
     },

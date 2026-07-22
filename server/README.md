@@ -33,6 +33,10 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `POST /prototype/repositories/recipients/write/update` (experimental, disabled by default)
 - `POST /prototype/repositories/recipients/write/activate` (experimental, disabled by default)
 - `POST /prototype/repositories/recipients/write/deactivate` (experimental, disabled by default)
+- `POST /prototype/repositories/recipients/delete/dry-run`
+- `POST /prototype/repositories/recipients/delete/write` (experimental, disabled by default)
+- `POST /prototype/repositories/recipients/merge/dry-run`
+- `POST /prototype/repositories/recipients/merge/write` (experimental, disabled by default)
 - `POST /prototype/repositories/buckets/dry-run/create`
 - `POST /prototype/repositories/buckets/dry-run/update`
 - `POST /prototype/repositories/buckets/write/create` (experimental, disabled by default)
@@ -690,6 +694,15 @@ POST /prototype/repositories/recipients/write/activate
 POST /prototype/repositories/recipients/write/deactivate
 ```
 
+Recipient lifecycle Phase 2 adds separate dry-run-first routes:
+
+```text
+POST /prototype/repositories/recipients/delete/dry-run
+POST /prototype/repositories/recipients/delete/write
+POST /prototype/repositories/recipients/merge/dry-run
+POST /prototype/repositories/recipients/merge/write
+```
+
 They are disabled by default. Create/update writes require the server process
 to be started with:
 
@@ -702,6 +715,18 @@ Activate/deactivate writes require the separate active-state flag:
 ```text
 PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true
 ```
+
+Delete/merge writes require their own optional flag:
+
+```text
+PERSONAL_FINANCE_ENABLE_RECIPIENT_DELETE_MERGE_WRITES=true
+```
+
+The optional protected capability is `recipientDeleteMergeWrites`. It is not
+part of the original authority manifest's ten required capabilities, so older
+cutover and checkpoint manifests remain valid. The corresponding frontend
+experiment is
+`VITE_PERSONAL_FINANCE_RECIPIENT_DELETE_MERGE_WRITE_EXPERIMENT=true`.
 
 The endpoints are protected by the same token and origin guards as the
 prototype repository reads. They mutate only the configured disposable SQLite
@@ -774,6 +799,25 @@ names, aliases, contact values, token values, SQLite paths, backup paths, or
 transaction details. If the write flag is not exactly `true`, the endpoint
 returns a safe disabled response and does not open a writable database.
 
+Delete is allowed only when the complete supported reference count is zero.
+Supported exact recipient ID references are `transactions.recipientId`,
+`budgets.recipientId`, and `budgetSnapshots.recipientId`; SMS template pattern
+text is not a recipient foreign key. A referenced recipient must be merged
+rather than deleted. Merge updates only those exact stored IDs and deletes the
+source in one SQLite transaction. The selected target record wins and remains
+byte-for-byte unchanged. No names, aliases, contact values, timestamps,
+financial fields, Budget links, transfer links, or snapshot lifecycle fields
+are combined or rewritten. Unknown or malformed reference locations fail
+closed; there is no fuzzy selection, automatic duplicate merge, bulk merge,
+repair, cascade, or Dexie mutation.
+
+Both lifecycle writes require a matching reviewed dry-run fingerprint and an
+internal confirmation value. Responses expose counts by entity but no names,
+row IDs, or raw rows. Successful authoritative delete/merge changes the
+logical SQLite fingerprint. Stop services and manually rotate the authority
+checkpoint before restart; no route writes manifests or backups. Recovery uses
+the previous verified native backup or checkpoint rollback.
+
 Normal `smoke:api` remains non-mutating. Successful write smoke is opt-in and
 mutates the disposable SQLite database:
 
@@ -781,13 +825,16 @@ mutates the disposable SQLite database:
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-recipient-create-update-write-smoke
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-recipient-activate-write-smoke
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-recipient-deactivate-write-smoke
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-recipient-delete-merge-write-smoke
 ```
 
 Run that opt-in smoke only against a disposable SQLite database imported from a
 fresh backup. After a successful write smoke, delete/re-import the SQLite
 database from the backup before using it as a clean parity baseline again.
-Delete, merge, broad frontend write adapters, dual-write, and
-transaction recipient-reference mutation remain future work.
+The lifecycle mutation smoke also requires the create/update flag so it can
+create isolated fixtures. It dirties the disposable database. Broad write
+repositories, dual-write, automatic duplicate selection, merge chains, and
+authority migration remain unsupported.
 
 ## Experimental Bucket And Category Writes
 

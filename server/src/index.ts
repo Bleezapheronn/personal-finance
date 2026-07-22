@@ -9,6 +9,7 @@ import {
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
+  areRecipientDeleteMergeWritesEnabled,
   areSmsTemplateWritesEnabled,
   areTransactionBasicWritesEnabled,
   areTransactionCostBudgetWritesEnabled,
@@ -71,6 +72,14 @@ import {
   validateRecipientUpdateWritePayload,
   updateRecipientRealWrite,
 } from "./lib/recipientWrite.js";
+import {
+  recipientLifecycleDisabledResponse,
+  recipientLifecycleDryRun,
+  recipientLifecycleRealWrite,
+  recipientLifecycleRequestErrorResponse,
+  RecipientLifecycleRequestError,
+  validateRecipientLifecyclePayload,
+} from "./lib/recipientLifecycle.js";
 import {
   bucketCategoryDryRunRequestErrorResponse,
   BucketCategoryDryRunRequestError,
@@ -536,9 +545,19 @@ server.get("/prototype/sqlite/authority-readiness", async () => ({
   missingRequirements: [...sqliteAuthorityReadiness.missingRequirements],
   requiredCapabilities: [...sqliteAuthorityReadiness.requiredCapabilities],
   unsupportedOperations: sqliteAuthorityReadiness.unsupportedOperations.filter(
-    (operation) =>
-      operation !== "transaction_delete" ||
-      !areTransactionDeleteWritesEnabled(),
+    (operation) => {
+      if (operation === "transaction_delete") {
+        return !areTransactionDeleteWritesEnabled();
+      }
+      if (
+        operation === "recipient_delete" ||
+        operation === "recipient_merge" ||
+        operation === "recipient_reference_reassignment"
+      ) {
+        return !areRecipientDeleteMergeWritesEnabled();
+      }
+      return true;
+    },
   ),
   code: sqliteAuthorityReadiness.code,
 }));
@@ -2601,6 +2620,114 @@ server.post<{ Body: unknown }>(
     }
   },
 );
+
+for (const action of ["delete", "merge"] as const) {
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/recipients/${action}/dry-run`,
+    async (request, reply) => {
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code: statusCode === 503
+            ? "sqlite_unavailable"
+            : `recipient_${action}_dry_run_failed`,
+        });
+      }
+      if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+
+      try {
+        const result = recipientLifecycleDryRun(opened.db, request.body, action);
+        if (
+          result.code === "recipient_not_found" ||
+          result.code === "source_recipient_not_found" ||
+          result.code === "target_recipient_not_found"
+        ) {
+          return reply.code(404).send(result);
+        }
+        if (action === "delete" && result.code === "recipient_referenced") {
+          return result;
+        }
+        return result.ok ? result : reply.code(409).send(result);
+      } catch (error) {
+        if (error instanceof RecipientLifecycleRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(recipientLifecycleRequestErrorResponse(action, error.code));
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `recipient_${action}_dry_run_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/recipients/${action}/write`,
+    async (request, reply) => {
+      try {
+        validateRecipientLifecyclePayload(request.body, action, true);
+      } catch (error) {
+        if (error instanceof RecipientLifecycleRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(recipientLifecycleRequestErrorResponse(action, error.code));
+        }
+        return reply
+          .code(400)
+          .send(recipientLifecycleRequestErrorResponse(action, "recipient_lifecycle_write_invalid"));
+      }
+
+      if (!areRecipientDeleteMergeWritesEnabled()) {
+        return reply.code(403).send(recipientLifecycleDisabledResponse(action));
+      }
+
+      let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+      try {
+        opened = openConfiguredWritableDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code: statusCode === 503
+            ? "sqlite_unavailable"
+            : `recipient_${action}_write_failed`,
+        });
+      }
+      if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+
+      try {
+        const result = recipientLifecycleRealWrite(opened.db, request.body, action);
+        if (
+          result.code === "recipient_not_found" ||
+          result.code === "source_recipient_not_found" ||
+          result.code === "target_recipient_not_found"
+        ) {
+          return reply.code(404).send(result);
+        }
+        return result.ok ? result : reply.code(409).send(result);
+      } catch (error) {
+        if (error instanceof RecipientLifecycleRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(recipientLifecycleRequestErrorResponse(action, error.code));
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `recipient_${action}_write_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+}
 
 const smsTemplateActions: SmsTemplateAction[] = [
   "create",

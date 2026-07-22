@@ -24,6 +24,9 @@ import {
   IonFab,
   IonFabButton,
   IonToast,
+  IonModal,
+  IonSelect,
+  IonSelectOption,
 } from "@ionic/react";
 import {
   add,
@@ -33,6 +36,7 @@ import {
   closeCircleOutline,
   closeOutline,
   warningOutline,
+  gitMergeOutline,
 } from "ionicons/icons";
 import { db } from "../db";
 import {
@@ -59,6 +63,15 @@ import {
   updateRecipientInDisposableSqlite,
 } from "../repositories/http/recipientWriteExperiment";
 import {
+  dryRunRecipientDelete,
+  dryRunRecipientMerge,
+  isRecipientDeleteMergeWriteExperimentEnabled,
+  recipientLifecycleErrorCode,
+  writeRecipientDelete,
+  writeRecipientMerge,
+  type RecipientLifecycleResponse,
+} from "../repositories/http/recipientDeleteMergeWriteExperiment";
+import {
   booleanValue,
   type DevPreviewListResult,
   hasValue,
@@ -76,7 +89,12 @@ type DeleteState =
   | { type: "none" }
   | { type: "used"; recipientId: number; recipientName: string }
   | { type: "used_deactivated"; recipientId: number; recipientName: string }
-  | { type: "delete"; recipientId: number; recipientName: string };
+  | {
+      type: "delete";
+      recipientId: number;
+      recipientName: string;
+      sqlitePlanFingerprint?: string;
+    };
 
 interface SelectedReadRecipientPreviewRow {
   id?: number;
@@ -172,6 +190,9 @@ const RecipientsManagement: React.FC = () => {
     Array<[Recipient, Recipient]>
   >([]);
   const [showMergeModal, setShowMergeModal] = useState(false);
+  const [showSqliteMergeModal, setShowSqliteMergeModal] = useState(false);
+  const [sqliteMergeSource, setSqliteMergeSource] = useState<Recipient | null>(null);
+  const [sqliteMergeTargetId, setSqliteMergeTargetId] = useState<number>();
   const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
   const [selectedReadPreview, setSelectedReadPreview] =
     useState<SelectedReadRecipientsPreview | null>(null);
@@ -185,6 +206,8 @@ const RecipientsManagement: React.FC = () => {
   const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
   const recipientsReadExperimentEnabled = isRecipientsReadExperimentEnabled();
   const recipientsWriteExperimentEnabled = isRecipientsWriteExperimentEnabled();
+  const recipientDeleteMergeWriteExperimentEnabled =
+    isRecipientDeleteMergeWriteExperimentEnabled();
   const recipientsSqliteWriteExperimentActive =
     (recipientsWriteExperimentEnabled && selectedBackend === "http-readonly") ||
     (rehearsalSelected && rehearsal.ready);
@@ -194,6 +217,11 @@ const RecipientsManagement: React.FC = () => {
       selectedBackend === "http-readonly");
   const recipientsHttpReadonlyWithoutWrites =
     recipientsHttpSelectedReadActive && !recipientsSqliteWriteExperimentActive;
+  const recipientDeleteMergeWriteExperimentActive =
+    rehearsalSelected &&
+    rehearsal.ready &&
+    rehearsal.recipientDeleteMergeWritesAvailable &&
+    recipientDeleteMergeWriteExperimentEnabled;
 
   useEffect(() => {
     fetchRecipients();
@@ -225,6 +253,33 @@ const RecipientsManagement: React.FC = () => {
     setToastMessage(message);
     setShowToast(true);
     return message;
+  };
+
+  const showSafeRecipientLifecycleError = (error: unknown): void => {
+    const code = recipientLifecycleErrorCode(error);
+    const message = code === "recipient_delete_merge_writes_disabled"
+      ? "Server recipient delete/merge capability is disabled."
+      : code === "recipient_lifecycle_plan_stale"
+        ? "Recipient references changed after review. Reload and review again."
+        : `Recipient lifecycle operation failed: ${code}`;
+    setToastMessage(message);
+    setShowToast(true);
+  };
+
+  const referenceSummary = (plan: RecipientLifecycleResponse): string =>
+    `transactions=${plan.referenceCountsByEntity.transactions}, ` +
+    `budgets=${plan.referenceCountsByEntity.budgets}, ` +
+    `snapshots=${plan.referenceCountsByEntity.budgetSnapshots}`;
+
+  const refreshRecipientLifecycleReads = async (): Promise<void> => {
+    const repositories = getSelectedReadRepositories(selectedBackend);
+    await Promise.all([
+      repositories.recipients.list({ limit: RECIPIENTS_READ_EXPERIMENT_LIMIT, offset: 0 }),
+      repositories.transactions.list({ limit: 1, offset: 0 }),
+      repositories.budgets.list({ limit: 1, offset: 0 }),
+      repositories.budgetSnapshots.list({ limit: 1, offset: 0 }),
+    ]);
+    await fetchRecipients();
   };
 
   const handleSqliteRecipientSave = async (
@@ -425,6 +480,46 @@ const RecipientsManagement: React.FC = () => {
    * handleDeleteRecipient - Removes a recipient from the database
    */
   const handleDeleteRecipient = async (recipientId: number) => {
+    if (recipientDeleteMergeWriteExperimentActive) {
+      if (
+        deleteState.type !== "delete" ||
+        !deleteState.sqlitePlanFingerprint
+      ) {
+        setToastMessage("Recipient delete requires a fresh reviewed dry-run.");
+        setShowToast(true);
+        return;
+      }
+      let sqliteMutated = false;
+      try {
+        setLoading(true);
+        await writeRecipientDelete(
+          recipientId,
+          deleteState.sqlitePlanFingerprint,
+        );
+        sqliteMutated = true;
+        setDeleteState({ type: "none" });
+        await refreshRecipientLifecycleReads();
+        setToastMessage(
+          rehearsal.authoritativeMode
+            ? "Recipient deleted from authoritative SQLite. Rotate the checkpoint before restart."
+            : "Unused recipient deleted from disposable SQLite.",
+        );
+        setShowToast(true);
+      } catch (error) {
+        if (sqliteMutated) {
+          setToastMessage(
+            "SQLite may have changed, but selected-read refresh failed. Reload before retrying.",
+          );
+          setShowToast(true);
+        } else {
+          showSafeRecipientLifecycleError(error);
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (recipientsHttpSelectedReadActive) {
       setToastMessage("Delete is not available in the recipients SQLite write experiment");
       setShowToast(true);
@@ -690,6 +785,36 @@ const RecipientsManagement: React.FC = () => {
    * If unused: confirm deletion
    */
   const initiateDeleteRecipient = async (recipient: Recipient) => {
+    if (recipientDeleteMergeWriteExperimentActive) {
+      if (!recipient.id) {
+        setToastMessage("Recipient lifecycle operation failed: recipient_id_missing");
+        setShowToast(true);
+        return;
+      }
+      try {
+        setLoading(true);
+        const plan = await dryRunRecipientDelete(recipient.id);
+        if (!plan.eligible) {
+          setToastMessage(
+            `Recipient is referenced (${referenceSummary(plan)}). Merge it instead of deleting it.`,
+          );
+          setShowToast(true);
+          return;
+        }
+        setDeleteState({
+          type: "delete",
+          recipientId: recipient.id,
+          recipientName: recipient.name,
+          sqlitePlanFingerprint: plan.planFingerprint,
+        });
+      } catch (error) {
+        showSafeRecipientLifecycleError(error);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (recipientsHttpSelectedReadActive) {
       setToastMessage("Delete is not available in the recipients SQLite write experiment");
       setShowToast(true);
@@ -722,6 +847,62 @@ const RecipientsManagement: React.FC = () => {
         recipientId: recipient.id!,
         recipientName: recipient.name,
       });
+    }
+  };
+
+  const openSqliteMerge = (source: Recipient) => {
+    setSqliteMergeSource(source);
+    setSqliteMergeTargetId(undefined);
+    setShowSqliteMergeModal(true);
+  };
+
+  const handleSqliteMerge = async () => {
+    if (!sqliteMergeSource?.id || !sqliteMergeTargetId) {
+      setToastMessage("Choose a distinct target recipient before reviewing the merge.");
+      setShowToast(true);
+      return;
+    }
+    let sqliteMutated = false;
+    try {
+      setLoading(true);
+      const plan = await dryRunRecipientMerge(
+        sqliteMergeSource.id,
+        sqliteMergeTargetId,
+      );
+      const confirmed = window.confirm(
+        `Merge this source recipient into the selected target?\n\n` +
+          `References to move: ${plan.sourceReferenceCount}\n` +
+          `${referenceSummary(plan)}\n\n` +
+          "The source will be permanently removed. The target record will remain unchanged.",
+      );
+      if (!confirmed) return;
+      await writeRecipientMerge(
+        sqliteMergeSource.id,
+        sqliteMergeTargetId,
+        plan.planFingerprint!,
+      );
+      sqliteMutated = true;
+      setShowSqliteMergeModal(false);
+      setSqliteMergeSource(null);
+      setSqliteMergeTargetId(undefined);
+      await refreshRecipientLifecycleReads();
+      setToastMessage(
+        rehearsal.authoritativeMode
+          ? "Recipient merged in authoritative SQLite. Rotate the checkpoint before restart."
+          : "Recipient merged in disposable SQLite.",
+      );
+      setShowToast(true);
+    } catch (error) {
+      if (sqliteMutated) {
+        setToastMessage(
+          "SQLite may have changed, but selected-read refresh failed. Reload before retrying.",
+        );
+        setShowToast(true);
+      } else {
+        showSafeRecipientLifecycleError(error);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -822,7 +1003,9 @@ const RecipientsManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
-        {(recipientsReadExperimentEnabled || recipientsWriteExperimentEnabled) && (
+        {(recipientsReadExperimentEnabled ||
+          recipientsWriteExperimentEnabled ||
+          recipientDeleteMergeWriteExperimentEnabled) && (
           <IonCard
             style={{
               marginBottom: "16px",
@@ -853,7 +1036,9 @@ const RecipientsManagement: React.FC = () => {
                   >
                     {recipientsSqliteWriteExperimentActive
                       ? rehearsal.authoritativeMode
-                        ? "SQLite authoritative mode is active. Supported Recipient create/update/active-state writes use the verified local SQLite database; delete and merge remain disabled."
+                        ? recipientDeleteMergeWriteExperimentActive
+                          ? "SQLite authoritative mode is active. Recipient delete and merge use dry-run-first exact-reference lifecycle writes."
+                          : "SQLite authoritative mode is active. Recipient create/update/active-state writes remain available; delete and merge require their separate capability and frontend flag."
                         : "Recipients SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
                       : recipientsHttpReadonlyWithoutWrites
                         ? "Recipients read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie or enable the dev write experiment to edit."
@@ -866,7 +1051,9 @@ const RecipientsManagement: React.FC = () => {
                       recipientsReadExperimentCount > recipients.length &&
                       `; loaded first ${recipients.length} of ${recipientsReadExperimentCount} recipients for this experiment.`}
                     {recipientsSqliteWriteExperimentActive &&
-                      " Delete and merge remain unavailable."}
+                      (recipientDeleteMergeWriteExperimentActive
+                        ? " Delete is unused-only; merge moves exact stored IDs and preserves the target."
+                        : " Delete and merge remain unavailable.")}
                   </p>
                 </div>
               </div>
@@ -1085,7 +1272,8 @@ const RecipientsManagement: React.FC = () => {
                                 />
                               </IonButton>
 
-                              {!recipientsHttpSelectedReadActive && (
+                              {(!recipientsHttpSelectedReadActive ||
+                                recipientDeleteMergeWriteExperimentActive) && (
                                 <IonButton
                                   fill="clear"
                                   size="small"
@@ -1095,6 +1283,17 @@ const RecipientsManagement: React.FC = () => {
                                   }
                                 >
                                   <IonIcon icon={trashOutline} />
+                                </IonButton>
+                              )}
+                              {recipientDeleteMergeWriteExperimentActive && (
+                                <IonButton
+                                  fill="clear"
+                                  size="small"
+                                  color="warning"
+                                  title="Merge Recipient"
+                                  onClick={() => openSqliteMerge(recipient)}
+                                >
+                                  <IonIcon icon={gitMergeOutline} />
                                 </IonButton>
                               )}
                             </IonCol>
@@ -1157,9 +1356,13 @@ const RecipientsManagement: React.FC = () => {
           isOpen={deleteState.type === "delete"}
           onDidDismiss={() => setDeleteState({ type: "none" })}
           header="Confirm Delete"
-          message={`Are you sure you want to delete "${
-            deleteState.type === "delete" ? deleteState.recipientName : ""
-          }"? This action cannot be undone.`}
+          message={recipientDeleteMergeWriteExperimentActive
+            ? `The dry-run confirmed that "${
+                deleteState.type === "delete" ? deleteState.recipientName : ""
+              }" has no supported references. Delete it from SQLite? Rotate the authority checkpoint before restart.`
+            : `Are you sure you want to delete "${
+                deleteState.type === "delete" ? deleteState.recipientName : ""
+              }"? This action cannot be undone.`}
           buttons={[
             {
               text: "Cancel",
@@ -1226,6 +1429,71 @@ const RecipientsManagement: React.FC = () => {
             }
           />
         )}
+
+        <IonModal
+          isOpen={showSqliteMergeModal}
+          onDidDismiss={() => {
+            setShowSqliteMergeModal(false);
+            setSqliteMergeSource(null);
+            setSqliteMergeTargetId(undefined);
+          }}
+        >
+          <IonHeader>
+            <IonToolbar>
+              <IonTitle>Merge Recipient</IonTitle>
+              <IonButtons slot="end">
+                <IonButton onClick={() => setShowSqliteMergeModal(false)}>
+                  Close
+                </IonButton>
+              </IonButtons>
+            </IonToolbar>
+          </IonHeader>
+          <IonContent className="ion-padding">
+            <IonCard color="warning">
+              <IonCardContent>
+                <IonText>
+                  <h3>SQLite-only dry-run-first merge</h3>
+                  <p>
+                    The selected source will be permanently removed. Exact
+                    Transaction, Budget, and Budget Snapshot recipient IDs move
+                    to the target; the target record remains unchanged.
+                  </p>
+                </IonText>
+              </IonCardContent>
+            </IonCard>
+            <IonItem>
+              <IonLabel position="stacked">Source</IonLabel>
+              <p>{sqliteMergeSource?.name ?? "-"}</p>
+            </IonItem>
+            <IonItem>
+              <IonLabel position="stacked">Target Recipient</IonLabel>
+              <IonSelect
+                value={sqliteMergeTargetId}
+                placeholder="Choose target"
+                onIonChange={(event) =>
+                  setSqliteMergeTargetId(Number(event.detail.value))
+                }
+              >
+                {recipients
+                  .filter((recipient) => recipient.id !== sqliteMergeSource?.id)
+                  .map((recipient) => (
+                    <IonSelectOption key={recipient.id} value={recipient.id}>
+                      {recipient.name}
+                    </IonSelectOption>
+                  ))}
+              </IonSelect>
+            </IonItem>
+            <IonButton
+              expand="block"
+              color="danger"
+              disabled={!sqliteMergeTargetId || loading}
+              onClick={handleSqliteMerge}
+              style={{ marginTop: "16px" }}
+            >
+              Review and Merge
+            </IonButton>
+          </IonContent>
+        </IonModal>
 
         {/* MERGE MODAL */}
         {!recipientsHttpSelectedReadActive && (

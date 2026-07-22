@@ -20,6 +20,7 @@ import {
   BUDGET_SNAPSHOT_GENERATION_CONFIRMATION,
 } from "./lib/budgetSnapshotGenerationWrite.js";
 import { BUDGET_LIFECYCLE_CONFIRMATIONS } from "./lib/budgetLifecycle.js";
+import { RECIPIENT_LIFECYCLE_CONFIRMATIONS } from "./lib/recipientLifecycle.js";
 import {
   calculateBudgetOccurrenceSchedule,
   calculateMissingBudgetSnapshotPlan,
@@ -51,6 +52,7 @@ interface SmokeArgs {
   allowRecipientActivateWriteSmoke: boolean;
   allowRecipientDeactivateWriteSmoke: boolean;
   allowRecipientCreateUpdateWriteSmoke: boolean;
+  allowRecipientDeleteMergeWriteSmoke: boolean;
   allowBucketCategoryWriteSmoke: boolean;
   allowAccountWriteSmoke: boolean;
   allowTransactionBasicWriteSmoke: boolean;
@@ -150,6 +152,8 @@ Options:
                          Opt in to one disposable SQLite recipient deactivate write smoke.
   --allow-recipient-create-update-write-smoke
                          Opt in to disposable SQLite recipient create/update write smoke.
+  --allow-recipient-delete-merge-write-smoke
+                         Opt in to unused-delete and exact-reference merge write smoke.
   --allow-bucket-category-write-smoke
                          Opt in to disposable SQLite bucket/category create/update write smoke.
   --allow-account-write-smoke
@@ -179,6 +183,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowRecipientActivateWriteSmoke: false,
     allowRecipientDeactivateWriteSmoke: false,
     allowRecipientCreateUpdateWriteSmoke: false,
+    allowRecipientDeleteMergeWriteSmoke: false,
     allowBucketCategoryWriteSmoke: false,
     allowAccountWriteSmoke: false,
     allowTransactionBasicWriteSmoke: false,
@@ -236,6 +241,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-recipient-create-update-write-smoke") {
       args.allowRecipientCreateUpdateWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-recipient-delete-merge-write-smoke") {
+      args.allowRecipientDeleteMergeWriteSmoke = true;
       continue;
     }
 
@@ -882,6 +892,7 @@ const buildChecks = (
   allowRecipientActivateWriteSmoke: boolean,
   allowRecipientDeactivateWriteSmoke: boolean,
   allowRecipientCreateUpdateWriteSmoke: boolean,
+  allowRecipientDeleteMergeWriteSmoke: boolean,
   allowBucketCategoryWriteSmoke: boolean,
   allowAccountWriteSmoke: boolean,
   allowTransactionBasicWriteSmoke: boolean,
@@ -899,8 +910,11 @@ const buildChecks = (
     ...(allowRecipientActivateWriteSmoke || allowRecipientDeactivateWriteSmoke
       ? ["recipientActiveStateWrites"]
       : []),
-    ...(allowRecipientCreateUpdateWriteSmoke
+    ...(allowRecipientCreateUpdateWriteSmoke || allowRecipientDeleteMergeWriteSmoke
       ? ["recipientCreateUpdateWrites"]
+      : []),
+    ...(allowRecipientDeleteMergeWriteSmoke
+      ? ["recipientDeleteMergeWrites"]
       : []),
     ...(allowBucketCategoryWriteSmoke ? ["bucketCategoryWrites"] : []),
     ...(allowAccountWriteSmoke ? ["accountWrites"] : []),
@@ -928,6 +942,7 @@ const buildChecks = (
   const writeCapabilityKeys = [
     "recipientActiveStateWrites",
     "recipientCreateUpdateWrites",
+    "recipientDeleteMergeWrites",
     "bucketCategoryWrites",
     "accountWrites",
     "transactionBasicWrites",
@@ -3167,7 +3182,7 @@ const buildChecks = (
         expect(json.rowsChanged === 0, "create_write_validation_rows_changed");
       },
     },
-    ...(!allowRecipientCreateUpdateWriteSmoke
+    ...(!allowRecipientCreateUpdateWriteSmoke && !allowRecipientDeleteMergeWriteSmoke
       ? [
           {
             name: "recipient create write default smoke does not mutate",
@@ -3277,7 +3292,7 @@ const buildChecks = (
         expect(json.rowsChanged === 0, "update_write_validation_rows_changed");
       },
     },
-    ...(!allowRecipientCreateUpdateWriteSmoke
+    ...(!allowRecipientCreateUpdateWriteSmoke && !allowRecipientDeleteMergeWriteSmoke
       ? [
           {
             name: "recipient update write default smoke does not mutate",
@@ -3325,22 +3340,112 @@ const buildChecks = (
         ]
       : []),
     {
-      name: "recipient delete and merge writes are not implemented",
+      name: "recipient delete and merge dry-runs are protected, redacted, and non-mutating",
       run: async () => {
-        for (const action of ["delete", "merge"] as const) {
-          const { status } = await requestJson(
-            baseUrl,
-            `/prototype/repositories/recipients/write/${action}`,
-            {
-              ...authedOptions,
-              method: "POST",
-              body: { id: 1 },
+        if (sampledRecipientId === undefined || alternateRecipientId === undefined) {
+          throw new Error("two_recipients_required_for_lifecycle_smoke");
+        }
+        const tables = [
+          "transactions", "budgets", "budgetSnapshots", "buckets", "categories",
+          "accounts", "paymentMethods", "recipients", "smsImportTemplates",
+        ] as const;
+        const baseline = new Map<string, string>();
+        for (const table of tables) {
+          baseline.set(table, rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)));
+        }
+        const unauthenticated = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/delete/dry-run",
+          { method: "POST", body: { recipientId: sampledRecipientId }, origin },
+        );
+        expectStatus(unauthenticated.status, 401);
+        const invalid = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { recipientId: -1 } },
+        );
+        expectStatus(invalid.status, 400);
+        const unexpected = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/merge/dry-run",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              sourceRecipientId: sampledRecipientId,
+              targetRecipientId: alternateRecipientId,
+              unexpected: true,
             },
+          },
+        );
+        expectStatus(unexpected.status, 400);
+        const same = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/merge/dry-run",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              sourceRecipientId: sampledRecipientId,
+              targetRecipientId: sampledRecipientId,
+            },
+          },
+        );
+        expectStatus(same.status, 409);
+        const merge = await requestJson(
+          baseUrl,
+          "/prototype/repositories/recipients/merge/dry-run",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              sourceRecipientId: sampledRecipientId,
+              targetRecipientId: alternateRecipientId,
+            },
+          },
+        );
+        expectStatus(merge.status, 200);
+        expect(merge.json.wouldMutate === false, "recipient_merge_dry_run_would_mutate");
+        expect(typeof merge.json.planFingerprint === "string", "recipient_merge_plan_missing");
+        expectNoSensitiveEcho(merge.json, [sampledRecipientName]);
+        for (const action of ["bulk-merge", "automatic-duplicate-cleanup"] as const) {
+          const unavailable = await requestJson(
+            baseUrl,
+            `/prototype/repositories/recipients/${action}/write`,
+            { ...authedOptions, method: "POST", body: {} },
           );
-          expectStatus(status, 404);
+          expectStatus(unavailable.status, 404);
+        }
+        for (const table of tables) {
+          expect(
+            rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)) === baseline.get(table),
+            `${table}_changed_by_recipient_lifecycle_dry_run`,
+          );
         }
       },
     },
+    ...(!allowRecipientDeleteMergeWriteSmoke
+      ? [{
+          name: "recipient delete and merge writes are disabled by default",
+          run: async () => {
+            const response = await requestJson(
+              baseUrl,
+              "/prototype/repositories/recipients/delete/write",
+              {
+                ...authedOptions,
+                method: "POST",
+                body: {
+                  recipientId: sampledRecipientId ?? 1,
+                  dryRunReviewed: true,
+                  confirmation: RECIPIENT_LIFECYCLE_CONFIRMATIONS.delete,
+                  expectedPlanFingerprint: "0".repeat(64),
+                },
+              },
+            );
+            expectStatus(response.status, 403);
+          },
+        } satisfies SmokeCheck]
+      : []),
     ...(allowRecipientCreateUpdateWriteSmoke
       ? [
           {
@@ -3528,6 +3633,172 @@ const buildChecks = (
             },
           },
         ]
+      : []),
+    ...(allowRecipientDeleteMergeWriteSmoke
+      ? [{
+          name: "recipient delete and merge opt-in smoke mutates only disposable lifecycle rows",
+          run: async () => {
+            let sequence = Date.now();
+            const createRecipient = async (label: string): Promise<number> => {
+              sequence += 1;
+              const name = `Lifecycle smoke ${label} ${sequence}`;
+              const dry = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/dry-run/create",
+                { ...authedOptions, method: "POST", body: { name } },
+              );
+              expectStatus(dry.status, 200);
+              const created = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/write/create",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    name,
+                    dryRunReviewed: true,
+                    confirmation: RECIPIENT_CREATE_WRITE_CONFIRMATION,
+                  },
+                },
+              );
+              expectStatus(created.status, 200);
+              expectNoSensitiveEcho(created.json, [name]);
+              expect(typeof created.json.targetId === "number", "recipient_lifecycle_fixture_id_missing");
+              return Number(created.json.targetId);
+            };
+
+            const unusedId = await createRecipient("unused");
+            const deleteDry = await requestJson(
+              baseUrl,
+              "/prototype/repositories/recipients/delete/dry-run",
+              { ...authedOptions, method: "POST", body: { recipientId: unusedId } },
+            );
+            expectStatus(deleteDry.status, 200);
+            expect(deleteDry.json.eligible === true, "unused_recipient_not_delete_eligible");
+            const deleted = await requestJson(
+              baseUrl,
+              "/prototype/repositories/recipients/delete/write",
+              {
+                ...authedOptions,
+                method: "POST",
+                body: {
+                  recipientId: unusedId,
+                  dryRunReviewed: true,
+                  confirmation: RECIPIENT_LIFECYCLE_CONFIRMATIONS.delete,
+                  expectedPlanFingerprint: deleteDry.json.planFingerprint,
+                },
+              },
+            );
+            expectStatus(deleted.status, 200);
+            expect(deleted.json.rowsChanged === 1, "unused_recipient_delete_count_invalid");
+            const repeatedDelete = await requestJson(
+              baseUrl,
+              "/prototype/repositories/recipients/delete/dry-run",
+              { ...authedOptions, method: "POST", body: { recipientId: unusedId } },
+            );
+            expectStatus(repeatedDelete.status, 404);
+
+            const sourceId = await createRecipient("source");
+            const targetId = await createRecipient("target");
+            const targetBefore = await requestJson(
+              baseUrl,
+              `/prototype/repositories/recipients/${targetId}`,
+              authedOptions,
+            );
+            expectStatus(targetBefore.status, 200);
+            const mergeDry = await requestJson(
+              baseUrl,
+              "/prototype/repositories/recipients/merge/dry-run",
+              {
+                ...authedOptions,
+                method: "POST",
+                body: { sourceRecipientId: sourceId, targetRecipientId: targetId },
+              },
+            );
+            expectStatus(mergeDry.status, 200);
+            const merged = await requestJson(
+              baseUrl,
+              "/prototype/repositories/recipients/merge/write",
+              {
+                ...authedOptions,
+                method: "POST",
+                body: {
+                  sourceRecipientId: sourceId,
+                  targetRecipientId: targetId,
+                  dryRunReviewed: true,
+                  confirmation: RECIPIENT_LIFECYCLE_CONFIRMATIONS.merge,
+                  expectedPlanFingerprint: mergeDry.json.planFingerprint,
+                },
+              },
+            );
+            expectStatus(merged.status, 200);
+            expect(merged.json.rowsChanged === 1, "zero_reference_merge_count_invalid");
+            const sourceAfter = await requestJson(
+              baseUrl,
+              `/prototype/repositories/recipients/${sourceId}`,
+              authedOptions,
+            );
+            expectStatus(sourceAfter.status, 404);
+            const targetAfter = await requestJson(
+              baseUrl,
+              `/prototype/repositories/recipients/${targetId}`,
+              authedOptions,
+            );
+            expectStatus(targetAfter.status, 200);
+            expect(
+              rowsFingerprint([recipientDetail(targetBefore.json)]) ===
+                rowsFingerprint([recipientDetail(targetAfter.json)]),
+              "recipient_merge_changed_target",
+            );
+
+            const transactionList = await requestJson(
+              baseUrl,
+              "/prototype/repositories/transactions?limit=1",
+              authedOptions,
+            );
+            expectStatus(transactionList.status, 200);
+            const transactionRows = Array.isArray(transactionList.json.rows)
+              ? transactionList.json.rows as Record<string, unknown>[]
+              : [];
+            if (transactionRows.length > 0) {
+              const referencedId = Number(transactionRows[0].recipientId);
+              const referencedDry = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { recipientId: referencedId } },
+              );
+              expectStatus(referencedDry.status, 200);
+              expect(referencedDry.json.eligible === false, "referenced_recipient_delete_allowed");
+              const refused = await requestJson(
+                baseUrl,
+                "/prototype/repositories/recipients/delete/write",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    recipientId: referencedId,
+                    dryRunReviewed: true,
+                    confirmation: RECIPIENT_LIFECYCLE_CONFIRMATIONS.delete,
+                    expectedPlanFingerprint: referencedDry.json.planFingerprint,
+                  },
+                },
+              );
+              expectStatus(refused.status, 409);
+              expect(refused.json.sqliteMutated === false, "referenced_recipient_delete_mutated");
+            }
+
+            const same = await requestJson(
+              baseUrl,
+              "/prototype/repositories/recipients/merge/dry-run",
+              {
+                ...authedOptions,
+                method: "POST",
+                body: { sourceRecipientId: targetId, targetRecipientId: targetId },
+              },
+            );
+            expectStatus(same.status, 409);
+          },
+        } satisfies SmokeCheck]
       : []),
     ...(allowRecipientActivateWriteSmoke
       ? [
@@ -7654,7 +7925,7 @@ const buildChecks = (
       },
     },
     {
-      name: "recipient delete dry-run is not implemented",
+      name: "legacy recipient delete dry-run path remains unavailable",
       run: async () => {
         const { status } = await requestJson(
           baseUrl,
@@ -7728,6 +7999,7 @@ const main = async (): Promise<void> => {
     args.allowRecipientActivateWriteSmoke,
     args.allowRecipientDeactivateWriteSmoke,
     args.allowRecipientCreateUpdateWriteSmoke,
+    args.allowRecipientDeleteMergeWriteSmoke,
     args.allowBucketCategoryWriteSmoke,
     args.allowAccountWriteSmoke,
     args.allowTransactionBasicWriteSmoke,

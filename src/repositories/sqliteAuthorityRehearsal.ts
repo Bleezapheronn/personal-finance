@@ -99,6 +99,7 @@ export interface SqliteAuthorityRehearsalReadiness {
   unsupportedOperations: string[];
   transactionDeleteWritesAvailable: boolean;
   budgetLifecycleWritesAvailable: boolean;
+  recipientDeleteMergeWritesAvailable: boolean;
   code?: string;
   message: string;
 }
@@ -138,6 +139,7 @@ const initialReadiness = (
       unsupportedOperations: [],
       transactionDeleteWritesAvailable: false,
       budgetLifecycleWritesAvailable: false,
+      recipientDeleteMergeWritesAvailable: false,
       message: "SQLite authority mode is not selected.",
     };
   }
@@ -158,6 +160,7 @@ const initialReadiness = (
     unsupportedOperations: [],
     transactionDeleteWritesAvailable: false,
     budgetLifecycleWritesAvailable: false,
+    recipientDeleteMergeWritesAvailable: false,
     code: acknowledged ? undefined : `${acknowledgementRequirement}_missing`,
     message: acknowledged
       ? "Checking required local API authority status."
@@ -256,6 +259,8 @@ export const normalizeSqliteAuthorityRehearsalCapabilities = (
       capabilities.transactionDeleteWrites === true,
     budgetLifecycleWritesAvailable:
       capabilities.budgetLifecycleWrites === true,
+    recipientDeleteMergeWritesAvailable:
+      capabilities.recipientDeleteMergeWrites === true,
     code: ready ? undefined : "required_write_capabilities_missing",
     message: ready
       ? "All required disposable SQLite write capabilities are available."
@@ -294,9 +299,19 @@ export const normalizeSqliteAuthoritativeReadiness = (
     | Record<string, unknown>
     | undefined;
   const requiredUnsupportedOperations = REQUIRED_SQLITE_UNSUPPORTED_OPERATIONS.filter(
-    (operation) =>
-      operation !== "transaction_delete" ||
-      capabilities?.transactionDeleteWrites !== true,
+    (operation) => {
+      if (operation === "transaction_delete") {
+        return capabilities?.transactionDeleteWrites !== true;
+      }
+      if (
+        operation === "recipient_delete" ||
+        operation === "recipient_merge" ||
+        operation === "recipient_reference_reassignment"
+      ) {
+        return capabilities?.recipientDeleteMergeWrites !== true;
+      }
+      return true;
+    },
   );
   const valid =
     metadata.mode === "prototype" &&
@@ -360,6 +375,8 @@ export const normalizeSqliteAuthoritativeReadiness = (
       capabilities?.transactionDeleteWrites === true,
     budgetLifecycleWritesAvailable:
       capabilities?.budgetLifecycleWrites === true,
+    recipientDeleteMergeWritesAvailable:
+      capabilities?.recipientDeleteMergeWrites === true,
     message:
       "Verified SQLite authoritative mode is active. Dexie writes remain disabled.",
   };

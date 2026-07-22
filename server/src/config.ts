@@ -16,6 +16,8 @@ export const RECIPIENT_ACTIVE_STATE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES" as const;
 export const RECIPIENT_CREATE_UPDATE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES" as const;
+export const RECIPIENT_DELETE_MERGE_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_RECIPIENT_DELETE_MERGE_WRITES" as const;
 export const BUCKET_CATEGORY_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES" as const;
 export const ACCOUNT_WRITES_ENV_VAR =
@@ -82,6 +84,9 @@ export const areRecipientActiveStateWritesEnabled = (): boolean =>
 
 export const areRecipientCreateUpdateWritesEnabled = (): boolean =>
   process.env[RECIPIENT_CREATE_UPDATE_WRITES_ENV_VAR] === "true";
+
+export const areRecipientDeleteMergeWritesEnabled = (): boolean =>
+  process.env[RECIPIENT_DELETE_MERGE_WRITES_ENV_VAR] === "true";
 
 export const areBucketCategoryWritesEnabled = (): boolean =>
   process.env[BUCKET_CATEGORY_WRITES_ENV_VAR] === "true";
