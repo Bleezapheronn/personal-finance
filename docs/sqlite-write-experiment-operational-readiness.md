@@ -22,7 +22,7 @@ All flags default off.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Recipients | Create, update, activate, deactivate | Delete, merge, transaction recipient-reference mutation | `PERSONAL_FINANCE_ENABLE_RECIPIENT_CREATE_UPDATE_WRITES=true`; `PERSONAL_FINANCE_ENABLE_RECIPIENT_ACTIVE_STATE_WRITES=true` | `VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT=true` | Passed: create/update and active-state opt-in modes | Passed | Discard or re-import SQLite; Dexie recipient and transaction data is unaffected |
 | Buckets | Create, update | Delete, reorder, active-state changes, cascade/reference rewrites | `PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true` | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true` | Passed: bucket/category opt-in mode | Passed | Discard or re-import SQLite; Dexie and related financial rows are unaffected |
-| Categories | Create, update, including an existing bucket link | Delete, active-state changes, cascade/reference rewrites | `PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true` | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true` | Passed: bucket/category opt-in mode | Passed | Discard or re-import SQLite; Dexie and existing transaction/budget links are unaffected |
+| Categories | Create/update with an existing Bucket; optional unused-only delete and same-Bucket exact-ID merge across Transactions, Budgets, and BudgetSnapshots | Active-state changes, cross-Bucket merge, cascades, fuzzy/automatic/bulk merge | `PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES=true`; optional `PERSONAL_FINANCE_ENABLE_CATEGORY_DELETE_MERGE_WRITES=true` | `VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT=true`; optional `VITE_PERSONAL_FINANCE_CATEGORY_DELETE_MERGE_WRITE_EXPERIMENT=true` | Passed: focused lifecycle checks and explicit disposable mutation smoke | Create/update passed; lifecycle browser pass remains required | Discard or re-import SQLite; rotate an authoritative checkpoint after lifecycle writes; Dexie is unaffected |
 | Accounts | Create and update non-image fields: name, currency, credit classification, optional credit limit | Delete, merge, active-state changes, images, reference migration, reconciliation | `PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES=true` | `VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT=true` | Passed: Account opt-in mode | Passed, with image/icon omission remaining visible | Discard or re-import SQLite; Dexie, transactions, and derived balances are unaffected |
 | Transactions | Ordinary income/expense create/update; nonpositive transaction costs; link/change/unlink existing budget snapshots; atomic paired-transfer create/update; dry-run-first ordinary one-row and verified reciprocal-pair two-row deletion | Duplicate, bulk/import/export writes, transfer-pair repair, one-sided transfer deletion, ordinary/transfer conversion, snapshot creation or repair | `PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_COST_BUDGET_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_TRANSFER_WRITES=true`; `PERSONAL_FINANCE_ENABLE_TRANSACTION_DELETE_WRITES=true` as required by the operation | `VITE_PERSONAL_FINANCE_TRANSACTIONS_BASIC_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_COST_BUDGET_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_TRANSFER_WRITE_EXPERIMENT=true`; `VITE_PERSONAL_FINANCE_TRANSACTIONS_DELETE_WRITE_EXPERIMENT=true` as required | Passed: basic, cost/budget-link, and transfer opt-in modes; deletion mode is an explicit disposable mutation run | Existing transaction experiments passed; deletion requires manual browser verification | Discard or re-import SQLite; Dexie transactions remain unchanged, while SQLite-derived totals must be treated as dirty until re-import |
 | SMS Import Templates | Create, update, activate, deactivate, reference-safe delete | Parser priority changes, SMS-history execution/import, transaction mutation | `PERSONAL_FINANCE_ENABLE_SMS_TEMPLATE_WRITES=true` | `VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT=true` | Passed: template CRUD/active-state opt-in mode | Passed | Discard or re-import SQLite; Dexie templates, SMS data, and transactions are unaffected |
@@ -99,8 +99,11 @@ The following work is intentionally unsupported or deferred:
   reassign exact `transactions`, `budgets`, and `budgetSnapshots` recipient IDs
   only when the optional Phase 2 capability is enabled. Bulk, automatic,
   fuzzy, chained, or inferred Recipient merge remains unsupported.
-- Bucket or Category delete, bucket reorder, unsupported active-state changes,
-  cascades, and reference rewrites.
+- Bucket delete/reorder and unsupported Bucket/Category active-state changes
+  remain unavailable. Category deletion is unused-only; same-Bucket exact-ID
+  merge may reassign `transactions`, `budgets`, and `budgetSnapshots`
+  Category references when its optional capability is enabled. Cross-Bucket,
+  fuzzy, automatic, bulk, chained, and inferred merges remain unsupported.
 - Account deletion is unused-only. Explicit one-source/one-target merge may
   migrate exact `accountId` references in transactions, Budget definitions,
   Budget snapshots, SMS templates, and payment methods when its optional
@@ -313,8 +316,11 @@ an explicitly enabled optional capability. Recipient delete/merge remains off
 by default and becomes available only through its separate dry-run-first
 capability. Account unused-only delete/exact-ID merge is likewise optional and
 requires matching currency and credit classification plus valid transfer
-outcomes. Legacy PaymentMethod IDs remain unchanged. Authority does not
-otherwise enable lookup deletion/reorder, Account active-state/image changes,
+outcomes. Legacy PaymentMethod IDs remain unchanged. Category unused-only
+delete and same-Bucket exact-ID merge are available only through their separate
+optional capability; they never run Budget/snapshot lifecycle logic. Authority
+does not otherwise enable Bucket deletion/reorder, Category active-state
+changes, Account active-state/image changes,
 Transaction deletion or transfer repair, Budget
 deletion, snapshot edit/delete/prune/repair/relink, SMS import mutation, or any
 fallback to a Dexie implementation.

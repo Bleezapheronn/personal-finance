@@ -31,6 +31,10 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `GET /prototype/repositories/buckets/:id`
 - `GET /prototype/repositories/categories`
 - `GET /prototype/repositories/categories/:id`
+- `POST /prototype/repositories/categories/delete/dry-run`
+- `POST /prototype/repositories/categories/delete/write` (experimental, disabled by default)
+- `POST /prototype/repositories/categories/merge/dry-run`
+- `POST /prototype/repositories/categories/merge/write` (experimental, disabled by default)
 - `GET /prototype/repositories/recipients`
 - `GET /prototype/repositories/recipients/:id`
 - `POST /prototype/repositories/recipients/write/create` (experimental, disabled by default)
@@ -979,6 +983,58 @@ Run it only against disposable SQLite with the Account write flag enabled,
 preferably on a distinct test port. A successful run creates and updates one
 Account, or performs explicit lifecycle fixtures, and dirties SQLite. Re-import
 from a fresh matching backup before clean parity checks.
+
+Category lifecycle operations are separate from existing Bucket/Category
+create and update writes:
+
+```text
+POST /prototype/repositories/categories/delete/dry-run
+POST /prototype/repositories/categories/delete/write
+POST /prototype/repositories/categories/merge/dry-run
+POST /prototype/repositories/categories/merge/write
+```
+
+Real lifecycle writes require
+`PERSONAL_FINANCE_ENABLE_CATEGORY_DELETE_MERGE_WRITES=true`. Management-page
+controls additionally require
+`VITE_PERSONAL_FINANCE_CATEGORY_DELETE_MERGE_WRITE_EXPERIMENT=true`. The
+capability is optional: older authority manifests/checkpoints remain valid,
+Category create/update remains governed by
+`PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES`, and unrelated writes are
+unaffected when lifecycle support is absent.
+
+Delete is unused-only and refuses references from `transactions.categoryId`,
+`budgets.categoryId`, or `budgetSnapshots.categoryId`. SMS templates and
+Buckets contain no Category-ID reference. `categories.bucketId` is the
+Category's required parent metadata and is never rewritten by lifecycle
+operations.
+
+Merge replaces one explicit source Category ID with one explicit target ID in
+those three tables and then deletes only the source, all in one SQLite
+transaction. Source and target must belong to the same valid Bucket. The
+target row wins and remains unchanged, including its name, description,
+activity state, parent, and timestamps. No names are used to infer references;
+there is no fuzzy, bulk, chained, or automatic merge.
+
+Amounts, transaction costs, dates, Accounts, Recipients, Budget/snapshot
+financial fields, transfer links, and global totals remain unchanged. Category
+grouping consolidates under the target while same-Bucket enforcement preserves
+Bucket-level report grouping. Snapshot generation and Budget lifecycle helpers
+are not called.
+
+Lifecycle writes change the authoritative SQLite fingerprint. Rotate the
+checkpoint manually before restart; no backup or manifest is changed
+automatically. Recovery remains the existing native-backup or checkpoint
+rollback procedure. Normal smoke is non-mutating; mutation smoke is explicit:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-category-delete-merge-write-smoke
+```
+
+Run mutation smoke only against a fresh disposable SQLite database with both
+the Bucket/Category create-update flag and Category lifecycle flag enabled.
+The successful smoke creates and deletes synthetic Categories and dirties that
+database; re-import before clean parity checks.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 

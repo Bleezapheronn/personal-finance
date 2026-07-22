@@ -31,6 +31,7 @@
     "test:budget-lifecycle": "tsx src/testBudgetLifecycle.ts",
     "test:recipient-lifecycle": "tsx src/testRecipientLifecycle.ts",
     "test:account-lifecycle": "tsx src/testAccountLifecycle.ts",
+    "test:category-lifecycle": "tsx src/testCategoryLifecycle.ts",
     "verify:sqlite": "tsx src/verifySqlitePrototype.ts",
     "smoke:api": "tsx src/smokeApi.ts",
     "token:show": "tsx src/tokenCli.ts show",

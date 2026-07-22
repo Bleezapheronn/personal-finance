@@ -133,6 +133,11 @@ const main = async (): Promise<void> => {
               ) {
                 return capabilities.accountDeleteMergeWrites !== true;
               }
+              if (
+                operation === "bucket_category_delete"
+              ) {
+                return capabilities.categoryDeleteMergeWrites !== true;
+              }
               return true;
             })
           : [];
