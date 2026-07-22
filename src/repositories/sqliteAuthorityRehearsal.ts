@@ -102,6 +102,7 @@ export interface SqliteAuthorityRehearsalReadiness {
   recipientDeleteMergeWritesAvailable: boolean;
   accountDeleteMergeWritesAvailable: boolean;
   categoryDeleteMergeWritesAvailable: boolean;
+  bucketDeleteMergeWritesAvailable: boolean;
   code?: string;
   message: string;
 }
@@ -144,6 +145,7 @@ const initialReadiness = (
       recipientDeleteMergeWritesAvailable: false,
       accountDeleteMergeWritesAvailable: false,
       categoryDeleteMergeWritesAvailable: false,
+      bucketDeleteMergeWritesAvailable: false,
       message: "SQLite authority mode is not selected.",
     };
   }
@@ -167,6 +169,7 @@ const initialReadiness = (
     recipientDeleteMergeWritesAvailable: false,
     accountDeleteMergeWritesAvailable: false,
     categoryDeleteMergeWritesAvailable: false,
+    bucketDeleteMergeWritesAvailable: false,
     code: acknowledged ? undefined : `${acknowledgementRequirement}_missing`,
     message: acknowledged
       ? "Checking required local API authority status."
@@ -271,6 +274,8 @@ export const normalizeSqliteAuthorityRehearsalCapabilities = (
       capabilities.accountDeleteMergeWrites === true,
     categoryDeleteMergeWritesAvailable:
       capabilities.categoryDeleteMergeWrites === true,
+    bucketDeleteMergeWritesAvailable:
+      capabilities.bucketDeleteMergeWrites === true,
     code: ready ? undefined : "required_write_capabilities_missing",
     message: ready
       ? "All required disposable SQLite write capabilities are available."
@@ -330,7 +335,10 @@ export const normalizeSqliteAuthoritativeReadiness = (
       if (
         operation === "bucket_category_delete"
       ) {
-        return capabilities?.categoryDeleteMergeWrites !== true;
+        return !(
+          capabilities?.categoryDeleteMergeWrites === true ||
+          capabilities?.bucketDeleteMergeWrites === true
+        );
       }
       return true;
     },
@@ -403,6 +411,8 @@ export const normalizeSqliteAuthoritativeReadiness = (
       capabilities?.accountDeleteMergeWrites === true,
     categoryDeleteMergeWritesAvailable:
       capabilities?.categoryDeleteMergeWrites === true,
+    bucketDeleteMergeWritesAvailable:
+      capabilities?.bucketDeleteMergeWrites === true,
     message:
       "Verified SQLite authoritative mode is active. Dexie writes remain disabled.",
   };

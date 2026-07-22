@@ -136,7 +136,10 @@ const main = async (): Promise<void> => {
               if (
                 operation === "bucket_category_delete"
               ) {
-                return capabilities.categoryDeleteMergeWrites !== true;
+                return !(
+                  capabilities.categoryDeleteMergeWrites === true ||
+                  capabilities.bucketDeleteMergeWrites === true
+                );
               }
               return true;
             })

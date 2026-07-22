@@ -2,6 +2,7 @@ import {
   areAccountWritesEnabled,
   areAccountDeleteMergeWritesEnabled,
   areCategoryDeleteMergeWritesEnabled,
+  areBucketDeleteMergeWritesEnabled,
   areBudgetDefinitionWritesEnabled,
   areBudgetLifecycleWritesEnabled,
   areBudgetSnapshotGenerationWritesEnabled,
@@ -36,6 +37,7 @@ export const OPTIONAL_WRITE_CAPABILITY_KEYS = [
   "recipientDeleteMergeWrites",
   "accountDeleteMergeWrites",
   "categoryDeleteMergeWrites",
+  "bucketDeleteMergeWrites",
 ] as const;
 export type OptionalWriteCapabilityKey =
   (typeof OPTIONAL_WRITE_CAPABILITY_KEYS)[number];
@@ -71,6 +73,7 @@ export const readWriteCapabilities = (): WriteCapabilities => ({
   recipientDeleteMergeWrites: areRecipientDeleteMergeWritesEnabled(),
   accountDeleteMergeWrites: areAccountDeleteMergeWritesEnabled(),
   categoryDeleteMergeWrites: areCategoryDeleteMergeWritesEnabled(),
+  bucketDeleteMergeWrites: areBucketDeleteMergeWritesEnabled(),
   bucketCategoryWrites: areBucketCategoryWritesEnabled(),
   accountWrites: areAccountWritesEnabled(),
   transactionBasicWrites: areTransactionBasicWritesEnabled(),
@@ -129,7 +132,10 @@ export const buildWriteCapabilitiesResponse = (
       if (
         operation === "bucket_category_delete"
       ) {
-        return !areCategoryDeleteMergeWritesEnabled();
+        return !(
+          areCategoryDeleteMergeWritesEnabled() ||
+          areBucketDeleteMergeWritesEnabled()
+        );
       }
       return true;
     },

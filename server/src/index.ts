@@ -5,6 +5,7 @@ import {
   areAccountDeleteMergeWritesEnabled,
   areAccountWritesEnabled,
   areCategoryDeleteMergeWritesEnabled,
+  areBucketDeleteMergeWritesEnabled,
   areBudgetDefinitionWritesEnabled,
   areBudgetLifecycleWritesEnabled,
   areBudgetSnapshotGenerationWritesEnabled,
@@ -123,6 +124,14 @@ import {
   CategoryLifecycleRequestError,
   validateCategoryLifecyclePayload,
 } from "./lib/categoryLifecycle.js";
+import {
+  bucketLifecycleDisabledResponse,
+  bucketLifecycleDryRun,
+  bucketLifecycleRealWrite,
+  bucketLifecycleRequestErrorResponse,
+  BucketLifecycleRequestError,
+  validateBucketLifecyclePayload,
+} from "./lib/bucketLifecycle.js";
 import {
   getBudgetById,
   getBudgetSnapshotById,
@@ -582,7 +591,10 @@ server.get("/prototype/sqlite/authority-readiness", async () => ({
         return !areAccountDeleteMergeWritesEnabled();
       }
       if (operation === "bucket_category_delete") {
-        return !areCategoryDeleteMergeWritesEnabled();
+        return !(
+          areCategoryDeleteMergeWritesEnabled() ||
+          areBucketDeleteMergeWritesEnabled()
+        );
       }
       return true;
     },
@@ -1330,6 +1342,120 @@ for (const action of ["create", "update"] as const) {
           ok: false,
           code: `budget_definition_${action}_write_failed`,
         });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+}
+
+for (const action of ["delete", "merge"] as const) {
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/buckets/${action}/dry-run`,
+    async (request, reply) => {
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `bucket_${action}_dry_run_failed`,
+        });
+      }
+      if (!opened.ok) {
+        return reply.code(503).send({ ok: false, code: opened.code });
+      }
+      try {
+        const result = bucketLifecycleDryRun(opened.db, request.body, action);
+        if (
+          ["bucket_not_found", "source_bucket_not_found", "target_bucket_not_found"].includes(
+            result.code ?? "",
+          )
+        ) {
+          return reply.code(404).send(result);
+        }
+        if (action === "delete" && result.code === "bucket_contains_categories") {
+          return result;
+        }
+        return result.ok ? result : reply.code(409).send(result);
+      } catch (error) {
+        if (error instanceof BucketLifecycleRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(bucketLifecycleRequestErrorResponse(action, error.code));
+        }
+        return reply
+          .code(500)
+          .send({ ok: false, code: `bucket_${action}_dry_run_failed` });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/buckets/${action}/write`,
+    async (request, reply) => {
+      try {
+        validateBucketLifecyclePayload(request.body, action, true);
+      } catch (error) {
+        if (error instanceof BucketLifecycleRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(bucketLifecycleRequestErrorResponse(action, error.code));
+        }
+        return reply
+          .code(400)
+          .send(
+            bucketLifecycleRequestErrorResponse(
+              action,
+              "bucket_lifecycle_write_invalid",
+            ),
+          );
+      }
+      if (!areBucketDeleteMergeWritesEnabled()) {
+        return reply.code(403).send(bucketLifecycleDisabledResponse(action));
+      }
+
+      let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+      try {
+        opened = openConfiguredWritableDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `bucket_${action}_write_failed`,
+        });
+      }
+      if (!opened.ok) {
+        return reply.code(503).send({ ok: false, code: opened.code });
+      }
+      try {
+        const result = bucketLifecycleRealWrite(opened.db, request.body, action);
+        if (
+          ["bucket_not_found", "source_bucket_not_found", "target_bucket_not_found"].includes(
+            result.code ?? "",
+          )
+        ) {
+          return reply.code(404).send(result);
+        }
+        return result.ok ? result : reply.code(409).send(result);
+      } catch (error) {
+        if (error instanceof BucketLifecycleRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(bucketLifecycleRequestErrorResponse(action, error.code));
+        }
+        return reply
+          .code(500)
+          .send({ ok: false, code: `bucket_${action}_write_failed` });
       } finally {
         opened.db.close();
       }

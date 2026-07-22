@@ -43,6 +43,7 @@ const capabilities = {
     recipientDeleteMergeWrites: true,
     accountDeleteMergeWrites: true,
     categoryDeleteMergeWrites: true,
+    bucketDeleteMergeWrites: true,
   },
   unsupportedOperations: [...REQUIRED_SQLITE_UNSUPPORTED_OPERATIONS],
   safety: {
@@ -76,6 +77,7 @@ describe("SQLite authoritative frontend readiness", () => {
     expect(result.recipientDeleteMergeWritesAvailable).toBe(true);
     expect(result.accountDeleteMergeWritesAvailable).toBe(true);
     expect(result.categoryDeleteMergeWritesAvailable).toBe(true);
+    expect(result.bucketDeleteMergeWritesAvailable).toBe(true);
   });
 
   it("fails closed when frontend authority meets a disposable server", () => {

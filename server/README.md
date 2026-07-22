@@ -29,6 +29,10 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `POST /prototype/repositories/accounts/merge/write` (experimental, disabled by default)
 - `GET /prototype/repositories/buckets`
 - `GET /prototype/repositories/buckets/:id`
+- `POST /prototype/repositories/buckets/delete/dry-run`
+- `POST /prototype/repositories/buckets/delete/write` (experimental, disabled by default)
+- `POST /prototype/repositories/buckets/merge/dry-run`
+- `POST /prototype/repositories/buckets/merge/write` (experimental, disabled by default)
 - `GET /prototype/repositories/categories`
 - `GET /prototype/repositories/categories/:id`
 - `POST /prototype/repositories/categories/delete/dry-run`
@@ -1034,6 +1038,60 @@ npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token 
 Run mutation smoke only against a fresh disposable SQLite database with both
 the Bucket/Category create-update flag and Category lifecycle flag enabled.
 The successful smoke creates and deletes synthetic Categories and dirties that
+database; re-import before clean parity checks.
+
+Bucket lifecycle operations are separate from Bucket/Category create/update
+and Category lifecycle writes:
+
+```text
+POST /prototype/repositories/buckets/delete/dry-run
+POST /prototype/repositories/buckets/delete/write
+POST /prototype/repositories/buckets/merge/dry-run
+POST /prototype/repositories/buckets/merge/write
+```
+
+Real writes require
+`PERSONAL_FINANCE_ENABLE_BUCKET_DELETE_MERGE_WRITES=true`. Management controls
+also require
+`VITE_PERSONAL_FINANCE_BUCKET_DELETE_MERGE_WRITE_EXPERIMENT=true`. The optional
+capability is disabled by default and does not alter the original ten authority
+requirements, Bucket/Category create-update, Category lifecycle, or unrelated
+writes. Older authority manifests and checkpoints remain valid.
+
+`categories.bucketId` is the only supported stored Bucket reference. It is
+required and identifies each Category's parent. Transactions, Budgets, and
+BudgetSnapshots store required Category IDs but no Bucket ID; SMS templates
+store neither. Delete therefore succeeds only for an existing Bucket with no
+Categories and no discovered direct reference. It never cascades.
+
+Merge moves every source Category to one explicit target by changing only
+`categories.bucketId`, preserves Category IDs and every other Category field,
+then deletes only the source Bucket in one transaction. The target Bucket wins
+and remains byte/logically unchanged. Source and target must have matching
+active state and both must be report-visible; report-excluded/income Buckets
+are ineligible because reports select one income Bucket. This preserves
+income/expense totals and visibility semantics. Current Category names are not unique, so
+duplicate names do not require or trigger Category merging.
+
+No financial row is rewritten. Amounts, costs, dates, Category IDs, Accounts,
+Recipients, transfer links, Budget definitions, snapshots, and Budget History
+financial values remain unchanged. Only Bucket-grouped presentation
+consolidates under the target. There is no fuzzy, automatic, bulk, chained, or
+name-based merge; no Category merge; no reorder; and no snapshot lifecycle
+execution.
+
+Lifecycle writes change the SQLite logical fingerprint. Rotate an authority
+checkpoint manually before restart; no backup or manifest changes
+automatically. Recovery remains the existing native-backup/checkpoint process.
+Normal smoke remains non-mutating; mutation smoke is explicit:
+
+```bash
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-bucket-delete-merge-write-smoke
+```
+
+Run it only against a fresh disposable SQLite database with both the
+Bucket/Category create-update flag and Bucket lifecycle flag enabled. A
+successful run creates, merges, and deletes synthetic fixtures and dirties the
 database; re-import before clean parity checks.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.

@@ -23,6 +23,7 @@ import { BUDGET_LIFECYCLE_CONFIRMATIONS } from "./lib/budgetLifecycle.js";
 import { RECIPIENT_LIFECYCLE_CONFIRMATIONS } from "./lib/recipientLifecycle.js";
 import { ACCOUNT_LIFECYCLE_CONFIRMATIONS } from "./lib/accountLifecycle.js";
 import { CATEGORY_LIFECYCLE_CONFIRMATIONS } from "./lib/categoryLifecycle.js";
+import { BUCKET_LIFECYCLE_CONFIRMATIONS } from "./lib/bucketLifecycle.js";
 import {
   calculateBudgetOccurrenceSchedule,
   calculateMissingBudgetSnapshotPlan,
@@ -59,6 +60,7 @@ interface SmokeArgs {
   allowAccountWriteSmoke: boolean;
   allowAccountDeleteMergeWriteSmoke: boolean;
   allowCategoryDeleteMergeWriteSmoke: boolean;
+  allowBucketDeleteMergeWriteSmoke: boolean;
   allowTransactionBasicWriteSmoke: boolean;
   allowTransactionCostBudgetWriteSmoke: boolean;
   allowTransactionTransferWriteSmoke: boolean;
@@ -166,6 +168,8 @@ Options:
                          Opt in to unused-delete and exact-reference Account merge write smoke.
   --allow-category-delete-merge-write-smoke
                          Opt in to unused-delete and exact-reference Category merge write smoke.
+  --allow-bucket-delete-merge-write-smoke
+                         Opt in to empty-delete and exact-parent Bucket merge write smoke.
   --allow-transaction-basic-write-smoke
                          Opt in to disposable SQLite basic transaction create/update write smoke.
   --allow-transaction-cost-budget-write-smoke
@@ -196,6 +200,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowAccountWriteSmoke: false,
     allowAccountDeleteMergeWriteSmoke: false,
     allowCategoryDeleteMergeWriteSmoke: false,
+    allowBucketDeleteMergeWriteSmoke: false,
     allowTransactionBasicWriteSmoke: false,
     allowTransactionCostBudgetWriteSmoke: false,
     allowTransactionTransferWriteSmoke: false,
@@ -276,6 +281,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-category-delete-merge-write-smoke") {
       args.allowCategoryDeleteMergeWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-bucket-delete-merge-write-smoke") {
+      args.allowBucketDeleteMergeWriteSmoke = true;
       continue;
     }
 
@@ -917,6 +927,7 @@ const buildChecks = (
   allowAccountWriteSmoke: boolean,
   allowAccountDeleteMergeWriteSmoke: boolean,
   allowCategoryDeleteMergeWriteSmoke: boolean,
+  allowBucketDeleteMergeWriteSmoke: boolean,
   allowTransactionBasicWriteSmoke: boolean,
   allowTransactionCostBudgetWriteSmoke: boolean,
   allowTransactionTransferWriteSmoke: boolean,
@@ -938,12 +949,15 @@ const buildChecks = (
     ...(allowRecipientDeleteMergeWriteSmoke
       ? ["recipientDeleteMergeWrites"]
       : []),
-    ...(allowBucketCategoryWriteSmoke || allowCategoryDeleteMergeWriteSmoke
+    ...(allowBucketCategoryWriteSmoke ||
+    allowCategoryDeleteMergeWriteSmoke ||
+    allowBucketDeleteMergeWriteSmoke
       ? ["bucketCategoryWrites"]
       : []),
     ...(allowAccountWriteSmoke || allowAccountDeleteMergeWriteSmoke ? ["accountWrites"] : []),
     ...(allowAccountDeleteMergeWriteSmoke ? ["accountDeleteMergeWrites"] : []),
     ...(allowCategoryDeleteMergeWriteSmoke ? ["categoryDeleteMergeWrites"] : []),
+    ...(allowBucketDeleteMergeWriteSmoke ? ["bucketDeleteMergeWrites"] : []),
     ...(allowTransactionBasicWriteSmoke ||
     allowTransactionCostBudgetWriteSmoke ||
     allowTransactionTransferWriteSmoke
@@ -1828,7 +1842,9 @@ const buildChecks = (
         );
       },
     },
-    ...(!allowBucketCategoryWriteSmoke && !allowCategoryDeleteMergeWriteSmoke
+    ...(!allowBucketCategoryWriteSmoke &&
+    !allowCategoryDeleteMergeWriteSmoke &&
+    !allowBucketDeleteMergeWriteSmoke
       ? [
           {
             name: "bucket/category writes are disabled and non-mutating by default",
@@ -2258,6 +2274,192 @@ const buildChecks = (
             expect(response.json.sqliteMutated === false, "disabled_account_lifecycle_mutated");
           },
         } satisfies SmokeCheck]
+      : []),
+    {
+      name: "bucket delete and merge dry-runs are protected, redacted, and non-mutating",
+      run: async () => {
+        const tables = [
+          "transactions", "budgets", "budgetSnapshots", "buckets", "categories",
+          "accounts", "paymentMethods", "recipients", "smsImportTemplates",
+        ] as const;
+        const baseline = new Map<string, string>();
+        for (const table of tables) {
+          baseline.set(
+            table,
+            rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)),
+          );
+        }
+        const bucketRows = await readAllTableRows(baseUrl, "buckets", authedOptions);
+        const categoryRows = await readAllTableRows(baseUrl, "categories", authedOptions);
+        const first = bucketRows.find((row) => typeof row.id === "number");
+        if (!first || typeof first.id !== "number") {
+          throw new Error("bucket_lifecycle_fixture_missing");
+        }
+        const unauthorized = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets/delete/dry-run",
+          { method: "POST", body: { bucketId: first.id }, origin },
+        );
+        expectStatus(unauthorized.status, 401);
+        const badOrigin = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets/delete/dry-run",
+          {
+            token,
+            origin: "http://unexpected-origin.invalid",
+            method: "POST",
+            body: { bucketId: first.id },
+          },
+        );
+        expectStatus(badOrigin.status, 403);
+        const invalid = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { bucketId: -1 } },
+        );
+        expectStatus(invalid.status, 400);
+        const unexpected = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets/merge/dry-run",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              sourceBucketId: first.id,
+              targetBucketId: first.id,
+              unexpected: true,
+            },
+          },
+        );
+        expectStatus(unexpected.status, 400);
+        const same = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets/merge/dry-run",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { sourceBucketId: first.id, targetBucketId: first.id },
+          },
+        );
+        expectStatus(same.status, 409);
+        const missingSource = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets/merge/dry-run",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { sourceBucketId: 2_147_483_647, targetBucketId: first.id },
+          },
+        );
+        expectStatus(missingSource.status, 404);
+        const missingTarget = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets/merge/dry-run",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: { sourceBucketId: first.id, targetBucketId: 2_147_483_647 },
+          },
+        );
+        expectStatus(missingTarget.status, 404);
+
+        const deleteDry = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { bucketId: first.id } },
+        );
+        expect([200, 409].includes(deleteDry.status), "bucket_delete_dry_run_status_invalid");
+        expect(deleteDry.json.wouldMutate === false, "bucket_delete_dry_run_would_mutate");
+        expectNoSensitiveEcho(
+          deleteDry.json,
+          [first.name].filter((value): value is string => typeof value === "string"),
+        );
+        if (categoryRows.some((row) => row.bucketId === first.id)) {
+          expect(deleteDry.json.eligible === false, "bucket_with_categories_delete_allowed");
+        }
+
+        const compatible = bucketRows.find(
+          (row) =>
+            row.id !== first.id &&
+            row.isActive === first.isActive &&
+            Number(row.excludeFromReports) === 0 &&
+            Number(first.excludeFromReports) === 0,
+        );
+        if (compatible && typeof compatible.id === "number") {
+          const merge = await requestJson(
+            baseUrl,
+            "/prototype/repositories/buckets/merge/dry-run",
+            {
+              ...authedOptions,
+              method: "POST",
+              body: { sourceBucketId: first.id, targetBucketId: compatible.id },
+            },
+          );
+          expectStatus(merge.status, 200);
+          expect(merge.json.wouldMutate === false, "bucket_merge_dry_run_would_mutate");
+          expectNoSensitiveEcho(
+            merge.json,
+            [first.name, compatible.name].filter(
+              (value): value is string => typeof value === "string",
+            ),
+          );
+        }
+        const invalidFingerprint = await requestJson(
+          baseUrl,
+          "/prototype/repositories/buckets/delete/write",
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              bucketId: first.id,
+              dryRunReviewed: true,
+              confirmation: BUCKET_LIFECYCLE_CONFIRMATIONS.delete,
+              expectedPlanFingerprint: "invalid",
+            },
+          },
+        );
+        expectStatus(invalidFingerprint.status, 400);
+        for (const action of ["bulk-merge", "automatic-category-merge", "reorder"] as const) {
+          const unavailable = await requestJson(
+            baseUrl,
+            `/prototype/repositories/buckets/${action}/write`,
+            { ...authedOptions, method: "POST", body: {} },
+          );
+          expectStatus(unavailable.status, 404);
+        }
+        for (const table of tables) {
+          expect(
+            rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)) ===
+              baseline.get(table),
+            `${table}_changed_by_bucket_lifecycle_dry_run`,
+          );
+        }
+      },
+    },
+    ...(!allowBucketDeleteMergeWriteSmoke
+      ? [
+          {
+            name: "bucket delete and merge writes are disabled by default",
+            run: async () => {
+              const response = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/delete/write",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    bucketId: 1,
+                    dryRunReviewed: true,
+                    confirmation: BUCKET_LIFECYCLE_CONFIRMATIONS.delete,
+                    expectedPlanFingerprint: "0".repeat(64),
+                  },
+                },
+              );
+              expectStatus(response.status, 403);
+              expect(response.json.sqliteMutated === false, "disabled_bucket_lifecycle_mutated");
+            },
+          } satisfies SmokeCheck,
+        ]
       : []),
     {
       name: "category delete and merge dry-runs are protected, redacted, and non-mutating",
@@ -5029,6 +5231,224 @@ const buildChecks = (
             expectStatus(typeMismatch.status, 409);
           },
         } satisfies SmokeCheck]
+      : []),
+    ...(allowBucketDeleteMergeWriteSmoke
+      ? [
+          {
+            name: "bucket delete and merge opt-in smoke mutates only disposable lifecycle rows",
+            run: async () => {
+              let sequence = Date.now();
+              const createBucket = async (
+                label: string,
+                excludeFromReports = false,
+              ): Promise<number> => {
+                sequence += 1;
+                const name = `Lifecycle bucket ${label} ${sequence}`;
+                const created = await requestJson(
+                  baseUrl,
+                  "/prototype/repositories/buckets/write/create",
+                  {
+                    ...authedOptions,
+                    method: "POST",
+                    body: {
+                      name,
+                      description: "Synthetic lifecycle smoke fixture",
+                      minPercentage: 0,
+                      maxPercentage: 100,
+                      excludeFromReports,
+                      dryRunReviewed: true,
+                      confirmation: BUCKET_CREATE_WRITE_CONFIRMATION,
+                    },
+                  },
+                );
+                expectStatus(created.status, 200);
+                expectNoSensitiveEcho(created.json, [name]);
+                expect(typeof created.json.targetId === "number", "bucket_fixture_id_missing");
+                return Number(created.json.targetId);
+              };
+              const createCategory = async (bucketId: number): Promise<number> => {
+                sequence += 1;
+                const name = `Lifecycle bucket category ${sequence}`;
+                const created = await requestJson(
+                  baseUrl,
+                  "/prototype/repositories/categories/write/create",
+                  {
+                    ...authedOptions,
+                    method: "POST",
+                    body: {
+                      name,
+                      bucketId,
+                      description: "Synthetic bucket lifecycle fixture",
+                      dryRunReviewed: true,
+                      confirmation: CATEGORY_CREATE_WRITE_CONFIRMATION,
+                    },
+                  },
+                );
+                expectStatus(created.status, 200);
+                expectNoSensitiveEcho(created.json, [name]);
+                expect(typeof created.json.targetId === "number", "bucket_category_fixture_id_missing");
+                return Number(created.json.targetId);
+              };
+
+              const emptyId = await createBucket("empty");
+              const deleteDry = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { bucketId: emptyId } },
+              );
+              expectStatus(deleteDry.status, 200);
+              expect(deleteDry.json.eligible === true, "empty_bucket_not_delete_eligible");
+              const deleted = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/delete/write",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    bucketId: emptyId,
+                    dryRunReviewed: true,
+                    confirmation: BUCKET_LIFECYCLE_CONFIRMATIONS.delete,
+                    expectedPlanFingerprint: deleteDry.json.planFingerprint,
+                  },
+                },
+              );
+              expectStatus(deleted.status, 200);
+              expect(deleted.json.rowsChanged === 1, "empty_bucket_delete_count_invalid");
+              const repeatedDelete = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { bucketId: emptyId } },
+              );
+              expectStatus(repeatedDelete.status, 404);
+
+              const sourceId = await createBucket("source");
+              const targetId = await createBucket("target");
+              const categoryId = await createCategory(sourceId);
+              const targetBefore = await requestJson(
+                baseUrl,
+                `/prototype/repositories/buckets/${targetId}`,
+                authedOptions,
+              );
+              const categoryBefore = await requestJson(
+                baseUrl,
+                `/prototype/repositories/categories/${categoryId}`,
+                authedOptions,
+              );
+              expectStatus(targetBefore.status, 200);
+              expectStatus(categoryBefore.status, 200);
+
+              const refusedDelete = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { bucketId: sourceId } },
+              );
+              expectStatus(refusedDelete.status, 200);
+              expect(refusedDelete.json.eligible === false, "bucket_with_category_delete_allowed");
+
+              const immutableTables = [
+                "transactions", "budgets", "budgetSnapshots", "accounts",
+                "paymentMethods", "recipients", "smsImportTemplates",
+              ] as const;
+              const immutableBefore = new Map<string, string>();
+              for (const table of immutableTables) {
+                immutableBefore.set(
+                  table,
+                  rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)),
+                );
+              }
+              const mergeDry = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/merge/dry-run",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: { sourceBucketId: sourceId, targetBucketId: targetId },
+                },
+              );
+              expectStatus(mergeDry.status, 200);
+              expect(mergeDry.json.categoriesProposedForMove === 1, "bucket_move_count_invalid");
+              const merged = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/merge/write",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: {
+                    sourceBucketId: sourceId,
+                    targetBucketId: targetId,
+                    dryRunReviewed: true,
+                    confirmation: BUCKET_LIFECYCLE_CONFIRMATIONS.merge,
+                    expectedPlanFingerprint: mergeDry.json.planFingerprint,
+                  },
+                },
+              );
+              expectStatus(merged.status, 200);
+              expect(merged.json.rowsChanged === 2, "bucket_merge_count_invalid");
+              const sourceAfter = await requestJson(
+                baseUrl,
+                `/prototype/repositories/buckets/${sourceId}`,
+                authedOptions,
+              );
+              const targetAfter = await requestJson(
+                baseUrl,
+                `/prototype/repositories/buckets/${targetId}`,
+                authedOptions,
+              );
+              const categoryAfter = await requestJson(
+                baseUrl,
+                `/prototype/repositories/categories/${categoryId}`,
+                authedOptions,
+              );
+              expectStatus(sourceAfter.status, 404);
+              expectStatus(targetAfter.status, 200);
+              expectStatus(categoryAfter.status, 200);
+              expect(
+                rowsFingerprint([detailRow(targetBefore.json, "bucket")]) ===
+                  rowsFingerprint([detailRow(targetAfter.json, "bucket")]),
+                "bucket_merge_changed_target",
+              );
+              const beforeCategory = detailRow(categoryBefore.json, "category");
+              const afterCategory = detailRow(categoryAfter.json, "category");
+              expect(afterCategory.id === beforeCategory.id, "bucket_merge_changed_category_id");
+              expect(afterCategory.bucketId === targetId, "bucket_merge_parent_not_updated");
+              expect(
+                rowsFingerprint([{ ...afterCategory, bucketId: sourceId }]) ===
+                  rowsFingerprint([beforeCategory]),
+                "bucket_merge_changed_category_metadata",
+              );
+              for (const table of immutableTables) {
+                expect(
+                  rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)) ===
+                    immutableBefore.get(table),
+                  `${table}_changed_by_bucket_merge`,
+                );
+              }
+
+              const repeatedMerge = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/merge/dry-run",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: { sourceBucketId: sourceId, targetBucketId: targetId },
+                },
+              );
+              expectStatus(repeatedMerge.status, 404);
+
+              const incompatibleId = await createBucket("incompatible", true);
+              const incompatible = await requestJson(
+                baseUrl,
+                "/prototype/repositories/buckets/merge/dry-run",
+                {
+                  ...authedOptions,
+                  method: "POST",
+                  body: { sourceBucketId: targetId, targetBucketId: incompatibleId },
+                },
+              );
+              expectStatus(incompatible.status, 409);
+            },
+          } satisfies SmokeCheck,
+        ]
       : []),
     ...(allowCategoryDeleteMergeWriteSmoke
       ? [
@@ -8587,7 +9007,7 @@ const buildChecks = (
       },
     },
     {
-      name: "bucket/category delete dry-run and write routes are not implemented",
+      name: "legacy bucket/category lifecycle route shapes remain unavailable",
       run: async () => {
         for (const resource of ["buckets", "categories"] as const) {
           for (const mode of ["dry-run", "write"] as const) {
@@ -8681,6 +9101,7 @@ const main = async (): Promise<void> => {
     args.allowAccountWriteSmoke,
     args.allowAccountDeleteMergeWriteSmoke,
     args.allowCategoryDeleteMergeWriteSmoke,
+    args.allowBucketDeleteMergeWriteSmoke,
     args.allowTransactionBasicWriteSmoke,
     args.allowTransactionCostBudgetWriteSmoke,
     args.allowTransactionTransferWriteSmoke,
