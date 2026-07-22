@@ -101,8 +101,12 @@ The following work is intentionally unsupported or deferred:
   fuzzy, chained, or inferred Recipient merge remains unsupported.
 - Bucket or Category delete, bucket reorder, unsupported active-state changes,
   cascades, and reference rewrites.
-- Account delete, merge, active-state changes, image writes, reconciliation,
-  and transaction/account reference migration.
+- Account deletion is unused-only. Explicit one-source/one-target merge may
+  migrate exact `accountId` references in transactions, Budget definitions,
+  Budget snapshots, SMS templates, and payment methods when its optional
+  capability is enabled. Active-state changes, image writes, reconciliation,
+  fuzzy/automatic/bulk merge, currency conversion, and transfer repair remain
+  unsupported.
 - Transaction duplicate/bulk/import/export mutation, one-sided transfer
   deletion, transfer-pair repair, and conversion between ordinary and transfer
   transactions. Phase 1 deletion supports only an eligible ordinary row or a
@@ -307,8 +311,11 @@ does not run automatically.
 All unsupported operations listed above remain unavailable unless removed by
 an explicitly enabled optional capability. Recipient delete/merge remains off
 by default and becomes available only through its separate dry-run-first
-capability. Authority does not otherwise enable lookup deletion/reorder,
-Account reference migration, Transaction deletion or transfer repair, Budget
+capability. Account unused-only delete/exact-ID merge is likewise optional and
+requires matching currency and credit classification plus valid transfer
+outcomes. Legacy PaymentMethod IDs remain unchanged. Authority does not
+otherwise enable lookup deletion/reorder, Account active-state/image changes,
+Transaction deletion or transfer repair, Budget
 deletion, snapshot edit/delete/prune/repair/relink, SMS import mutation, or any
 fallback to a Dexie implementation.
 

@@ -126,6 +126,13 @@ const main = async (): Promise<void> => {
               ) {
                 return capabilities.recipientDeleteMergeWrites !== true;
               }
+              if (
+                operation === "account_delete" ||
+                operation === "account_merge" ||
+                operation === "account_reference_migration"
+              ) {
+                return capabilities.accountDeleteMergeWrites !== true;
+              }
               return true;
             })
           : [];

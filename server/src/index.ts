@@ -2,6 +2,7 @@ import Fastify, { type FastifyReply } from "fastify";
 import {
   ALLOWED_ORIGINS,
   API_VERSION,
+  areAccountDeleteMergeWritesEnabled,
   areAccountWritesEnabled,
   areBudgetDefinitionWritesEnabled,
   areBudgetLifecycleWritesEnabled,
@@ -105,6 +106,14 @@ import {
   AccountWriteRequestError,
   validateAccountWritePayload,
 } from "./lib/accountWrite.js";
+import {
+  accountLifecycleDisabledResponse,
+  accountLifecycleDryRun,
+  accountLifecycleRealWrite,
+  accountLifecycleRequestErrorResponse,
+  AccountLifecycleRequestError,
+  validateAccountLifecyclePayload,
+} from "./lib/accountLifecycle.js";
 import {
   getBudgetById,
   getBudgetSnapshotById,
@@ -555,6 +564,13 @@ server.get("/prototype/sqlite/authority-readiness", async () => ({
         operation === "recipient_reference_reassignment"
       ) {
         return !areRecipientDeleteMergeWritesEnabled();
+      }
+      if (
+        operation === "account_delete" ||
+        operation === "account_merge" ||
+        operation === "account_reference_migration"
+      ) {
+        return !areAccountDeleteMergeWritesEnabled();
       }
       return true;
     },
@@ -1302,6 +1318,88 @@ for (const action of ["create", "update"] as const) {
           ok: false,
           code: `budget_definition_${action}_write_failed`,
         });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+}
+
+for (const action of ["delete", "merge"] as const) {
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/accounts/${action}/dry-run`,
+    async (request, reply) => {
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code: statusCode === 503 ? "sqlite_unavailable" : `account_${action}_dry_run_failed`,
+        });
+      }
+      if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+      try {
+        const result = accountLifecycleDryRun(opened.db, request.body, action);
+        if (["account_not_found", "source_account_not_found", "target_account_not_found"]
+          .includes(result.code ?? "")) {
+          return reply.code(404).send(result);
+        }
+        if (action === "delete" && result.code === "account_referenced") return result;
+        return result.ok ? result : reply.code(409).send(result);
+      } catch (error) {
+        if (error instanceof AccountLifecycleRequestError) {
+          return reply.code(error.statusCode)
+            .send(accountLifecycleRequestErrorResponse(action, error.code));
+        }
+        return reply.code(500).send({ ok: false, code: `account_${action}_dry_run_failed` });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/accounts/${action}/write`,
+    async (request, reply) => {
+      try {
+        validateAccountLifecyclePayload(request.body, action, true);
+      } catch (error) {
+        if (error instanceof AccountLifecycleRequestError) {
+          return reply.code(error.statusCode)
+            .send(accountLifecycleRequestErrorResponse(action, error.code));
+        }
+        return reply.code(400)
+          .send(accountLifecycleRequestErrorResponse(action, "account_lifecycle_write_invalid"));
+      }
+      if (!areAccountDeleteMergeWritesEnabled()) {
+        return reply.code(403).send(accountLifecycleDisabledResponse(action));
+      }
+      let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+      try {
+        opened = openConfiguredWritableDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code: statusCode === 503 ? "sqlite_unavailable" : `account_${action}_write_failed`,
+        });
+      }
+      if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+      try {
+        const result = accountLifecycleRealWrite(opened.db, request.body, action);
+        if (["account_not_found", "source_account_not_found", "target_account_not_found"]
+          .includes(result.code ?? "")) {
+          return reply.code(404).send(result);
+        }
+        return result.ok ? result : reply.code(409).send(result);
+      } catch (error) {
+        if (error instanceof AccountLifecycleRequestError) {
+          return reply.code(error.statusCode)
+            .send(accountLifecycleRequestErrorResponse(action, error.code));
+        }
+        return reply.code(500).send({ ok: false, code: `account_${action}_write_failed` });
       } finally {
         opened.db.close();
       }

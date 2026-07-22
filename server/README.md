@@ -23,6 +23,10 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `POST /prototype/repositories/accounts/dry-run/update`
 - `POST /prototype/repositories/accounts/write/create` (experimental, disabled by default)
 - `POST /prototype/repositories/accounts/write/update` (experimental, disabled by default)
+- `POST /prototype/repositories/accounts/delete/dry-run`
+- `POST /prototype/repositories/accounts/delete/write` (experimental, disabled by default)
+- `POST /prototype/repositories/accounts/merge/dry-run`
+- `POST /prototype/repositories/accounts/merge/write` (experimental, disabled by default)
 - `GET /prototype/repositories/buckets`
 - `GET /prototype/repositories/buckets/:id`
 - `GET /prototype/repositories/categories`
@@ -922,19 +926,59 @@ Currency and credit-account changes are reported as financially significant
 warnings. They do not authorize transaction reinterpretation or related-row
 mutation. The endpoints do not insert or update transactions, payment methods,
 budgets, budget snapshots, balances, references, images, or any other lookup
-table. Delete, merge, active-state writes, image writes, reconciliation, and
+table. Active-state writes, image writes, reconciliation, and automatic
 reference migration are not implemented for Accounts.
+
+Account lifecycle operations use separate dry-run-first routes:
+
+```text
+POST /prototype/repositories/accounts/delete/dry-run
+POST /prototype/repositories/accounts/delete/write
+POST /prototype/repositories/accounts/merge/dry-run
+POST /prototype/repositories/accounts/merge/write
+```
+
+Real delete/merge writes require
+`PERSONAL_FINANCE_ENABLE_ACCOUNT_DELETE_MERGE_WRITES=true`; the frontend
+controls additionally require
+`VITE_PERSONAL_FINANCE_ACCOUNT_DELETE_MERGE_WRITE_EXPERIMENT=true`. This is an
+optional authority capability, so older manifests and checkpoints remain
+valid when it is absent. Account create/update remains independently governed
+by `PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES`.
+
+Delete is unused-only. It refuses any Account referenced by canonical
+`accountId` in transactions, Budget definitions, Budget snapshots, SMS import
+templates, or legacy payment methods. Merge replaces one exact source Account
+ID with one explicit target ID across those five locations and then removes
+the source atomically. The target row wins and remains unchanged. Source and
+target must have the same nonblank currency and credit/debit classification.
+
+`transactions.paymentChannelId`, `budgets.paymentChannelId`, and
+`smsImportTemplates.paymentMethodId` identify legacy `paymentMethods` rows,
+not Accounts, so lifecycle writes preserve them. Transfer pairs are simulated
+before mutation and revalidated afterward. A direct source-target transfer,
+or any malformed affected transfer, blocks merge; no currency conversion,
+amount changes, transfer repair, fuzzy matching, bulk merge, or automatic
+duplicate selection is performed. Global financial/report/Budget History
+values remain unchanged while the target's derived Account balance becomes the
+previous source-plus-target total.
+
+Authoritative lifecycle writes change the SQLite logical fingerprint. Rotate
+the checkpoint manually before restart; no backup or manifest is changed
+automatically. Recovery remains through the existing native backup or
+checkpoint rollback process.
 
 Normal `smoke:api` remains non-mutating. Account mutation smoke is explicit:
 
 ```bash
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-account-write-smoke
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-account-delete-merge-write-smoke
 ```
 
 Run it only against disposable SQLite with the Account write flag enabled,
 preferably on a distinct test port. A successful run creates and updates one
-Account and dirties SQLite. Re-import from a fresh matching backup before clean
-parity checks.
+Account, or performs explicit lifecycle fixtures, and dirties SQLite. Re-import
+from a fresh matching backup before clean parity checks.
 
 SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 

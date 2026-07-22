@@ -21,6 +21,7 @@ import {
 } from "./lib/budgetSnapshotGenerationWrite.js";
 import { BUDGET_LIFECYCLE_CONFIRMATIONS } from "./lib/budgetLifecycle.js";
 import { RECIPIENT_LIFECYCLE_CONFIRMATIONS } from "./lib/recipientLifecycle.js";
+import { ACCOUNT_LIFECYCLE_CONFIRMATIONS } from "./lib/accountLifecycle.js";
 import {
   calculateBudgetOccurrenceSchedule,
   calculateMissingBudgetSnapshotPlan,
@@ -55,6 +56,7 @@ interface SmokeArgs {
   allowRecipientDeleteMergeWriteSmoke: boolean;
   allowBucketCategoryWriteSmoke: boolean;
   allowAccountWriteSmoke: boolean;
+  allowAccountDeleteMergeWriteSmoke: boolean;
   allowTransactionBasicWriteSmoke: boolean;
   allowTransactionCostBudgetWriteSmoke: boolean;
   allowTransactionTransferWriteSmoke: boolean;
@@ -158,6 +160,8 @@ Options:
                          Opt in to disposable SQLite bucket/category create/update write smoke.
   --allow-account-write-smoke
                          Opt in to disposable SQLite account create/update write smoke.
+  --allow-account-delete-merge-write-smoke
+                         Opt in to unused-delete and exact-reference Account merge write smoke.
   --allow-transaction-basic-write-smoke
                          Opt in to disposable SQLite basic transaction create/update write smoke.
   --allow-transaction-cost-budget-write-smoke
@@ -186,6 +190,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowRecipientDeleteMergeWriteSmoke: false,
     allowBucketCategoryWriteSmoke: false,
     allowAccountWriteSmoke: false,
+    allowAccountDeleteMergeWriteSmoke: false,
     allowTransactionBasicWriteSmoke: false,
     allowTransactionCostBudgetWriteSmoke: false,
     allowTransactionTransferWriteSmoke: false,
@@ -256,6 +261,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-account-write-smoke") {
       args.allowAccountWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-account-delete-merge-write-smoke") {
+      args.allowAccountDeleteMergeWriteSmoke = true;
       continue;
     }
 
@@ -895,6 +905,7 @@ const buildChecks = (
   allowRecipientDeleteMergeWriteSmoke: boolean,
   allowBucketCategoryWriteSmoke: boolean,
   allowAccountWriteSmoke: boolean,
+  allowAccountDeleteMergeWriteSmoke: boolean,
   allowTransactionBasicWriteSmoke: boolean,
   allowTransactionCostBudgetWriteSmoke: boolean,
   allowTransactionTransferWriteSmoke: boolean,
@@ -917,7 +928,8 @@ const buildChecks = (
       ? ["recipientDeleteMergeWrites"]
       : []),
     ...(allowBucketCategoryWriteSmoke ? ["bucketCategoryWrites"] : []),
-    ...(allowAccountWriteSmoke ? ["accountWrites"] : []),
+    ...(allowAccountWriteSmoke || allowAccountDeleteMergeWriteSmoke ? ["accountWrites"] : []),
+    ...(allowAccountDeleteMergeWriteSmoke ? ["accountDeleteMergeWrites"] : []),
     ...(allowTransactionBasicWriteSmoke ||
     allowTransactionCostBudgetWriteSmoke ||
     allowTransactionTransferWriteSmoke
@@ -945,6 +957,7 @@ const buildChecks = (
     "recipientDeleteMergeWrites",
     "bucketCategoryWrites",
     "accountWrites",
+    "accountDeleteMergeWrites",
     "transactionBasicWrites",
     "transactionCostBudgetWrites",
     "transactionTransferWrites",
@@ -2106,7 +2119,132 @@ const buildChecks = (
         );
       },
     },
-    ...(!allowAccountWriteSmoke
+    {
+      name: "account delete and merge dry-runs are protected, redacted, and non-mutating",
+      run: async () => {
+        const tables = [
+          "transactions", "budgets", "budgetSnapshots", "buckets", "categories",
+          "accounts", "paymentMethods", "recipients", "smsImportTemplates",
+        ] as const;
+        const baseline = new Map<string, string>();
+        for (const table of tables) {
+          baseline.set(table, rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)));
+        }
+        const accountRows = await readAllTableRows(baseUrl, "accounts", authedOptions);
+        const first = accountRows.find((row) => typeof row.id === "number");
+        if (!first || typeof first.id !== "number") throw new Error("account_lifecycle_fixture_missing");
+        const unauthorized = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/delete/dry-run",
+          { method: "POST", body: { accountId: first.id }, origin },
+        );
+        expectStatus(unauthorized.status, 401);
+        const badOrigin = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/delete/dry-run",
+          { token, origin: "http://unexpected-origin.invalid", method: "POST", body: { accountId: first.id } },
+        );
+        expectStatus(badOrigin.status, 403);
+        const invalid = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/delete/dry-run",
+          { ...authedOptions, method: "POST", body: { accountId: -1 } },
+        );
+        expectStatus(invalid.status, 400);
+        const unexpected = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/merge/dry-run",
+          { ...authedOptions, method: "POST", body: {
+            sourceAccountId: first.id, targetAccountId: first.id, unexpected: true,
+          } },
+        );
+        expectStatus(unexpected.status, 400);
+        const same = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/merge/dry-run",
+          { ...authedOptions, method: "POST", body: {
+            sourceAccountId: first.id, targetAccountId: first.id,
+          } },
+        );
+        expectStatus(same.status, 409);
+        const missingSource = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/merge/dry-run",
+          { ...authedOptions, method: "POST", body: {
+            sourceAccountId: 2_147_483_647, targetAccountId: first.id,
+          } },
+        );
+        expectStatus(missingSource.status, 404);
+        const missingTarget = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/merge/dry-run",
+          { ...authedOptions, method: "POST", body: {
+            sourceAccountId: first.id, targetAccountId: 2_147_483_647,
+          } },
+        );
+        expectStatus(missingTarget.status, 404);
+        const compatible = accountRows.find((row) =>
+          row.id !== first.id && row.currency === first.currency &&
+          Boolean(row.isCredit) === Boolean(first.isCredit));
+        if (compatible && typeof compatible.id === "number") {
+          const merge = await requestJson(
+            baseUrl,
+            "/prototype/repositories/accounts/merge/dry-run",
+            { ...authedOptions, method: "POST", body: {
+              sourceAccountId: first.id, targetAccountId: compatible.id,
+            } },
+          );
+          expect(merge.status === 200 || merge.status === 409, "account_merge_dry_run_status_invalid");
+          expect(merge.json.wouldMutate === false, "account_merge_dry_run_would_mutate");
+          const sensitiveNames = [first.name, compatible.name]
+            .filter((value): value is string => typeof value === "string");
+          expectNoSensitiveEcho(merge.json, sensitiveNames);
+        }
+        const invalidFingerprint = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/delete/write",
+          { ...authedOptions, method: "POST", body: {
+            accountId: first.id, dryRunReviewed: true,
+            confirmation: ACCOUNT_LIFECYCLE_CONFIRMATIONS.delete,
+            expectedPlanFingerprint: "invalid",
+          } },
+        );
+        expectStatus(invalidFingerprint.status, 400);
+        for (const action of ["bulk-merge", "automatic-duplicate-cleanup"] as const) {
+          const unavailable = await requestJson(
+            baseUrl,
+            `/prototype/repositories/accounts/${action}/write`,
+            { ...authedOptions, method: "POST", body: {} },
+          );
+          expectStatus(unavailable.status, 404);
+        }
+        for (const table of tables) {
+          expect(
+            rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)) === baseline.get(table),
+            `${table}_changed_by_account_lifecycle_dry_run`,
+          );
+        }
+      },
+    },
+    ...(!allowAccountDeleteMergeWriteSmoke
+      ? [{
+          name: "account delete and merge writes are disabled by default",
+          run: async () => {
+            const response = await requestJson(
+              baseUrl,
+              "/prototype/repositories/accounts/delete/write",
+              { ...authedOptions, method: "POST", body: {
+                accountId: 1, dryRunReviewed: true,
+                confirmation: ACCOUNT_LIFECYCLE_CONFIRMATIONS.delete,
+                expectedPlanFingerprint: "0".repeat(64),
+              } },
+            );
+            expectStatus(response.status, 403);
+            expect(response.json.sqliteMutated === false, "disabled_account_lifecycle_mutated");
+          },
+        } satisfies SmokeCheck]
+      : []),
+    ...(!allowAccountWriteSmoke && !allowAccountDeleteMergeWriteSmoke
       ? [
           {
             name: "account writes are disabled and non-mutating by default",
@@ -4540,6 +4678,146 @@ const buildChecks = (
             },
           } satisfies SmokeCheck,
         ]
+      : []),
+    ...(allowAccountDeleteMergeWriteSmoke
+      ? [{
+          name: "account delete and merge opt-in smoke mutates only disposable lifecycle rows",
+          run: async () => {
+            let sequence = Date.now();
+            const createAccount = async (
+              label: string,
+              currency = "KES",
+              isCredit = false,
+            ): Promise<number> => {
+              sequence += 1;
+              const name = `Lifecycle account ${label} ${sequence}`;
+              const created = await requestJson(
+                baseUrl,
+                "/prototype/repositories/accounts/write/create",
+                { ...authedOptions, method: "POST", body: {
+                  name, currency, isCredit, dryRunReviewed: true,
+                  confirmation: ACCOUNT_CREATE_WRITE_CONFIRMATION,
+                } },
+              );
+              expectStatus(created.status, 200);
+              expectNoSensitiveEcho(created.json, [name]);
+              expect(typeof created.json.targetId === "number", "account_lifecycle_fixture_id_missing");
+              return Number(created.json.targetId);
+            };
+
+            const unusedId = await createAccount("unused");
+            const deleteDry = await requestJson(
+              baseUrl,
+              "/prototype/repositories/accounts/delete/dry-run",
+              { ...authedOptions, method: "POST", body: { accountId: unusedId } },
+            );
+            expectStatus(deleteDry.status, 200);
+            expect(deleteDry.json.eligible === true, "unused_account_not_delete_eligible");
+            const deleted = await requestJson(
+              baseUrl,
+              "/prototype/repositories/accounts/delete/write",
+              { ...authedOptions, method: "POST", body: {
+                accountId: unusedId, dryRunReviewed: true,
+                confirmation: ACCOUNT_LIFECYCLE_CONFIRMATIONS.delete,
+                expectedPlanFingerprint: deleteDry.json.planFingerprint,
+              } },
+            );
+            expectStatus(deleted.status, 200);
+            expect(deleted.json.rowsChanged === 1, "unused_account_delete_count_invalid");
+            const repeatedDelete = await requestJson(
+              baseUrl,
+              "/prototype/repositories/accounts/delete/dry-run",
+              { ...authedOptions, method: "POST", body: { accountId: unusedId } },
+            );
+            expectStatus(repeatedDelete.status, 404);
+
+            const sourceId = await createAccount("source");
+            const targetId = await createAccount("target");
+            const targetBefore = await requestJson(
+              baseUrl,
+              `/prototype/repositories/accounts/${targetId}`,
+              authedOptions,
+            );
+            expectStatus(targetBefore.status, 200);
+            const mergeDry = await requestJson(
+              baseUrl,
+              "/prototype/repositories/accounts/merge/dry-run",
+              { ...authedOptions, method: "POST", body: { sourceAccountId: sourceId, targetAccountId: targetId } },
+            );
+            expectStatus(mergeDry.status, 200);
+            const merged = await requestJson(
+              baseUrl,
+              "/prototype/repositories/accounts/merge/write",
+              { ...authedOptions, method: "POST", body: {
+                sourceAccountId: sourceId, targetAccountId: targetId,
+                dryRunReviewed: true,
+                confirmation: ACCOUNT_LIFECYCLE_CONFIRMATIONS.merge,
+                expectedPlanFingerprint: mergeDry.json.planFingerprint,
+              } },
+            );
+            expectStatus(merged.status, 200);
+            expect(merged.json.rowsChanged === 1, "zero_reference_account_merge_count_invalid");
+            const sourceAfter = await requestJson(
+              baseUrl,
+              `/prototype/repositories/accounts/${sourceId}`,
+              authedOptions,
+            );
+            expectStatus(sourceAfter.status, 404);
+            const targetAfter = await requestJson(
+              baseUrl,
+              `/prototype/repositories/accounts/${targetId}`,
+              authedOptions,
+            );
+            expectStatus(targetAfter.status, 200);
+            expect(
+              rowsFingerprint([detailRow(targetBefore.json, "account")]) ===
+                rowsFingerprint([detailRow(targetAfter.json, "account")]),
+              "account_merge_changed_target",
+            );
+
+            const transactions = await readAllTableRows(baseUrl, "transactions", authedOptions);
+            const referenced = transactions.find((row) => typeof row.accountId === "number");
+            if (referenced && typeof referenced.accountId === "number") {
+              const referencedDry = await requestJson(
+                baseUrl,
+                "/prototype/repositories/accounts/delete/dry-run",
+                { ...authedOptions, method: "POST", body: { accountId: referenced.accountId } },
+              );
+              expectStatus(referencedDry.status, 200);
+              expect(referencedDry.json.eligible === false, "referenced_account_delete_allowed");
+              const refused = await requestJson(
+                baseUrl,
+                "/prototype/repositories/accounts/delete/write",
+                { ...authedOptions, method: "POST", body: {
+                  accountId: referenced.accountId, dryRunReviewed: true,
+                  confirmation: ACCOUNT_LIFECYCLE_CONFIRMATIONS.delete,
+                  expectedPlanFingerprint: referencedDry.json.planFingerprint,
+                } },
+              );
+              expectStatus(refused.status, 409);
+              expect(refused.json.sqliteMutated === false, "referenced_account_delete_mutated");
+            }
+
+            const mismatchCurrencyId = await createAccount("currency", "USD");
+            const currencyMismatch = await requestJson(
+              baseUrl,
+              "/prototype/repositories/accounts/merge/dry-run",
+              { ...authedOptions, method: "POST", body: {
+                sourceAccountId: targetId, targetAccountId: mismatchCurrencyId,
+              } },
+            );
+            expectStatus(currencyMismatch.status, 409);
+            const mismatchTypeId = await createAccount("credit", "KES", true);
+            const typeMismatch = await requestJson(
+              baseUrl,
+              "/prototype/repositories/accounts/merge/dry-run",
+              { ...authedOptions, method: "POST", body: {
+                sourceAccountId: targetId, targetAccountId: mismatchTypeId,
+              } },
+            );
+            expectStatus(typeMismatch.status, 409);
+          },
+        } satisfies SmokeCheck]
       : []),
     {
       name: "transaction basic dry-run and write routes remain protected",
@@ -7895,7 +8173,7 @@ const buildChecks = (
       },
     },
     {
-      name: "account delete and merge dry-run/write routes are not implemented",
+      name: "legacy account delete and merge route shapes remain unavailable",
       run: async () => {
         for (const mode of ["dry-run", "write"] as const) {
           for (const action of ["delete", "merge"] as const) {
@@ -8002,6 +8280,7 @@ const main = async (): Promise<void> => {
     args.allowRecipientDeleteMergeWriteSmoke,
     args.allowBucketCategoryWriteSmoke,
     args.allowAccountWriteSmoke,
+    args.allowAccountDeleteMergeWriteSmoke,
     args.allowTransactionBasicWriteSmoke,
     args.allowTransactionCostBudgetWriteSmoke,
     args.allowTransactionTransferWriteSmoke,

@@ -22,6 +22,8 @@ export const BUCKET_CATEGORY_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUCKET_CATEGORY_WRITES" as const;
 export const ACCOUNT_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_ACCOUNT_WRITES" as const;
+export const ACCOUNT_DELETE_MERGE_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_ACCOUNT_DELETE_MERGE_WRITES" as const;
 export const TRANSACTION_BASIC_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES" as const;
 export const TRANSACTION_COST_BUDGET_WRITES_ENV_VAR =
@@ -93,6 +95,9 @@ export const areBucketCategoryWritesEnabled = (): boolean =>
 
 export const areAccountWritesEnabled = (): boolean =>
   process.env[ACCOUNT_WRITES_ENV_VAR] === "true";
+
+export const areAccountDeleteMergeWritesEnabled = (): boolean =>
+  process.env[ACCOUNT_DELETE_MERGE_WRITES_ENV_VAR] === "true";
 
 export const areTransactionBasicWritesEnabled = (): boolean =>
   process.env[TRANSACTION_BASIC_WRITES_ENV_VAR] === "true";

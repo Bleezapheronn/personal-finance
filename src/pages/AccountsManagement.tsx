@@ -44,6 +44,9 @@ import {
   IonList,
   IonText,
   IonBadge,
+  IonModal,
+  IonSelect,
+  IonSelectOption,
 } from "@ionic/react";
 import {
   add,
@@ -52,6 +55,7 @@ import {
   checkmarkCircleOutline,
   closeCircleOutline,
   warningOutline,
+  gitMergeOutline,
 } from "ionicons/icons";
 import { db } from "../db";
 import {
@@ -85,6 +89,15 @@ import {
   isAccountsWriteExperimentEnabled,
   updateAccountInDisposableSqlite,
 } from "../repositories/http/accountWriteExperiment";
+import {
+  accountLifecycleErrorCode,
+  dryRunAccountDelete,
+  dryRunAccountMerge,
+  isAccountDeleteMergeWriteExperimentEnabled,
+  writeAccountDelete,
+  writeAccountMerge,
+  type AccountLifecycleResponse,
+} from "../repositories/http/accountDeleteMergeWriteExperiment";
 
 import type { Account } from "../db";
 
@@ -94,7 +107,12 @@ type DeleteState =
   | { type: "none" }
   | { type: "used"; accountId: number; accountName: string }
   | { type: "used_deactivated"; accountId: number; accountName: string }
-  | { type: "empty"; accountId: number; accountName: string };
+  | {
+      type: "empty";
+      accountId: number;
+      accountName: string;
+      sqlitePlanFingerprint?: string;
+    };
 
 interface SelectedReadAccountPreviewRow {
   id?: number;
@@ -185,12 +203,17 @@ const AccountsManagement: React.FC = () => {
     useState(false);
   const [accountsReadExperimentCount, setAccountsReadExperimentCount] =
     useState<number | undefined>(undefined);
+  const [showSqliteMergeModal, setShowSqliteMergeModal] = useState(false);
+  const [sqliteMergeSource, setSqliteMergeSource] = useState<Account | null>(null);
+  const [sqliteMergeTargetId, setSqliteMergeTargetId] = useState<number>();
 
   const selectedBackend = getRepositoryBackend();
   const rehearsal = useSqliteAuthorityRehearsal();
   const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
   const accountsReadExperimentEnabled = isAccountsReadExperimentEnabled();
   const accountsWriteExperimentEnabled = isAccountsWriteExperimentEnabled();
+  const accountDeleteMergeWriteExperimentEnabled =
+    isAccountDeleteMergeWriteExperimentEnabled();
   const accountsSqliteWriteExperimentActive =
     (accountsWriteExperimentEnabled && selectedBackend === "http-readonly") ||
     (rehearsalSelected && rehearsal.ready);
@@ -200,6 +223,41 @@ const AccountsManagement: React.FC = () => {
       selectedBackend === "http-readonly");
   const accountsHttpReadonlyWithoutWrites =
     accountsReadExperimentHttpReadonly && !accountsSqliteWriteExperimentActive;
+  const accountDeleteMergeWriteExperimentActive =
+    rehearsalSelected &&
+    rehearsal.ready &&
+    rehearsal.accountDeleteMergeWritesAvailable &&
+    accountDeleteMergeWriteExperimentEnabled;
+
+  const accountReferenceSummary = (plan: AccountLifecycleResponse): string =>
+    `transactions=${plan.referenceCountsByEntity.transactions}, ` +
+    `budgets=${plan.referenceCountsByEntity.budgets}, ` +
+    `snapshots=${plan.referenceCountsByEntity.budgetSnapshots}, ` +
+    `SMS templates=${plan.referenceCountsByEntity.smsImportTemplates}, ` +
+    `payment methods=${plan.referenceCountsByEntity.paymentMethods}`;
+
+  const showSafeAccountLifecycleError = (error: unknown): void => {
+    const code = accountLifecycleErrorCode(error);
+    const message = code === "account_delete_merge_writes_disabled"
+      ? "Server Account delete/merge capability is disabled."
+      : code === "account_lifecycle_plan_stale"
+        ? "Account references changed after review. Reload and review again."
+        : `Account lifecycle operation failed: ${code}`;
+    setToastMessage(message);
+    setShowToast(true);
+  };
+
+  const refreshAccountLifecycleReads = async (): Promise<void> => {
+    const repositories = getSelectedReadRepositories(selectedBackend);
+    await Promise.all([
+      repositories.accounts.list({ limit: ACCOUNTS_READ_EXPERIMENT_LIMIT, offset: 0 }),
+      repositories.transactions.list({ limit: 1, offset: 0 }),
+      repositories.budgets.list({ limit: 1, offset: 0 }),
+      repositories.budgetSnapshots.list({ limit: 1, offset: 0 }),
+      repositories.smsImportTemplates.list({ limit: 1, offset: 0 }),
+    ]);
+    await fetchAccounts();
+  };
 
   const showReadExperimentWriteDisabledToast = () => {
     setToastMessage("Switch back to Dexie to edit accounts");
@@ -352,6 +410,36 @@ const AccountsManagement: React.FC = () => {
    * initiateDeleteAccount - Check account usage and set appropriate delete state
    */
   const initiateDeleteAccount = async (account: Account) => {
+    if (accountDeleteMergeWriteExperimentActive) {
+      if (!account.id) {
+        setToastMessage("Account lifecycle operation failed: account_id_missing");
+        setShowToast(true);
+        return;
+      }
+      try {
+        setLoading(true);
+        const plan = await dryRunAccountDelete(account.id);
+        if (!plan.eligible) {
+          setToastMessage(
+            `Account is referenced (${accountReferenceSummary(plan)}). Merge it or clean up references manually.`,
+          );
+          setShowToast(true);
+          return;
+        }
+        setDeleteState({
+          type: "empty",
+          accountId: account.id,
+          accountName: account.name,
+          sqlitePlanFingerprint: plan.planFingerprint,
+        });
+      } catch (error) {
+        showSafeAccountLifecycleError(error);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (accountsReadExperimentHttpReadonly) {
       showReadExperimentWriteDisabledToast();
       return;
@@ -421,6 +509,38 @@ const AccountsManagement: React.FC = () => {
    * handleDeleteAccount - Removes an account from the database
    */
   const handleDeleteAccount = async (accountId: number) => {
+    if (accountDeleteMergeWriteExperimentActive) {
+      if (deleteState.type !== "empty" || !deleteState.sqlitePlanFingerprint) {
+        setToastMessage("Account delete requires a fresh reviewed dry-run.");
+        setShowToast(true);
+        return;
+      }
+      let sqliteMutated = false;
+      try {
+        setLoading(true);
+        await writeAccountDelete(accountId, deleteState.sqlitePlanFingerprint);
+        sqliteMutated = true;
+        setDeleteState({ type: "none" });
+        await refreshAccountLifecycleReads();
+        setToastMessage(
+          rehearsal.authoritativeMode
+            ? "Account deleted from authoritative SQLite. Rotate the checkpoint before restart."
+            : "Unused Account deleted from disposable SQLite.",
+        );
+        setShowToast(true);
+      } catch (error) {
+        if (sqliteMutated) {
+          setToastMessage("SQLite may have changed, but selected-read refresh failed. Reload before retrying.");
+          setShowToast(true);
+        } else {
+          showSafeAccountLifecycleError(error);
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (accountsReadExperimentHttpReadonly) {
       showReadExperimentWriteDisabledToast();
       setDeleteState({ type: "none" });
@@ -437,6 +557,59 @@ const AccountsManagement: React.FC = () => {
       await fetchAccounts();
     } catch (error) {
       console.error("Error deleting account:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openSqliteMerge = (source: Account) => {
+    setSqliteMergeSource(source);
+    setSqliteMergeTargetId(undefined);
+    setShowSqliteMergeModal(true);
+  };
+
+  const handleSqliteMerge = async () => {
+    if (!sqliteMergeSource?.id || !sqliteMergeTargetId) {
+      setToastMessage("Choose a distinct compatible target Account before reviewing the merge.");
+      setShowToast(true);
+      return;
+    }
+    let sqliteMutated = false;
+    try {
+      setLoading(true);
+      const plan = await dryRunAccountMerge(sqliteMergeSource.id, sqliteMergeTargetId);
+      const confirmed = window.confirm(
+        `Merge this source Account into the selected target?\n\n` +
+        `References to migrate: ${plan.sourceReferenceCount}\n` +
+        `${accountReferenceSummary(plan)}\n` +
+        `Affected transfer pairs: ${plan.affectedTransferPairCount}\n\n` +
+        "The source will be permanently removed. Target fields remain unchanged. " +
+        "Balances and history will consolidate under the target.",
+      );
+      if (!confirmed) return;
+      await writeAccountMerge(
+        sqliteMergeSource.id,
+        sqliteMergeTargetId,
+        plan.planFingerprint!,
+      );
+      sqliteMutated = true;
+      setShowSqliteMergeModal(false);
+      setSqliteMergeSource(null);
+      setSqliteMergeTargetId(undefined);
+      await refreshAccountLifecycleReads();
+      setToastMessage(
+        rehearsal.authoritativeMode
+          ? "Account merged in authoritative SQLite. Rotate the checkpoint before restart."
+          : "Account merged in disposable SQLite.",
+      );
+      setShowToast(true);
+    } catch (error) {
+      if (sqliteMutated) {
+        setToastMessage("SQLite may have changed, but selected-read refresh failed. Reload before retrying.");
+        setShowToast(true);
+      } else {
+        showSafeAccountLifecycleError(error);
+      }
     } finally {
       setLoading(false);
     }
@@ -619,7 +792,8 @@ const AccountsManagement: React.FC = () => {
           </SelectedReadPreviewCard>
         )}
 
-        {(accountsReadExperimentEnabled || accountsWriteExperimentEnabled) && (
+        {(accountsReadExperimentEnabled || accountsWriteExperimentEnabled ||
+          accountDeleteMergeWriteExperimentEnabled) && (
           <IonCard>
             <IonCardContent>
               <IonText
@@ -631,7 +805,9 @@ const AccountsManagement: React.FC = () => {
                   <IonIcon icon={warningOutline} />{" "}
                   {accountsSqliteWriteExperimentActive
                     ? rehearsal.authoritativeMode
-                      ? "SQLite authoritative mode is active. Supported Account create/update writes use the verified local SQLite database; unsupported Account operations remain disabled."
+                      ? accountDeleteMergeWriteExperimentActive
+                        ? "SQLite authoritative mode is active. Account delete and merge use dry-run-first exact-reference lifecycle writes."
+                        : "SQLite authoritative mode is active. Supported Account create/update writes use the verified local SQLite database; delete and merge require their separate capability and frontend flag."
                       : "Accounts SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
                     : accountsReadExperimentHttpReadonly
                       ? "Accounts read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie to edit."
@@ -642,7 +818,10 @@ const AccountsManagement: React.FC = () => {
                     Account images/icons are omitted in the HTTP path.
                     Create/update does not mutate transactions, balances,
                     payment methods, references, active state, or images.
-                    Delete and active-state actions remain unavailable.
+                    Active-state actions remain unavailable.
+                    {accountDeleteMergeWriteExperimentActive
+                      ? " Delete is unused-only; merge requires matching currency and credit classification and refuses unsafe transfers."
+                      : " Delete and merge remain unavailable."}
                   </p>
                 )}
                 {accountsReadExperimentHttpReadonly &&
@@ -792,6 +971,28 @@ const AccountsManagement: React.FC = () => {
                                   </IonButton>
                                 </>
                               )}
+                              {accountDeleteMergeWriteExperimentActive && (
+                                <>
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    color="danger"
+                                    title="Delete unused Account"
+                                    onClick={() => initiateDeleteAccount(account)}
+                                  >
+                                    <IonIcon icon={trashOutline} />
+                                  </IonButton>
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    color="warning"
+                                    title="Merge Account"
+                                    onClick={() => openSqliteMerge(account)}
+                                  >
+                                    <IonIcon icon={gitMergeOutline} />
+                                  </IonButton>
+                                </>
+                              )}
                             </IonCol>
                           )}
                         </IonRow>
@@ -852,9 +1053,13 @@ const AccountsManagement: React.FC = () => {
           isOpen={deleteState.type === "empty"}
           onDidDismiss={() => setDeleteState({ type: "none" })}
           header="Confirm Delete"
-          message={`Are you sure you want to delete "${
-            deleteState.type === "empty" ? deleteState.accountName : ""
-          }"? This action cannot be undone.`}
+          message={accountDeleteMergeWriteExperimentActive
+            ? `The dry-run confirmed that "${
+                deleteState.type === "empty" ? deleteState.accountName : ""
+              }" has no supported references. Delete it from SQLite? Rotate the authority checkpoint before restart.`
+            : `Are you sure you want to delete "${
+                deleteState.type === "empty" ? deleteState.accountName : ""
+              }"? This action cannot be undone.`}
           buttons={[
             {
               text: "Cancel",
@@ -871,6 +1076,53 @@ const AccountsManagement: React.FC = () => {
             },
           ]}
         />
+
+        <IonModal
+          isOpen={showSqliteMergeModal}
+          onDidDismiss={() => {
+            setShowSqliteMergeModal(false);
+            setSqliteMergeSource(null);
+            setSqliteMergeTargetId(undefined);
+          }}
+        >
+          <IonHeader>
+            <IonToolbar>
+              <IonTitle>Merge Account</IonTitle>
+            </IonToolbar>
+          </IonHeader>
+          <IonContent className="ion-padding">
+            <IonText color="warning">
+              <p>
+                Experimental SQLite-only operation. The source Account will be removed;
+                the selected target remains unchanged.
+              </p>
+            </IonText>
+            <IonItem>
+              <IonLabel position="stacked">Target Account</IonLabel>
+              <IonSelect
+                value={sqliteMergeTargetId}
+                placeholder="Choose target"
+                onIonChange={(event) => setSqliteMergeTargetId(Number(event.detail.value))}
+              >
+                {accounts
+                  .filter((account) => account.id !== sqliteMergeSource?.id)
+                  .map((account) => (
+                    <IonSelectOption key={account.id} value={account.id}>
+                      {account.name}
+                    </IonSelectOption>
+                  ))}
+              </IonSelect>
+            </IonItem>
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <IonButton fill="outline" onClick={() => setShowSqliteMergeModal(false)}>
+                Cancel
+              </IonButton>
+              <IonButton color="warning" onClick={handleSqliteMerge} disabled={loading}>
+                Review merge
+              </IonButton>
+            </div>
+          </IonContent>
+        </IonModal>
 
         {/* MODALS */}
         {(!accountsReadExperimentHttpReadonly ||
