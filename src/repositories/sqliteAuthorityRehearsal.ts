@@ -98,6 +98,7 @@ export interface SqliteAuthorityRehearsalReadiness {
   missingRequirements: string[];
   unsupportedOperations: string[];
   transactionDeleteWritesAvailable: boolean;
+  budgetLifecycleWritesAvailable: boolean;
   code?: string;
   message: string;
 }
@@ -136,6 +137,7 @@ const initialReadiness = (
       missingRequirements: [],
       unsupportedOperations: [],
       transactionDeleteWritesAvailable: false,
+      budgetLifecycleWritesAvailable: false,
       message: "SQLite authority mode is not selected.",
     };
   }
@@ -155,6 +157,7 @@ const initialReadiness = (
     missingRequirements: acknowledged ? [] : [acknowledgementRequirement],
     unsupportedOperations: [],
     transactionDeleteWritesAvailable: false,
+    budgetLifecycleWritesAvailable: false,
     code: acknowledged ? undefined : `${acknowledgementRequirement}_missing`,
     message: acknowledged
       ? "Checking required local API authority status."
@@ -251,6 +254,8 @@ export const normalizeSqliteAuthorityRehearsalCapabilities = (
     unsupportedOperations: [...response.unsupportedOperations] as string[],
     transactionDeleteWritesAvailable:
       capabilities.transactionDeleteWrites === true,
+    budgetLifecycleWritesAvailable:
+      capabilities.budgetLifecycleWrites === true,
     code: ready ? undefined : "required_write_capabilities_missing",
     message: ready
       ? "All required disposable SQLite write capabilities are available."
@@ -353,6 +358,8 @@ export const normalizeSqliteAuthoritativeReadiness = (
     unsupportedOperations,
     transactionDeleteWritesAvailable:
       capabilities?.transactionDeleteWrites === true,
+    budgetLifecycleWritesAvailable:
+      capabilities?.budgetLifecycleWrites === true,
     message:
       "Verified SQLite authoritative mode is active. Dexie writes remain disabled.",
   };

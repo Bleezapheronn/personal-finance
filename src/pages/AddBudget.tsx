@@ -55,6 +55,12 @@ import {
   updateBudgetDefinitionInDisposableSqlite,
   type BudgetDefinitionWriteInput,
 } from "../repositories/http/budgetDefinitionWriteExperiment";
+import {
+  budgetLifecycleWriteErrorCode,
+  dryRunBudgetLifecycle,
+  isBudgetLifecycleWriteExperimentEnabled,
+  writeBudgetLifecycle,
+} from "../repositories/http/budgetLifecycleWriteExperiment";
 
 type BudgetType = "expense" | "income";
 
@@ -134,8 +140,12 @@ const AddBudget: React.FC = () => {
     isHttpSelectedReadRepositoryBackend(repositoryBackend);
   const budgetDefinitionWriteExperimentActive =
     (repositoryBackend === "http-readonly" &&
-      isBudgetsWriteExperimentEnabled()) ||
-    (rehearsalSelected && rehearsal.ready);
+      isBudgetsWriteExperimentEnabled());
+  const budgetLifecycleWriteExperimentActive =
+    rehearsalSelected &&
+    rehearsal.ready &&
+    rehearsal.budgetLifecycleWritesAvailable &&
+    isBudgetLifecycleWriteExperimentEnabled();
 
   // Budget fields
   const [budgetType, setBudgetType] = useState<BudgetType>("expense");
@@ -712,9 +722,15 @@ const AddBudget: React.FC = () => {
     setShowSuccessToast(false);
     setFieldErrors({});
 
-    if (budgetDefinitionHttpMode && !budgetDefinitionWriteExperimentActive) {
+    if (
+      budgetDefinitionHttpMode &&
+      !budgetDefinitionWriteExperimentActive &&
+      !budgetLifecycleWriteExperimentActive
+    ) {
       setErrorMsg(
-        "Budget definition HTTP writes are disabled. Enable the dev write experiment or switch back to Dexie.",
+        rehearsalSelected
+          ? "Safe Budget lifecycle writes are unavailable. No definition-only fallback was attempted."
+          : "Budget definition HTTP writes are disabled. Enable the dev write experiment or switch back to Dexie.",
       );
       return;
     }
@@ -830,7 +846,65 @@ const AddBudget: React.FC = () => {
         updatedAt: new Date(),
       };
 
-      if (budgetDefinitionWriteExperimentActive) {
+      if (budgetLifecycleWriteExperimentActive) {
+        if (isFromTransaction) {
+          setErrorMsg(
+            "Creating a Budget from a transaction is not available in the SQLite lifecycle experiment.",
+          );
+          return;
+        }
+        const action = isEditMode && id ? "update" : "create";
+        const now = new Date();
+        const pad = (value: number) => String(value).padStart(2, "0");
+        const localAsOf = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        const lifecycleInput = {
+          ...(action === "update" ? { id: Number(id) } : {}),
+          description: budgetData.description,
+          categoryId: budgetData.categoryId,
+          accountId: budgetData.accountId!,
+          recipientId: budgetData.recipientId ?? null,
+          amount: budgetData.amount,
+          transactionCost: budgetData.transactionCost ?? null,
+          frequency: budgetData.frequency,
+          frequencyDetails: budgetData.frequencyDetails ?? null,
+          isGoal: budgetData.isGoal,
+          isFlexible: budgetData.isFlexible,
+          goalPercentage: budgetData.goalPercentage ?? null,
+          goalDirection: budgetData.goalDirection ?? null,
+          remainingCyclesTotal: budgetData.remainingCyclesTotal ?? null,
+          dueDate: budgetData.dueDate.toISOString(),
+          isActive: budgetData.isActive,
+          asOf: localAsOf,
+        };
+        const dryRun = await dryRunBudgetLifecycle(action, lifecycleInput);
+        const confirmed = window.confirm(
+          `Apply safer SQLite Budget lifecycle?\n\n` +
+            `Unlinked current/future snapshots to remove: ${dryRun.unlinkedFutureSnapshotsProposedForCleanup}\n` +
+            `Linked snapshots protected: ${dryRun.linkedSnapshotsProtected}\n` +
+            `Out-of-schedule linked snapshots retained: ${dryRun.outOfScheduleLinkedSnapshotsRetained}\n` +
+            `Snapshots to generate: ${dryRun.snapshotsProposedForGeneration}\n\n` +
+            "This changes SQLite only. Rotate the authority checkpoint before restarting the API.",
+        );
+        if (!confirmed) return;
+        const writeResponse = await writeBudgetLifecycle(
+          action,
+          lifecycleInput,
+          dryRun.planFingerprint!,
+        );
+        sqliteWriteConfirmed = true;
+        const writtenId = Number(writeResponse.targetId ?? id);
+        const refreshed = await getSelectedReadRepositories(
+          repositoryBackend,
+        ).budgets.getById(writtenId);
+        if (!refreshed) throw new Error("budget_lifecycle_refresh_failed");
+        setSuccessToastMessage(
+          rehearsal.authoritativeMode
+            ? "Budget lifecycle updated authoritative SQLite. Rotate the checkpoint before API restart."
+            : "Budget lifecycle updated disposable SQLite. Dexie was not changed.",
+        );
+        setShowSuccessToast(true);
+        setTimeout(() => history.push("/budget"), 500);
+      } else if (budgetDefinitionWriteExperimentActive) {
         if (isFromTransaction) {
           setErrorMsg(
             "Creating a Budget definition from a transaction is not available in the SQLite write experiment.",
@@ -933,6 +1007,18 @@ const AddBudget: React.FC = () => {
       }
     } catch (error) {
       console.error("Error saving budget:", error);
+      if (budgetLifecycleWriteExperimentActive) {
+        if (sqliteWriteConfirmed) {
+          setErrorMsg(
+            "SQLite may have changed, but the selected-read refresh failed. Reload before retrying; do not repeat the write automatically.",
+          );
+          return;
+        }
+        setErrorMsg(
+          `Budget lifecycle SQLite write failed: ${budgetLifecycleWriteErrorCode(error)}`,
+        );
+        return;
+      }
       if (budgetDefinitionWriteExperimentActive) {
         if (sqliteWriteConfirmed) {
           setErrorMsg(
@@ -975,18 +1061,28 @@ const AddBudget: React.FC = () => {
           <IonCard color="warning">
             <IonCardContent>
               <IonText>
-                <h3>Budget Definitions SQLite write experiment</h3>
+                <h3>
+                  {rehearsalSelected
+                    ? "Safer SQLite Budget lifecycle"
+                    : "Budget Definitions SQLite write experiment"}
+                </h3>
                 <p>
-                  {budgetDefinitionWriteExperimentActive
+                  {budgetLifecycleWriteExperimentActive
+                    ? rehearsal.authoritativeMode
+                      ? "SQLite authoritative mode is active. Create/update uses atomic target-Budget cleanup and coverage generation. Linked and historical snapshots remain unchanged."
+                      : "Writes use the safer disposable SQLite lifecycle policy. Dexie remains unchanged; linked and historical snapshots are preserved."
+                    : budgetDefinitionWriteExperimentActive
                     ? rehearsal.authoritativeMode
                       ? "SQLite authoritative mode is active. Supported Budget definition writes use the verified local SQLite database. This form does not generate, prune, delete, or relink Budget snapshots."
                       : "Writes go to disposable local SQLite only. Dexie remains authoritative. Creating or editing a definition does not generate, update, prune, delete, or relink budget snapshots."
-                    : "The HTTP backend is selected, but Budget definition writes are disabled. No write will be attempted."}
+                    : rehearsalSelected
+                      ? "Safe Budget lifecycle support is unavailable. Definition-only fallback is disabled."
+                      : "The HTTP backend is selected, but Budget definition writes are disabled. No write will be attempted."}
                 </p>
                 <p>
-                  Create/update definitions only. Existing Budget History remains
-                  unchanged, delete is unavailable, and SQLite must be
-                  re-imported before clean parity checks.
+                  {budgetLifecycleWriteExperimentActive
+                    ? "Dry-run and confirmation are required. No global pruning, repair, relinking, or automatic checkpoint is performed."
+                    : "Create/update definitions only. Existing Budget History remains unchanged, delete is unavailable, and SQLite must be re-imported before clean parity checks."}
                 </p>
               </IonText>
             </IonCardContent>
@@ -1551,7 +1647,8 @@ const AddBudget: React.FC = () => {
                   color="primary"
                   disabled={
                     budgetDefinitionHttpMode &&
-                    !budgetDefinitionWriteExperimentActive
+                    !budgetDefinitionWriteExperimentActive &&
+                    !budgetLifecycleWriteExperimentActive
                   }
                 >
                   {isEditMode

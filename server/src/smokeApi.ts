@@ -19,6 +19,7 @@ import { budgetGoalDirectionNormalizationSanityCheck } from "./lib/budgetDefinit
 import {
   BUDGET_SNAPSHOT_GENERATION_CONFIRMATION,
 } from "./lib/budgetSnapshotGenerationWrite.js";
+import { BUDGET_LIFECYCLE_CONFIRMATIONS } from "./lib/budgetLifecycle.js";
 import {
   calculateBudgetOccurrenceSchedule,
   calculateMissingBudgetSnapshotPlan,
@@ -59,6 +60,7 @@ interface SmokeArgs {
   allowSmsTemplateWriteSmoke: boolean;
   allowBudgetDefinitionWriteSmoke: boolean;
   allowBudgetSnapshotGenerationWriteSmoke: boolean;
+  allowBudgetLifecycleWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -166,6 +168,8 @@ Options:
                          Opt in to disposable SQLite Budget-definition create/update write smoke.
   --allow-budget-snapshot-generation-write-smoke
                          Opt in to deterministic missing Budget snapshot generation smoke.
+  --allow-budget-lifecycle-write-smoke
+                         Opt in to safer atomic Budget lifecycle create/update smoke.
   --help                 Show this help text.
 `;
 
@@ -184,6 +188,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowSmsTemplateWriteSmoke: false,
     allowBudgetDefinitionWriteSmoke: false,
     allowBudgetSnapshotGenerationWriteSmoke: false,
+    allowBudgetLifecycleWriteSmoke: false,
     help: false,
   };
 
@@ -276,6 +281,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-budget-snapshot-generation-write-smoke") {
       args.allowBudgetSnapshotGenerationWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-budget-lifecycle-write-smoke") {
+      args.allowBudgetLifecycleWriteSmoke = true;
       continue;
     }
 
@@ -881,6 +891,7 @@ const buildChecks = (
   allowSmsTemplateWriteSmoke: boolean,
   allowBudgetDefinitionWriteSmoke: boolean,
   allowBudgetSnapshotGenerationWriteSmoke: boolean,
+  allowBudgetLifecycleWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -912,6 +923,7 @@ const buildChecks = (
     ...(allowBudgetSnapshotGenerationWriteSmoke
       ? ["budgetSnapshotGenerationWrites"]
       : []),
+    ...(allowBudgetLifecycleWriteSmoke ? ["budgetLifecycleWrites"] : []),
   ]);
   const writeCapabilityKeys = [
     "recipientActiveStateWrites",
@@ -925,6 +937,7 @@ const buildChecks = (
     "smsTemplateWrites",
     "budgetDefinitionWrites",
     "budgetSnapshotGenerationWrites",
+    "budgetLifecycleWrites",
   ] as const;
   let sampledTransactionId: number | undefined;
   let sampledBudgetId: number | undefined;
@@ -7470,6 +7483,134 @@ const buildChecks = (
         ]
       : []),
     {
+      name: "Budget lifecycle dry-run is protected, redacted, and non-mutating",
+      run: async () => {
+        const categoryId = sampledLookupIds.get("categories");
+        const accountId = sampledLookupIds.get("accounts");
+        if (!categoryId || !accountId) throw new Error("budget_lifecycle_fixture_missing");
+        const tableNames = [
+          "transactions", "budgets", "budgetSnapshots", "buckets", "categories",
+          "accounts", "paymentMethods", "recipients", "smsImportTemplates",
+        ] as const;
+        const baseline = new Map<string, string>();
+        for (const table of tableNames) {
+          baseline.set(table, rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)));
+        }
+        const payload = {
+          description: `Synthetic lifecycle ${Date.now()}`,
+          categoryId, accountId, recipientId: null, amount: -100,
+          transactionCost: null, frequency: "monthly",
+          frequencyDetails: { dayOfMonth: 15 }, isGoal: false,
+          isFlexible: false, goalPercentage: null, goalDirection: null,
+          remainingCyclesTotal: 3, dueDate: "2026-08-15T00:00:00.000Z",
+          isActive: true, asOf: "2026-07-22",
+        };
+        const unauthenticated = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/lifecycle/dry-run/create",
+          { method: "POST", body: payload, origin },
+        );
+        expectStatus(unauthenticated.status, 401);
+        const dry = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/lifecycle/dry-run/create",
+          { ...authedOptions, method: "POST", body: payload },
+        );
+        expectStatus(dry.status, 200);
+        expect(dry.json.dryRun === true && dry.json.wouldMutate === false,
+          "budget_lifecycle_dry_run_invalid");
+        expect(typeof dry.json.planFingerprint === "string",
+          "budget_lifecycle_plan_missing");
+        expect(!("description" in dry.json) && !JSON.stringify(dry.json).includes(String(payload.description)),
+          "budget_lifecycle_response_not_redacted");
+        const invalid = await requestJson(
+          baseUrl,
+          "/prototype/repositories/budgets/lifecycle/dry-run/create",
+          { ...authedOptions, method: "POST", body: { ...payload, asOf: "bad" } },
+        );
+        expectStatus(invalid.status, 400);
+        for (const table of tableNames) {
+          expect(rowsFingerprint(await readAllTableRows(baseUrl, table, authedOptions)) === baseline.get(table),
+            `${table}_changed_by_budget_lifecycle_dry_run`);
+        }
+      },
+    },
+    ...(!allowBudgetLifecycleWriteSmoke
+      ? [{
+          name: "Budget lifecycle write is disabled by default",
+          run: async () => {
+            const response = await requestJson(
+              baseUrl,
+              "/prototype/repositories/budgets/lifecycle/write/create",
+              {
+                ...authedOptions,
+                method: "POST",
+                body: {
+                  description: "Disabled lifecycle write", categoryId: 1,
+                  accountId: 1, recipientId: null, amount: -1,
+                  transactionCost: null, frequency: "once", frequencyDetails: null,
+                  isGoal: false, isFlexible: false, goalPercentage: null,
+                  goalDirection: null, remainingCyclesTotal: null,
+                  dueDate: "2026-07-22T00:00:00.000Z", isActive: true,
+                  asOf: "2026-07-22", dryRunReviewed: true,
+                  confirmation: BUDGET_LIFECYCLE_CONFIRMATIONS.create,
+                  expectedPlanFingerprint: "0".repeat(64),
+                },
+              },
+            );
+            expectStatus(response.status, 403);
+          },
+        } satisfies SmokeCheck]
+      : []),
+    ...(allowBudgetLifecycleWriteSmoke
+      ? [{
+          name: "opt-in Budget lifecycle creates active coverage and inactive definition",
+          run: async () => {
+            const categoryId = sampledLookupIds.get("categories");
+            const accountId = sampledLookupIds.get("accounts");
+            if (!categoryId || !accountId) throw new Error("budget_lifecycle_fixture_missing");
+            for (const isActive of [true, false]) {
+              const payload = {
+                description: `Lifecycle smoke ${isActive ? "active" : "inactive"} ${Date.now()}`,
+                categoryId, accountId, recipientId: null, amount: -100,
+                transactionCost: null, frequency: "monthly",
+                frequencyDetails: { dayOfMonth: 15 }, isGoal: false,
+                isFlexible: false, goalPercentage: null, goalDirection: null,
+                remainingCyclesTotal: 3, dueDate: "2026-08-15T00:00:00.000Z",
+                isActive, asOf: "2026-07-22",
+              };
+              const dry = await requestJson(
+                baseUrl,
+                "/prototype/repositories/budgets/lifecycle/dry-run/create",
+                { ...authedOptions, method: "POST", body: payload },
+              );
+              expectStatus(dry.status, 200);
+              const writeResponse = await requestJson(
+                baseUrl,
+                "/prototype/repositories/budgets/lifecycle/write/create",
+                {
+                  ...authedOptions, method: "POST",
+                  body: {
+                    ...payload, dryRunReviewed: true,
+                    confirmation: BUDGET_LIFECYCLE_CONFIRMATIONS.create,
+                    expectedPlanFingerprint: dry.json.planFingerprint,
+                  },
+                },
+              );
+              expectStatus(writeResponse.status, 200);
+              expect(writeResponse.json.sqliteMutated === true,
+                "budget_lifecycle_write_not_applied");
+              expect(
+                isActive
+                  ? Number(writeResponse.json.snapshotsProposedForGeneration) > 0
+                  : Number(writeResponse.json.snapshotsProposedForGeneration) === 0,
+                "budget_lifecycle_activity_coverage_invalid",
+              );
+            }
+          },
+        } satisfies SmokeCheck]
+      : []),
+    {
       name: "transaction bulk delete and transfer repair routes are not implemented",
       run: async () => {
         for (const action of ["transfer", "repair", "bulk"] as const) {
@@ -7596,6 +7737,7 @@ const main = async (): Promise<void> => {
     args.allowSmsTemplateWriteSmoke,
     args.allowBudgetDefinitionWriteSmoke,
     args.allowBudgetSnapshotGenerationWriteSmoke,
+    args.allowBudgetLifecycleWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

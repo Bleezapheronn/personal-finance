@@ -1,6 +1,7 @@
 import {
   areAccountWritesEnabled,
   areBudgetDefinitionWritesEnabled,
+  areBudgetLifecycleWritesEnabled,
   areBudgetSnapshotGenerationWritesEnabled,
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
@@ -28,6 +29,7 @@ export const WRITE_CAPABILITY_KEYS = [
 export type WriteCapabilityKey = (typeof WRITE_CAPABILITY_KEYS)[number];
 export const OPTIONAL_WRITE_CAPABILITY_KEYS = [
   "transactionDeleteWrites",
+  "budgetLifecycleWrites",
 ] as const;
 export type OptionalWriteCapabilityKey =
   (typeof OPTIONAL_WRITE_CAPABILITY_KEYS)[number];
@@ -70,6 +72,7 @@ export const readWriteCapabilities = (): WriteCapabilities => ({
   budgetDefinitionWrites: areBudgetDefinitionWritesEnabled(),
   budgetSnapshotGenerationWrites:
     areBudgetSnapshotGenerationWritesEnabled(),
+  budgetLifecycleWrites: areBudgetLifecycleWritesEnabled(),
 });
 
 interface AuthorityStatusForCapabilities {

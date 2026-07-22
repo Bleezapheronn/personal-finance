@@ -36,7 +36,11 @@ const readiness = {
 const capabilities = {
   ok: true,
   ...metadata,
-  capabilities: { ...enabledCapabilities, transactionDeleteWrites: true },
+  capabilities: {
+    ...enabledCapabilities,
+    transactionDeleteWrites: true,
+    budgetLifecycleWrites: true,
+  },
   unsupportedOperations: [...REQUIRED_SQLITE_UNSUPPORTED_OPERATIONS],
   safety: {
     endpointReadOnly: true,
@@ -65,6 +69,7 @@ describe("SQLite authoritative frontend readiness", () => {
     expect(result.ready).toBe(true);
     expect(result.authoritativeMode).toBe(true);
     expect(result.transactionDeleteWritesAvailable).toBe(true);
+    expect(result.budgetLifecycleWritesAvailable).toBe(true);
   });
 
   it("fails closed when frontend authority meets a disposable server", () => {

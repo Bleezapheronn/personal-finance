@@ -1261,3 +1261,48 @@ Run it only with the generation flag enabled against a copied, outside-repo
 disposable database on a distinct port. It inserts missing occurrences and
 then proves the repeated request is a no-op. The database is dirty afterward;
 re-import from the matching fresh backup before any clean parity work.
+
+### Safer Budget lifecycle policy v1
+
+Budget lifecycle policy v1 is deliberately safer than current Dexie behavior;
+it is not Dexie parity. It is disabled unless
+`PERSONAL_FINANCE_ENABLE_BUDGET_LIFECYCLE_WRITES=true` and is exposed as the
+optional `budgetLifecycleWrites` capability. Existing definition-only and
+snapshot-generation routes remain unchanged.
+
+```text
+POST /prototype/repositories/budgets/lifecycle/dry-run/create
+POST /prototype/repositories/budgets/lifecycle/write/create
+POST /prototype/repositories/budgets/lifecycle/dry-run/update
+POST /prototype/repositories/budgets/lifecycle/write/update
+```
+
+Every request requires an explicit `asOf`, normalized to JavaScript local
+midnight. Active Budgets receive deterministic coverage through one local
+calendar year using the shared recurrence planner. Inactive lifecycle writes
+generate no snapshots. Update cleanup is restricted to the target Budget and
+deletes only unlinked snapshots whose occurrence date is on or after `asOf`;
+the cutoff is inclusive.
+
+Transaction-linked snapshots are retained byte-for-byte. A retained linked
+snapshot occupying a required occurrence suppresses generation for that
+occurrence, while an out-of-schedule linked snapshot remains as an additional
+immutable occurrence. Duplicate occurrence/due-date identities, malformed
+relationships, or stale dry-run fingerprints fail closed. There is no global
+or standalone pruning, page-load migration, duplicate/orphan repair,
+transaction relinking, historical rewrite, or automatic checkpoint creation.
+
+The dev UI additionally requires
+`VITE_PERSONAL_FINANCE_BUDGET_LIFECYCLE_WRITE_EXPERIMENT=true`, performs a
+dry-run, displays redacted lifecycle counts, and asks for confirmation. It does
+not fall back to definition-only writes when lifecycle support is unavailable.
+
+```powershell
+npm run test:budget-lifecycle
+npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-budget-lifecycle-write-smoke
+```
+
+The opt-in smoke dirties SQLite. Re-import or restore a clean native backup
+before parity work. In authoritative mode, complete the lifecycle operation,
+stop services, and rotate the authority checkpoint before restart. The prior
+checkpoint/native backup remains the rollback source.
