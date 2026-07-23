@@ -351,7 +351,14 @@ export const runAccountsReadExperimentDiagnostics = async (
     const dexieCurrencyDistribution = currencyDistribution(comparableDexieRows);
     const httpCurrencyDistribution = currencyDistribution(normalizedHttpRows);
     const dexieImagePresenceCount = imagePresenceCount(comparableDexieRows);
-    const httpImagePresenceCount = imagePresenceCount(normalizedHttpRows);
+    const httpImages = await Promise.all(
+      normalizedHttpRows.map((account) =>
+        httpRepositories.accounts.getImage(account.id),
+      ),
+    );
+    const httpImagePresenceCount = httpImages.filter(
+      (image): image is Blob => image !== undefined,
+    ).length;
     const dexieCreditLimitPresenceCount =
       creditLimitPresenceCount(comparableDexieRows);
     const httpCreditLimitPresenceCount =
@@ -364,10 +371,8 @@ export const runAccountsReadExperimentDiagnostics = async (
     );
     const imagePresenceCountsMatch =
       dexieImagePresenceCount === httpImagePresenceCount;
-    const imagePresenceLimitation = !imagePresenceCountsMatch;
-    const warningCodes = imagePresenceLimitation
-      ? ["account_images_omitted_in_http_readonly"]
-      : [];
+    const imagePresenceLimitation = false;
+    const warningCodes: string[] = [];
     const creditLimitPresenceCountsMatch =
       dexieCreditLimitPresenceCount === httpCreditLimitPresenceCount;
     const countsMatch =
@@ -404,7 +409,10 @@ export const runAccountsReadExperimentDiagnostics = async (
         : fail("currency distribution matches", "account_currency_distribution_mismatch"),
       imagePresenceCountsMatch
         ? pass("image presence counts match")
-        : pass("image presence limitation acknowledged"),
+        : fail(
+            "image presence counts match",
+            "account_image_presence_count_mismatch",
+          ),
       creditLimitPresenceCountsMatch
         ? pass("credit-limit presence counts match")
         : fail(

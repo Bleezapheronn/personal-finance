@@ -287,28 +287,59 @@
 .summary-value.expense {
   color: #eb445c;
 }
-/* Persistent local-only warning for the explicit SQLite authority rehearsal. */
-.sqlite-rehearsal-banner {
-  position: relative;
+/* Persistent local-only status for explicit SQLite authority modes. */
+.sqlite-authority-indicator {
   z-index: 1000;
+  box-sizing: border-box;
   padding: 10px 16px;
   border-bottom: 1px solid currentColor;
   font-size: 14px;
   line-height: 1.4;
 }
 
-.sqlite-rehearsal-banner-ready {
+.sqlite-authority-toolbar-status {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-inline: 6px;
+  padding: 4px 8px;
+  border: 1px solid #3d7a55;
+  border-radius: 6px;
+  color: #173f26;
+  background: #dff7e5;
+  font-size: 12px;
+  line-height: 1.2;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.sqlite-authority-indicator-rehearsal {
+  position: relative;
   color: #3b2f00;
   background: #fff3bf;
 }
 
-.sqlite-rehearsal-banner-blocked {
+.sqlite-authority-indicator-blocked {
+  position: relative;
   color: #5f1212;
   background: #ffe3e3;
 }
 
-.sqlite-rehearsal-banner-missing {
+.sqlite-authority-indicator-missing {
   display: block;
   margin-top: 4px;
   font-family: monospace;
+}
+
+@media (max-width: 480px) {
+  .sqlite-authority-toolbar-status {
+    margin-inline: 4px;
+    padding-inline: 6px;
+    font-size: 11px;
+  }
+
+  .sqlite-authority-toolbar-status-detail {
+    display: none;
+  }
 }

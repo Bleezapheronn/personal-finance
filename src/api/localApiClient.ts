@@ -110,6 +110,37 @@ export const localApiGet = async <ResponseBody>(
   return (await response.json()) as ResponseBody;
 };
 
+export const localApiGetBlob = async (
+  pathname: string,
+): Promise<Blob | undefined> => {
+  const config = getLocalApiClientConfig();
+  const response = await fetch(buildUrl(config.baseUrl, pathname, undefined), {
+    headers: {
+      [TOKEN_HEADER_NAME]: config.token,
+    },
+  });
+
+  if (response.status === 404) {
+    const code = await responseCode(response);
+    if (code === "account_image_not_found") return undefined;
+    throw new LocalApiError(code, "Local API request failed.", response.status);
+  }
+  if (!response.ok) {
+    const code = await responseCode(response);
+    throw new LocalApiError(code, "Local API request failed.", response.status);
+  }
+
+  const contentType = response.headers.get("content-type")?.split(";")[0];
+  if (!contentType?.startsWith("image/")) {
+    throw new LocalApiError(
+      "local_api_image_content_type_invalid",
+      "Local API image response was invalid.",
+      response.status,
+    );
+  }
+  return response.blob();
+};
+
 export const localApiPost = async <ResponseBody>(
   pathname: string,
   body: unknown,

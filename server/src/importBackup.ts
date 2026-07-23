@@ -10,6 +10,7 @@ import {
   isPlainObject,
 } from "./lib/backup.js";
 import { isInsidePath } from "./lib/paths.js";
+import { decodeBackupAccountImage } from "./lib/accountImageBackup.js";
 
 type SqlValue = string | number | Buffer | null;
 type SqlParams = Record<string, SqlValue>;
@@ -374,29 +375,6 @@ const requireId = (record: BackupRecord): number => {
   return id;
 };
 
-const omitBlob = (
-  record: BackupRecord,
-  table: FullBackupTableName,
-  field: string,
-  warnings: ImportWarning[],
-): null => {
-  const value = record[field];
-
-  if (value === undefined || value === null) {
-    return null;
-  }
-
-  warnings.push({
-    table,
-    recordId: asNumber(record, "id", { required: false, integer: true }) ?? undefined,
-    field,
-    code: "blob_omitted",
-    message: "Blob import is intentionally omitted in this first runtime slice.",
-  });
-
-  return null;
-};
-
 const insertRows = (
   db: Database.Database,
   tableName: FullBackupTableName,
@@ -536,22 +514,25 @@ const mapCategory = (record: BackupRecord): SqlParams => ({
 
 const mapAccount =
   (warnings: ImportWarning[]) =>
-  (record: BackupRecord): SqlParams => ({
-    id: requireId(record),
-    name: asString(record, "name", { required: true }),
-    description: asString(record, "description"),
-    currency: asString(record, "currency"),
-    imageBlob: omitBlob(record, "accounts", "imageBlob", warnings),
-    imageMimeType: null,
-    isActive: asBooleanInt(record, "isActive", { required: true }),
-    isCredit: asBooleanIntWithLegacyDefault(record, "isCredit", false, {
-      table: "accounts",
-      warnings,
-    }),
-    creditLimit: asNumber(record, "creditLimit"),
-    createdAt: asIsoText(record, "createdAt", { required: true }),
-    updatedAt: asIsoText(record, "updatedAt", { required: true }),
-  });
+  (record: BackupRecord): SqlParams => {
+    const image = decodeBackupAccountImage(record);
+    return {
+      id: requireId(record),
+      name: asString(record, "name", { required: true }),
+      description: asString(record, "description"),
+      currency: asString(record, "currency"),
+      imageBlob: image?.bytes ?? null,
+      imageMimeType: image?.mimeType ?? null,
+      isActive: asBooleanInt(record, "isActive", { required: true }),
+      isCredit: asBooleanIntWithLegacyDefault(record, "isCredit", false, {
+        table: "accounts",
+        warnings,
+      }),
+      creditLimit: asNumber(record, "creditLimit"),
+      createdAt: asIsoText(record, "createdAt", { required: true }),
+      updatedAt: asIsoText(record, "updatedAt", { required: true }),
+    };
+  };
 
 const mapPaymentMethod = (record: BackupRecord): SqlParams => ({
   id: requireId(record),

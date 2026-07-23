@@ -46,6 +46,7 @@ import {
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
 import { SmsImportModal } from "../components/SmsImportModal";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import { ParsedSmsData } from "../hooks/useSmsParser";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import { SelectableDropdown } from "../components/SelectableDropdown";
@@ -54,6 +55,7 @@ import {
   assertValidTransferPairRows,
   resolveTransferPairEditLinks,
 } from "../utils/transferPairs";
+import type { DuplicateTransactionPrefill } from "../utils/transactionDuplicate";
 import {
   accountRepository,
   categoryRepository,
@@ -94,22 +96,6 @@ import {
   updateTransferInDisposableSqlite,
   type TransferWriteInput,
 } from "../repositories/http/transactionTransferWriteExperiment";
-
-interface DuplicateTransactionPrefill {
-  transactionType: "expense" | "income" | "transfer";
-  amount: string;
-  transactionCost: string;
-  originalAmount: string;
-  originalCurrency: string;
-  exchangeRate: string;
-  exchangeRateOverride: boolean;
-  categoryId: number | undefined;
-  accountId: number | undefined;
-  recipientId: number | undefined;
-  transferToAccountId: number | undefined;
-  transferRecipientId: number | undefined;
-  description: string;
-}
 
 interface AddTransactionLocationState {
   duplicatePrefill?: DuplicateTransactionPrefill;
@@ -695,7 +681,7 @@ const AddTransaction: React.FC = () => {
       };
 
       loadTransaction();
-    } else if (duplicatePrefill && !transactionsHttpBackendSelected) {
+    } else if (duplicatePrefill) {
       // ADD MODE + DUPLICATE PREFILL
       setTransactionDateTime("");
       setTransactionType(duplicatePrefill.transactionType);
@@ -1598,6 +1584,7 @@ const AddTransaction: React.FC = () => {
           <IonTitle>
             {isEditMode ? "Edit Transaction" : "Add Transaction"}
           </IonTitle>
+          <SqliteAuthorityToolbarStatus />
           <IonButtons slot="end">
             {!transactionsHttpBackendSelected && (
               <IonButton onClick={() => setShowSmsImportModal(true)}>

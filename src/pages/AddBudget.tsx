@@ -41,6 +41,7 @@ import {
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import {
   getRepositoryBackend,
   isHttpSelectedReadRepositoryBackend,
@@ -1065,6 +1066,7 @@ const AddBudget: React.FC = () => {
                 ? "Create Budget from Transaction"
                 : "Add Budget"}
           </IonTitle>
+          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 

@@ -44,6 +44,7 @@ import {
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import BucketCategoryPieModal from "../components/BucketCategoryPieModal";
 import SpendingChart from "../components/SpendingChart";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import "./Reports.css";
 
 const REPORTS_READ_EXPERIMENT_FLAG =
@@ -412,6 +413,7 @@ const Reports: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Reports</IonTitle>
+          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 

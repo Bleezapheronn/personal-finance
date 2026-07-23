@@ -43,6 +43,7 @@ import {
 import { readWriteCapabilities } from "./lib/writeCapabilities.js";
 import {
   getLookupConfig,
+  getAccountImageById,
   getLookupRowById,
   listLookupRows,
   lookupResources,
@@ -3306,6 +3307,60 @@ for (const action of smsTemplateActions) {
     },
   );
 }
+
+server.get<{ Params: { id: string } }>(
+  "/prototype/repositories/accounts/:id/image",
+  async (request, reply) => {
+    let id: number;
+    try {
+      id = parsePositiveInteger(request.params.id, "account_id");
+    } catch {
+      return reply.code(400).send({
+        ok: false,
+        code: "account_id_invalid",
+      });
+    }
+
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch (error) {
+      const statusCode = sqliteUnavailableStatusCode(error);
+      return reply.code(statusCode).send({
+        ok: false,
+        code:
+          statusCode === 503
+            ? "sqlite_unavailable"
+            : "account_image_read_failed",
+      });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+
+    try {
+      const image = getAccountImageById(opened.db, id);
+      if (!image) {
+        return reply.code(404).send({
+          ok: false,
+          code: "account_image_not_found",
+        });
+      }
+      return reply
+        .header("content-type", image.mimeType)
+        .header("cache-control", "private, max-age=300")
+        .header("x-content-type-options", "nosniff")
+        .send(image.bytes);
+    } catch {
+      return reply.code(500).send({
+        ok: false,
+        code: "account_image_read_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
 
 for (const resource of lookupResources) {
   server.get<{

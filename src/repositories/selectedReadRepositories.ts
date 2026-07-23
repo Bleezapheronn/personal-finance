@@ -387,6 +387,7 @@ export interface SelectedReadRepositories {
       options?: lookupHttpRepositories.LookupListOptions,
     ) => ReadList<Account, AccountDto>;
     getById: (id: number) => ReadOne<Account, AccountDto>;
+    getImage: (id: number) => Promise<Blob | undefined>;
   };
   buckets: {
     list: (
@@ -441,6 +442,8 @@ const dexieReadRepositories: SelectedReadRepositories = {
     list: (options) =>
       applySortedDexiePage(db.accounts, options, compareByNameThenId),
     getById: (id) => accountRepository.getAccountById(id),
+    getImage: async (id) =>
+      (await accountRepository.getAccountById(id))?.imageBlob ?? undefined,
   },
   buckets: {
     list: (options) =>
@@ -484,6 +487,7 @@ const httpReadonlyReadRepositories: SelectedReadRepositories = {
   accounts: {
     list: (options) => lookupHttpRepositories.listAccounts(options),
     getById: (id) => lookupHttpRepositories.getAccountById(id),
+    getImage: (id) => lookupHttpRepositories.getAccountImage(id),
   },
   buckets: {
     list: (options) => lookupHttpRepositories.listBuckets(options),

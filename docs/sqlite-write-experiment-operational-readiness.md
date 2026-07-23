@@ -468,10 +468,14 @@ or authority-incomplete capability selections fail closed.
 Initialize only after creating the database, token file, and backup directory:
 
 ```powershell
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" init --mode rehearsal --sqlite "C:\outside-repo\runtime\active.sqlite" --token-file "C:\outside-repo\token" --backup-directory "C:\outside-repo\backups" --api-port 3160 --vite-port 5173
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" init --mode rehearsal --sqlite "C:\outside-repo\runtime\active.sqlite" --token-file "C:\outside-repo\token" --backup-directory "C:\outside-repo\backups" --api-port 3160 --vite-port 5173
 
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" init --mode authoritative --sqlite "C:\outside-repo\runtime\active.sqlite" --manifest "C:\outside-repo\backups\checkpoint.manifest.json" --source-backup "C:\outside-repo\matching-full-backup.json" --token-file "C:\outside-repo\token" --backup-directory "C:\outside-repo\backups" --api-port 3160 --vite-port 5173 --capability recipientActiveStateWrites --capability recipientCreateUpdateWrites --capability bucketCategoryWrites --capability accountWrites --capability transactionBasicWrites --capability transactionCostBudgetWrites --capability transactionTransferWrites --capability smsTemplateWrites --capability budgetDefinitionWrites --capability budgetSnapshotGenerationWrites
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" init --mode authoritative --sqlite "C:\outside-repo\runtime\active.sqlite" --manifest "C:\outside-repo\backups\checkpoint.manifest.json" --source-backup "C:\outside-repo\matching-full-backup.json" --token-file "C:\outside-repo\token" --backup-directory "C:\outside-repo\backups" --api-port 3160 --vite-port 5173 --capability recipientActiveStateWrites --capability recipientCreateUpdateWrites --capability bucketCategoryWrites --capability accountWrites --capability transactionBasicWrites --capability transactionCostBudgetWrites --capability transactionTransferWrites --capability smsTemplateWrites --capability budgetDefinitionWrites --capability budgetSnapshotGenerationWrites
 ```
+
+PowerShell requires both separators shown above. Repeat `--capability` for each
+selection so every value reaches the CLI separately; do not forward a
+PowerShell array through `npm.cmd` as one quoted argument.
 
 The profile refuses an immutable manifest-referenced backup as its writable
 runtime database. Existing profiles are not overwritten unless `--replace` is
@@ -483,9 +487,9 @@ current directory.
 Inspect and verify without mutation:
 
 ```powershell
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" status
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" verify
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" start --dry-run
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" status
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" verify
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" start --dry-run
 ```
 
 `status` reports paths, sizes, local addresses, capability names, logical and
@@ -497,10 +501,24 @@ locks, verification failures, and checkpoint-required state exit nonzero.
 Token contents, confirmation phrases, rows, and sensitive file contents are
 never printed.
 
+Source-backup comparison is a bootstrap and re-import check. Once supported
+authoritative writes intentionally diverge SQLite from that source backup, a
+source mismatch is expected. Restart readiness then depends on the schema and
+structural checks, verified checkpoint lineage, and an exact match with the
+current checkpoint fingerprint.
+
+Account-image hydration follows the same stopped-service lifecycle. First test
+the dry-run and apply flow on a disposable clone. On the authoritative runtime,
+run the image hydrator once with its explicit apply confirmation, stop if it
+touches anything except `accounts.imageBlob` and `accounts.imageMimeType`, then
+run it again without apply and require zero proposed changes. `status` must show
+only the expected checkpoint-required state before creating and verifying a
+new checkpoint. Never repeat apply merely to make a fingerprint match.
+
 Start API and Vite as attached foreground children after a successful dry run:
 
 ```powershell
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" start
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" start
 ```
 
 `--api-only` and `--vite-only` are available for narrow diagnostics. The CLI
@@ -512,7 +530,7 @@ other. Only local hosts are accepted.
 After supported authoritative writes, stop both services and rotate:
 
 ```powershell
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" checkpoint --label operator-label
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" checkpoint --label operator-label
 ```
 
 Both configured ports must be free. The command creates a verified native
@@ -524,7 +542,7 @@ overwritten or deleted. Backup retention remains manual.
 Rollback is explicit, stopped-service, lineage-bound, and non-destructive:
 
 ```powershell
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" rollback --to-manifest "C:\outside-repo\backups\prior-checkpoint.manifest.json" --confirm-rollback
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" rollback --to-manifest "C:\outside-repo\backups\prior-checkpoint.manifest.json" --confirm-rollback
 ```
 
 The target must be an earlier checkpoint in the current lineage. The command

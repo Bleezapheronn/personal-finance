@@ -10,6 +10,9 @@ const sourceExtensions = new Set([".ts", ".tsx", ".js", ".jsx"]);
 const approvedFiles = new Set(
   [
     "src/api/localApiClient.ts",
+    "src/api/localApiClient.test.ts",
+    "src/hooks/useAccountImageUrls.ts",
+    "src/hooks/useAccountImageUrls.test.tsx",
     "src/pages/AccountsManagement.tsx",
     "src/pages/AddBudget.tsx",
     "src/pages/AddTransaction.tsx",

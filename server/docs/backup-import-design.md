@@ -126,7 +126,10 @@ Importer behavior:
 - write MIME metadata into `accounts.imageMimeType` when available
 - preserve `null` image values as `NULL`
 
-Open question: the current Dexie `Account` model has `imageBlob` but no explicit MIME field, so MIME handling depends on backup typed blob metadata.
+The importer uses the backup typed Blob `mimeType` as the authoritative MIME
+metadata. Only supported image MIME types are accepted for
+`accounts.imageBlob`; malformed shape, base64, size, or MIME fails closed.
+Other typed Blob fields remain outside this import scope.
 
 ### JSON-ish Fields
 

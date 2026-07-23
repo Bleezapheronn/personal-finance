@@ -55,6 +55,7 @@ import { CompleteBudgetModal } from "../components/CompleteBudgetModal";
 import { EditSnapshotModal } from "../components/EditSnapshotModal";
 import { LinkPastTransactionsModal } from "../components/LinkPastTransactionsModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
 import { budgetRepository } from "../repositories";
 import {
@@ -75,6 +76,7 @@ import {
   sampledIds,
   stringValue,
 } from "../utils/devPreview";
+import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -517,9 +519,7 @@ const BudgetHistory: React.FC = () => {
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [accountImages, setAccountImages] = useState<Map<number, string>>(
-    new Map(),
-  );
+  const { imageUrls: accountImages } = useAccountImageUrls(accounts);
 
   const [selectedAccountId, setSelectedAccountId] = useState<
     number | undefined
@@ -690,7 +690,6 @@ const BudgetHistory: React.FC = () => {
             "budget_history_read_experiment_account_normalization_failed",
           ),
         );
-        setAccountImages(new Map());
         setSelectedReadLoadMeta({
           backend: repositoryBackend,
           source: repositories.source,
@@ -728,14 +727,6 @@ const BudgetHistory: React.FC = () => {
         db.accounts.toArray(),
       ]);
 
-      const imageMap = new Map<number, string>();
-      for (const acc of accs) {
-        if (acc.id && acc.imageBlob) {
-          const url = URL.createObjectURL(acc.imageBlob);
-          imageMap.set(acc.id, url);
-        }
-      }
-
       setSnapshots(allSnapshots);
       setBudgets(allBudgets);
       setTransactions(allTransactions);
@@ -743,7 +734,6 @@ const BudgetHistory: React.FC = () => {
       setBuckets(bkts);
       setRecipients(recs);
       setAccounts(accs);
-      setAccountImages(imageMap);
       setError("");
     } catch (err) {
       console.error("Failed to load budget history:", err);
@@ -1622,6 +1612,7 @@ const BudgetHistory: React.FC = () => {
             <IonBackButton defaultHref="/budget" />
           </IonButtons>
           <IonTitle>Budget History</IonTitle>
+          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 

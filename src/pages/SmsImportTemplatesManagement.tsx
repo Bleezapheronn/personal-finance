@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import {
   IonPage,
   IonHeader,
@@ -71,8 +71,10 @@ import {
   sampledIds,
   stringValue,
 } from "../utils/devPreview";
+import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 
-type LocalAccount = Account & { previewUrl?: string };
+type LocalAccount = Account;
 
 interface SelectedReadSmsTemplatePreviewRow {
   id?: number;
@@ -160,10 +162,8 @@ const compareSmsTemplatesByExistingDisplayOrder = (
 const SmsImportTemplatesManagement: React.FC = () => {
   const [templates, setTemplates] = useState<SmsImportTemplate[]>([]);
   const [accounts, setAccounts] = useState<LocalAccount[]>([]);
+  const { imageUrls: accountImageUrls } = useAccountImageUrls(accounts);
   const [loading, setLoading] = useState(true);
-
-  // Track blob URLs for cleanup
-  const blobUrlsRef = useRef<Set<string>>(new Set());
 
   // Modal state
   const [showAddTemplateModal, setShowAddTemplateModal] = useState(false);
@@ -226,28 +226,9 @@ const SmsImportTemplatesManagement: React.FC = () => {
     setShowToast(true);
   };
 
-  useEffect(() => {
-    // Capture current blob URLs for cleanup
-    const blobUrls = blobUrlsRef.current;
-
-    // Cleanup blob URLs on unmount
-    return () => {
-      blobUrls.forEach((url) => {
-        URL.revokeObjectURL(url);
-      });
-      blobUrls.clear();
-    };
-  }, []);
-
   const fetchData = async (): Promise<boolean> => {
     setLoading(true);
     try {
-      // Revoke old blob URLs before fetching new ones
-      blobUrlsRef.current.forEach((url) => {
-        URL.revokeObjectURL(url);
-      });
-      blobUrlsRef.current.clear();
-
       let temps: SmsImportTemplate[];
       let selectedReadCount: number | undefined;
       const accsPromise: Promise<Account[]> = smsTemplatesReadExperimentHttpReadonly
@@ -294,19 +275,9 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
       const accs = await accsPromise;
 
-      // Convert accounts to include preview URLs
-      const accountsWithPreview: LocalAccount[] = accs.map((a) => {
-        let preview: string | undefined;
-        if (a.imageBlob) {
-          preview = URL.createObjectURL(a.imageBlob);
-          blobUrlsRef.current.add(preview);
-        }
-        return { ...a, previewUrl: preview };
-      });
-
       setTemplates(temps);
       setSmsTemplatesReadExperimentCount(selectedReadCount);
-      setAccounts(accountsWithPreview);
+      setAccounts(accs);
       return true;
     } catch (err) {
       console.error("Failed to load SMS import templates:", err);
@@ -639,6 +610,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>SMS Import Templates</IonTitle>
+          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 
@@ -806,9 +778,9 @@ const SmsImportTemplatesManagement: React.FC = () => {
                         <IonRow>
                           {/* ACCOUNT AVATAR */}
                           <IonCol size="auto">
-                            {account?.previewUrl ? (
+                            {account?.id && accountImageUrls.has(account.id) ? (
                               <img
-                                src={account.previewUrl}
+                                src={accountImageUrls.get(account.id)}
                                 alt={account.name}
                                 title={account.name}
                                 style={{

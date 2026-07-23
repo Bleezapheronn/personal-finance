@@ -112,7 +112,7 @@ navigation, edit, delete, duplicate, transfer, import, and CSV export controls
 remain disabled because no detail/write/export workflow has migrated. This
 experiment remains local-dev only and requires a fresh matching SQLite baseline
 before its HTTP results are trusted. Account/payment icons may show placeholders
-in `http-readonly` because account image/icon data is intentionally omitted
+in `http-readonly` when the matching SQLite Account has no valid image bytes
 from the read-only HTTP path. Passing read parity does not authorize
 transaction writes, exports, transfers, detail workflow migration, or any change
 to Dexie as the authoritative store.

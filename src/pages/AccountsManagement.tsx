@@ -18,7 +18,7 @@
  * - toastMessage: Message to display in toast
  */
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import {
   IonButton,
   IonContent,
@@ -62,6 +62,7 @@ import {
   AddAccountModal,
   type AccountFormValues,
 } from "../components/AddAccountModal";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import { accountRepository, transactionRepository } from "../repositories";
 import {
   getRepositoryBackend,
@@ -98,10 +99,11 @@ import {
   writeAccountMerge,
   type AccountLifecycleResponse,
 } from "../repositories/http/accountDeleteMergeWriteExperiment";
+import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
 
 import type { Account } from "../db";
 
-type LocalAccount = Account & { previewUrl?: string };
+type LocalAccount = Account;
 
 type DeleteState =
   | { type: "none" }
@@ -186,6 +188,7 @@ const compareAccountsByExistingDisplayOrder = (
 const AccountsManagement: React.FC = () => {
   // Account state
   const [accounts, setAccounts] = useState<LocalAccount[]>([]);
+  const { imageUrls: accountImageUrls } = useAccountImageUrls(accounts);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
 
@@ -264,22 +267,8 @@ const AccountsManagement: React.FC = () => {
     setShowToast(true);
   };
 
-  // Track blob URLs for cleanup
-  const blobUrlsRef = useRef<Set<string>>(new Set());
-
   useEffect(() => {
     fetchAccounts();
-
-    // Capture current blob URLs for cleanup
-    const blobUrls = blobUrlsRef.current;
-
-    // Cleanup blob URLs on unmount
-    return () => {
-      blobUrls.forEach((url) => {
-        URL.revokeObjectURL(url);
-      });
-      blobUrls.clear();
-    };
   }, []);
 
   /**
@@ -288,12 +277,6 @@ const AccountsManagement: React.FC = () => {
   const fetchAccounts = async () => {
     try {
       setLoading(true);
-      // Revoke old blob URLs before fetching new ones
-      blobUrlsRef.current.forEach((url) => {
-        URL.revokeObjectURL(url);
-      });
-      blobUrlsRef.current.clear();
-
       let fetched: Account[];
       let selectedReadCount: number | undefined;
 
@@ -318,15 +301,7 @@ const AccountsManagement: React.FC = () => {
       }
 
       setAccountsReadExperimentCount(selectedReadCount);
-      const withPreview: LocalAccount[] = fetched.map((a) => {
-        let preview: string | undefined;
-        if (a.imageBlob) {
-          preview = URL.createObjectURL(a.imageBlob);
-          blobUrlsRef.current.add(preview);
-        }
-        return { ...a, previewUrl: preview };
-      });
-      setAccounts(withPreview);
+      setAccounts(fetched);
     } catch (error) {
       console.error("Error fetching accounts:", error);
     } finally {
@@ -712,6 +687,7 @@ const AccountsManagement: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Accounts</IonTitle>
+          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 
@@ -815,10 +791,10 @@ const AccountsManagement: React.FC = () => {
                 </p>
                 {accountsReadExperimentHttpReadonly && (
                   <p>
-                    Account images/icons are omitted in the HTTP path.
-                    Create/update does not mutate transactions, balances,
-                    payment methods, references, active state, or images.
-                    Active-state actions remain unavailable.
+                    Existing account images/icons load through the authenticated
+                    read-only image endpoint. Create/update does not mutate
+                    transactions, balances, payment methods, references, active
+                    state, or images. Active-state actions remain unavailable.
                     {accountDeleteMergeWriteExperimentActive
                       ? " Delete is unused-only; merge requires matching currency and credit classification and refuses unsafe transfers."
                       : " Delete and merge remain unavailable."}
@@ -858,9 +834,9 @@ const AccountsManagement: React.FC = () => {
                       <IonGrid className="ion-no-padding">
                         <IonRow>
                           <IonCol size="auto">
-                            {account.previewUrl && (
+                            {account.id && accountImageUrls.has(account.id) ? (
                               <img
-                                src={account.previewUrl}
+                                src={accountImageUrls.get(account.id)}
                                 alt={account.name}
                                 style={{
                                   width: 40,
@@ -871,6 +847,23 @@ const AccountsManagement: React.FC = () => {
                                   opacity: isInactive ? 0.5 : 1,
                                 }}
                               />
+                            ) : (
+                              <div
+                                aria-label={`${account.name} initials`}
+                                style={{
+                                  width: 40,
+                                  height: 40,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  borderRadius: 4,
+                                  marginRight: 8,
+                                  background: "#d7d8da",
+                                  opacity: isInactive ? 0.5 : 1,
+                                }}
+                              >
+                                {account.name.charAt(0).toUpperCase()}
+                              </div>
                             )}
                           </IonCol>
                           <IonCol>

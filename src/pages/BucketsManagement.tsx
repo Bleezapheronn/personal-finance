@@ -52,6 +52,7 @@ import {
   AddCategoryModal,
   type CategoryFormValues,
 } from "../components/AddCategoryModal";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import {
   getRepositoryBackend,
   isSqliteAuthorityControlledBackend,
@@ -1281,6 +1282,7 @@ const BucketsManagement: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Manage Buckets</IonTitle>
+          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 

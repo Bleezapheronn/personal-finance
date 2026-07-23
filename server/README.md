@@ -151,6 +151,26 @@ npm run import:backup -- -- --input C:\dev\personal-finance-data\exports\persona
 
 The importer refuses repo-local output unless `--allow-repo-output-for-tests` is supplied. Do not use that flag for real backups.
 
+Valid serialized Account image blobs are imported into `accounts.imageBlob`
+with their MIME type in `accounts.imageMimeType`. Decoding is strict: malformed
+shape, unsupported MIME, invalid base64, size mismatch, or images over the
+configured limit fail closed.
+
+Existing disposable SQLite databases can be checked and hydrated from their
+matching full backup with the image-only tool. It is a dry-run unless both
+write flags are supplied:
+
+```bash
+npm run hydrate:account-images -- -- --backup C:\dev\personal-finance-data\backups\full-backup.json --sqlite C:\dev\personal-finance-data\temp\candidate.sqlite
+npm run hydrate:account-images -- -- --backup C:\dev\personal-finance-data\backups\full-backup.json --sqlite C:\dev\personal-finance-data\temp\candidate.sqlite --apply --confirm-image-only-write
+```
+
+The tool requires absolute outside-repository paths, updates only
+`accounts.imageBlob` and `accounts.imageMimeType`, and reports counts without
+image content. A real hydration changes the SQLite logical fingerprint, so an
+authoritative database needs a fresh verified checkpoint before restart. Test
+hydration on a disposable copy first.
+
 ## Row-Count Comparison
 
 The first comparison CLI checks only full-backup table lengths, optional backup `integrity.counts`, and row counts in a disposable SQLite database. It opens SQLite read-only and does not expose row-level financial data.
@@ -438,10 +458,15 @@ The root `authority:ops` command manages an explicit versioned profile for
 local rehearsal or authoritative operation:
 
 ```powershell
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" status
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" verify
-npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" start --dry-run
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" status
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" verify
+npm run authority:ops -- -- --profile "C:\outside-repo\authority-profile.json" start --dry-run
 ```
+
+PowerShell operators must keep both separators. The first belongs to npm and
+the second ensures named flags reach the TypeScript CLI. Repeat each
+`--capability <name>` argument directly when initializing a profile; do not
+forward a PowerShell array through `npm.cmd` as one quoted argument.
 
 Use `init` to create the profile, `start` to launch API and Vite as attached
 child processes, `checkpoint` after stopped-service authoritative writes, and
@@ -455,9 +480,13 @@ profile backups, and lock must use absolute outside-repository paths. The
 profile stores only the token-file path. Capabilities are disabled unless
 explicitly selected, and one registry generates matching server and browser
 flags. Authoritative startup refuses a changed database until a checkpoint is
-created and verified. The CLI never writes `.env.local`, uses an immutable
-backup as a runtime database, overwrites the active database during rollback,
-or changes the default Dexie backend.
+created and verified. After an intentional SQLite write, source-backup
+comparison is expected to differ and is not the restart criterion: schema,
+structural checks, checkpoint lineage, and the current checkpoint fingerprint
+must pass. Source comparison is meaningful before the first authoritative
+divergence or after re-importing the matching source backup. The CLI never
+writes `.env.local`, uses an immutable backup as a runtime database, overwrites
+the active database during rollback, or changes the default Dexie backend.
 
 See
 [`docs/sqlite-write-experiment-operational-readiness.md`](../docs/sqlite-write-experiment-operational-readiness.md#authority-operations-phase-3)
@@ -1016,6 +1045,16 @@ Normal `smoke:api` remains non-mutating. Account mutation smoke is explicit:
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-account-write-smoke
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --allow-account-delete-merge-write-smoke
 ```
+
+Authenticated Account images are available read-only at:
+
+```text
+GET /prototype/repositories/accounts/:id/image
+```
+
+The endpoint returns binary image bytes with the stored supported MIME type,
+or `404 account_image_not_found`. It never includes image bytes in normal
+Account list/detail JSON and never mutates SQLite.
 
 Run it only against disposable SQLite with the Account write flag enabled,
 preferably on a distinct test port. A successful run creates and updates one

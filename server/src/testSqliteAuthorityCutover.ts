@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  assertSqliteAuthoritySchemaContract,
   evaluateSqliteAuthorityReadiness,
   prepareSqliteAuthorityCutover,
   verifySqliteAuthorityRollback,
@@ -22,6 +23,7 @@ import {
   type WriteCapabilities,
 } from "./lib/writeCapabilities.js";
 import { parsePrepareSqliteAuthorityCutoverArgs } from "./prepareSqliteAuthorityCutover.js";
+import { readSqliteLogicalVerification } from "./lib/sqliteLogicalVerification.js";
 
 interface CheckResult { name: string; ok: boolean }
 const checks: CheckResult[] = [];
@@ -185,6 +187,39 @@ const main = async (): Promise<void> => {
         try { restore.pragma("user_version = 0"); } finally { restore.close(); }
       }
     });
+
+    await check(
+      "existing authority schema remains valid with account image bytes",
+      () => {
+        const imageCandidate = path.join(tempRoot, "account-image-schema.sqlite");
+        createPrototype(imageCandidate);
+        const db = new Database(imageCandidate);
+        try {
+          db.prepare(
+            `INSERT INTO accounts (
+              id, name, currency, imageBlob, imageMimeType, isActive, isCredit,
+              createdAt, updatedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            1,
+            "Image fixture",
+            "KES",
+            Buffer.from("image fixture"),
+            "image/png",
+            1,
+            0,
+            "2026-07-22T00:00:00.000Z",
+            "2026-07-22T00:00:00.000Z",
+          );
+          assertSqliteAuthoritySchemaContract(
+            readSqliteLogicalVerification(db, asOf),
+            asOf,
+          );
+        } finally {
+          db.close();
+        }
+      },
+    );
 
     await check("cutover preparation creates verified backup and manifest", async () => {
       await prepareSqliteAuthorityCutover({

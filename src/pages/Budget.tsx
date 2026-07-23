@@ -66,6 +66,7 @@ import {
 } from "../utils/budgetCsvExport";
 import { ensureBudgetSnapshotCoverage } from "../utils/budgetSnapshots";
 import { ImportModal } from "../components/ImportModal";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import {
   getRepositoryBackend,
   isSqliteAuthorityControlledBackend,
@@ -87,6 +88,7 @@ import {
   budgetDeleteRefreshFailureMessage,
   shouldShowBudgetDeleteControl,
 } from "../repositories/http/budgetDeleteControl";
+import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -615,9 +617,7 @@ const BudgetPage: React.FC = () => {
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [accountImages, setAccountImages] = useState<Map<number, string>>(
-    new Map(),
-  );
+  const { imageUrls: accountImages } = useAccountImageUrls(accounts);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -767,7 +767,6 @@ const BudgetPage: React.FC = () => {
             "budget_read_experiment_account_normalization_failed",
           ),
         );
-        setAccountImages(new Map());
         setVisibleBudgetHorizonDays(BUDGET_BATCH_DAYS);
         setSelectedReadLoadMeta({
           backend: repositoryBackend,
@@ -945,16 +944,6 @@ const BudgetPage: React.FC = () => {
       setRecipients(recs);
       setAccounts(accs);
       setVisibleBudgetHorizonDays(BUDGET_BATCH_DAYS);
-
-      // Convert account image blobs to URLs
-      const imageMap = new Map<number, string>();
-      for (const acc of accs) {
-        if (acc.id && acc.imageBlob) {
-          const url = URL.createObjectURL(acc.imageBlob);
-          imageMap.set(acc.id, url);
-        }
-      }
-      setAccountImages(imageMap);
 
       setError("");
       return true;
@@ -2291,6 +2280,7 @@ const BudgetPage: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Budget</IonTitle>
+          <SqliteAuthorityToolbarStatus />
           <IonButtons slot="end">
             <IonButton
               onClick={() => history.push("/budget/history")}

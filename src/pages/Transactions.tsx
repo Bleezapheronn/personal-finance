@@ -50,6 +50,7 @@ import { db, Transaction, Category, Recipient, Bucket, Account } from "../db";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import { exportTransactionsToCSV, downloadCSV } from "../utils/csvExport";
 import { ImportModal } from "../components/ImportModal";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import {
   accountRepository,
   categoryRepository,
@@ -94,6 +95,11 @@ import {
   type TransactionDeleteResponse,
   writeReviewedTransactionDelete,
 } from "../repositories/http/transactionDeleteWriteExperiment";
+import {
+  buildDuplicateTransactionPrefill,
+  transactionActionKeys,
+} from "../utils/transactionDuplicate";
+import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
 import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
@@ -117,22 +123,6 @@ const parseDateInputToLocalDay = (value: string): Date => {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day);
 };
-
-interface DuplicateTransactionPrefill {
-  transactionType: "expense" | "income" | "transfer";
-  amount: string;
-  transactionCost: string;
-  originalAmount: string;
-  originalCurrency: string;
-  exchangeRate: string;
-  exchangeRateOverride: boolean;
-  categoryId: number | undefined;
-  accountId: number | undefined;
-  recipientId: number | undefined;
-  transferToAccountId: number | undefined;
-  transferRecipientId: number | undefined;
-  description: string;
-}
 
 type AmountSign = "negative" | "positive" | "zero" | "unknown";
 
@@ -445,9 +435,7 @@ const Transactions: React.FC = () => {
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [accountImages, setAccountImages] = useState<Map<number, string>>(
-    new Map(),
-  );
+  const { imageUrls: accountImages } = useAccountImageUrls(accounts);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
@@ -595,16 +583,6 @@ const Transactions: React.FC = () => {
       setRecipients(recs);
       setAccounts(accs);
       setTransactionsReadExperimentLoad(experimentLoad);
-
-      // Convert account image blobs to URLs
-      const imageMap = new Map<number, string>();
-      for (const acc of accs) {
-        if (acc.id && acc.imageBlob) {
-          const url = URL.createObjectURL(acc.imageBlob);
-          imageMap.set(acc.id, url);
-        }
-      }
-      setAccountImages(imageMap);
 
       // Sort descending by date and time, then by total amount (lowest to highest)
       const sortedTransactions = allTransactions.sort((a, b) => {
@@ -775,65 +753,33 @@ const Transactions: React.FC = () => {
   };
 
   const handleDuplicate = async (txn: Transaction) => {
-    if (transactionsHttpSelectedReadActive) {
-      showTransactionsReadExperimentActionDisabled();
-      return;
-    }
-
     if (!txn.id) {
       return;
     }
 
-    const basePrefill: DuplicateTransactionPrefill = {
-      transactionType: txn.amount < 0 ? "expense" : "income",
-      amount: Math.abs(txn.amount).toString(),
-      transactionCost: txn.transactionCost
-        ? Math.abs(txn.transactionCost).toString()
-        : "",
-      originalAmount: txn.originalAmount
-        ? Math.abs(txn.originalAmount).toString()
-        : "",
-      originalCurrency: txn.originalCurrency || "",
-      exchangeRate: txn.exchangeRate?.toString() || "",
-      exchangeRateOverride: !!txn.exchangeRate,
-      categoryId: txn.categoryId,
-      accountId: txn.accountId,
-      recipientId: txn.recipientId,
-      transferToAccountId: undefined,
-      transferRecipientId: undefined,
-      description: txn.description || "",
-    };
-
+    let pairedTxn: Transaction | undefined;
     if (txn.isTransfer && txn.transferPairId) {
-      const pairedTxn = await transactionRepository.getPairedTransaction(txn);
-      const outgoingTxn = txn.amount < 0 ? txn : pairedTxn;
-      const incomingTxn = txn.amount < 0 ? pairedTxn : txn;
+      if (transactionsHttpSelectedReadActive) {
+        const selectedPair = await getSelectedReadRepositories(
+          selectedBackend,
+        ).transactions.getById(txn.transferPairId);
+        pairedTxn = selectedPair
+          ? selectedReadRowToTransaction(selectedPair)
+          : undefined;
+      } else {
+        pairedTxn = await transactionRepository.getPairedTransaction(txn);
+      }
+    }
 
-      const transferPrefill: DuplicateTransactionPrefill = {
-        transactionType: "transfer",
-        amount: Math.abs(outgoingTxn?.amount ?? txn.amount).toString(),
-        transactionCost: outgoingTxn?.transactionCost
-          ? Math.abs(outgoingTxn.transactionCost).toString()
-          : "",
-        originalAmount: outgoingTxn?.originalAmount
-          ? Math.abs(outgoingTxn.originalAmount).toString()
-          : "",
-        originalCurrency: outgoingTxn?.originalCurrency || "",
-        exchangeRate: outgoingTxn?.exchangeRate?.toString() || "",
-        exchangeRateOverride: !!outgoingTxn?.exchangeRate,
-        categoryId: txn.categoryId,
-        accountId: outgoingTxn?.accountId,
-        recipientId: outgoingTxn?.recipientId,
-        transferToAccountId: incomingTxn?.accountId,
-        transferRecipientId: incomingTxn?.recipientId,
-        description: outgoingTxn?.description || txn.description || "",
-      };
-
-      history.push("/add", { duplicatePrefill: transferPrefill });
+    const duplicatePrefill = buildDuplicateTransactionPrefill(txn, pairedTxn);
+    if (!duplicatePrefill) {
+      setError(
+        "This transfer cannot be duplicated because its pair could not be verified.",
+      );
       return;
     }
 
-    history.push("/add", { duplicatePrefill: basePrefill });
+    history.push("/add", { duplicatePrefill });
   };
 
   // Handler to delete a transaction with confirmation
@@ -1567,6 +1513,7 @@ const Transactions: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Transactions</IonTitle>
+          <SqliteAuthorityToolbarStatus />
           <IonButtons slot="end">
             {!transactionsHttpSelectedReadActive && (
               <>
@@ -2508,91 +2455,92 @@ const Transactions: React.FC = () => {
                               })}
                             </div>
                             <p style={{ margin: "0" }}>&nbsp;</p>
-                            {/* Edit/Delete buttons */}
-                            {!transactionsHttpSelectedReadActive && (
-                              <IonRow className="item-actions">
-                                <IonCol className="item-actions-container">
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    onClick={() => handleDuplicate(txn)}
-                                    title="Duplicate Transaction"
-                                  >
-                                    <IonIcon slot="end" icon={copyOutline} />
-                                  </IonButton>
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    onClick={() => handleEdit(txn)}
-                                    title="Edit Transaction"
-                                  >
-                                    <IonIcon slot="end" icon={createOutline} />
-                                  </IonButton>
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    color="danger"
-                                    onClick={() => handleDeleteClick(txn.id)}
-                                    title="Delete Transaction"
-                                  >
-                                    <IonIcon slot="end" icon={trashOutline} />
-                                  </IonButton>
-                                </IonCol>
-                              </IonRow>
-                            )}
-                            {transactionsSqliteWriteExperimentActive && (
-                                <IonRow className="item-actions">
-                                  <IonCol className="item-actions-container">
+                            <div
+                              className="transaction-actions"
+                              aria-label="Transaction actions"
+                            >
+                              {transactionActionKeys({
+                                editAvailable:
+                                  !transactionsHttpSelectedReadActive ||
+                                  transactionsSqliteWriteExperimentActive,
+                                deleteAvailable:
+                                  !transactionsHttpSelectedReadActive ||
+                                  transactionsDeleteWriteActive,
+                              }).map((action) => {
+                                if (action === "duplicate") {
+                                  return (
                                     <IonButton
+                                      key={action}
+                                      className="transaction-action-button"
                                       fill="clear"
                                       size="small"
-                                      style={{ marginRight: "0" }}
-                                      onClick={() => void handleEdit(txn)}
-                                      disabled={
-                                        txn.isTransfer
-                                          ? !isTransferWriteEligible(txn)
-                                          : transactionsCostBudgetWriteExperimentActive
-                                            ? transactionCostBudgetBaseEligibilityReason(
-                                                txn,
-                                              ) !== undefined
-                                            : !isBasicTransactionWriteEligible(
-                                                txn,
-                                              )
-                                      }
-                                      title={
-                                        rehearsal.authoritativeMode
-                                          ? "Edit transaction in authoritative SQLite"
-                                          : txn.isTransfer
+                                      onClick={() => void handleDuplicate(txn)}
+                                      title="Duplicate Transaction"
+                                      aria-label="Duplicate Transaction"
+                                    >
+                                      <IonIcon icon={copyOutline} />
+                                    </IonButton>
+                                  );
+                                }
+
+                                if (action === "edit") {
+                                  const sqliteEditDisabled =
+                                    transactionsHttpSelectedReadActive &&
+                                    (txn.isTransfer
+                                      ? !isTransferWriteEligible(txn)
+                                      : transactionsCostBudgetWriteExperimentActive
+                                        ? transactionCostBudgetBaseEligibilityReason(
+                                            txn,
+                                          ) !== undefined
+                                        : !isBasicTransactionWriteEligible(
+                                            txn,
+                                          ));
+                                  const editTitle =
+                                    transactionsHttpSelectedReadActive
+                                      ? rehearsal.authoritativeMode
+                                        ? "Edit transaction in authoritative SQLite"
+                                        : txn.isTransfer
                                           ? "Edit atomic transfer pair in disposable SQLite"
                                           : transactionsCostBudgetWriteExperimentActive
-                                          ? "Edit transaction in disposable SQLite"
-                                          : "Edit basic transaction in disposable SQLite"
-                                      }
+                                            ? "Edit transaction in disposable SQLite"
+                                            : "Edit basic transaction in disposable SQLite"
+                                      : "Edit Transaction";
+                                  return (
+                                    <IonButton
+                                      key={action}
+                                      className="transaction-action-button"
+                                      fill="clear"
+                                      size="small"
+                                      onClick={() => void handleEdit(txn)}
+                                      disabled={sqliteEditDisabled}
+                                      title={editTitle}
+                                      aria-label={editTitle}
                                     >
-                                      <IonIcon slot="end" icon={createOutline} />
+                                      <IonIcon icon={createOutline} />
                                     </IonButton>
-                                  </IonCol>
-                                </IonRow>
-                              )}
-                            {transactionsDeleteWriteActive && (
-                              <IonRow className="item-actions">
-                                <IonCol className="item-actions-container">
+                                  );
+                                }
+
+                                const deleteTitle =
+                                  transactionsHttpSelectedReadActive
+                                    ? "Delete from SQLite after safety review"
+                                    : "Delete Transaction";
+                                return (
                                   <IonButton
+                                    key={action}
+                                    className="transaction-action-button"
                                     fill="clear"
                                     size="small"
-                                    style={{ marginRight: "0" }}
                                     color="danger"
                                     onClick={() => handleDeleteClick(txn.id)}
-                                    title="Delete from SQLite after safety review"
+                                    title={deleteTitle}
+                                    aria-label={deleteTitle}
                                   >
-                                    <IonIcon slot="end" icon={trashOutline} />
+                                    <IonIcon icon={trashOutline} />
                                   </IonButton>
-                                </IonCol>
-                              </IonRow>
-                            )}
+                                );
+                              })}
+                            </div>
                           </IonCol>
                         </IonRow>
                       </IonGrid>

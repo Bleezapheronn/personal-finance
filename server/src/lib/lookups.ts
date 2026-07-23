@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { isSupportedAccountImageMimeType } from "./accountImageBackup.js";
 
 export type LookupResource =
   | "accounts"
@@ -43,6 +44,39 @@ export interface LookupResourceConfig {
   supportsBucketId: boolean;
   supportsAccountId: boolean;
 }
+
+export interface AccountImageRow {
+  bytes: Buffer;
+  mimeType: string;
+}
+
+export const getAccountImageById = (
+  db: Database.Database,
+  id: number,
+): AccountImageRow | undefined => {
+  const row = db
+    .prepare(
+      `SELECT imageBlob, imageMimeType FROM accounts WHERE id = @id`,
+    )
+    .get({ id }) as
+    | { imageBlob: Buffer | null; imageMimeType: string | null }
+    | undefined;
+
+  if (!row || row.imageBlob === null || row.imageMimeType === null) {
+    return undefined;
+  }
+  if (
+    !Buffer.isBuffer(row.imageBlob) ||
+    row.imageBlob.length === 0 ||
+    !isSupportedAccountImageMimeType(row.imageMimeType)
+  ) {
+    throw new Error("account_image_storage_invalid");
+  }
+  return {
+    bytes: row.imageBlob,
+    mimeType: row.imageMimeType.toLowerCase(),
+  };
+};
 
 const LOOKUP_CONFIGS: Record<LookupResource, LookupResourceConfig> = {
   accounts: {

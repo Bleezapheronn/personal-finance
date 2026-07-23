@@ -1578,6 +1578,17 @@ const buildChecks = (
         expect(json.error === "unauthorized", "unexpected_lookup_unauthorized_response");
       },
     },
+    {
+      name: "account image read fails without token",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/1/image",
+        );
+        expectStatus(status, 401);
+        expect(json.error === "unauthorized", "account_image_route_not_protected");
+      },
+    },
     ...lookupResources.flatMap((resource): SmokeCheck[] => [
       {
         name: `${resource} lookup list succeeds with token`,
@@ -1628,6 +1639,62 @@ const buildChecks = (
         },
       },
     ]),
+    {
+      name: "account image read is binary or safely absent",
+      run: async () => {
+        const sampledId = sampledLookupIds.get("accounts");
+        if (sampledId === undefined) return;
+        const response = await requestRaw(
+          baseUrl,
+          `/prototype/repositories/accounts/${sampledId}/image`,
+          authedOptions,
+        );
+        expect(
+          response.status === 200 || response.status === 404,
+          "unexpected_account_image_status",
+        );
+        if (response.status === 200) {
+          expect(
+            response.headers.get("content-type")?.startsWith("image/") === true,
+            "account_image_content_type_invalid",
+          );
+          expect(
+            response.headers.get("cache-control")?.startsWith("private") === true,
+            "account_image_cache_control_invalid",
+          );
+        }
+      },
+    },
+    {
+      name: "missing account image returns safe not found",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/2147483647/image",
+          authedOptions,
+        );
+        expectStatus(status, 404);
+        expect(
+          json.code === "account_image_not_found",
+          "unexpected_missing_account_image_response",
+        );
+      },
+    },
+    {
+      name: "invalid account image id is rejected",
+      run: async () => {
+        const { status, json } = await requestJson(
+          baseUrl,
+          "/prototype/repositories/accounts/not-a-number/image",
+          authedOptions,
+        );
+        expectStatus(status, 400);
+        expect(
+          json.code === "account_id_invalid",
+          "unexpected_invalid_account_image_id_response",
+        );
+      },
+    },
     {
       name: "invalid lookup id is rejected",
       run: async () => {

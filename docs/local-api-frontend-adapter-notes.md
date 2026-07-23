@@ -466,9 +466,9 @@ server, passing Transactions read parity diagnostic, `verify:sqlite`,
 
 This experiment is read-only and local-dev only. Passing Transactions read
 parity does not authorize writes, exports, transfers, or making SQLite
-authoritative. Account/payment icons may fall back to placeholders in
-`http-readonly` because account image/icon data is omitted from the read-only
-HTTP path.
+authoritative. Existing account/payment icons are loaded through the
+authenticated read-only Account image endpoint when valid image bytes are
+present in SQLite; missing images continue to use the existing fallback.
 
 Selected-read budget ordering has also been normalized between Dexie and HTTP
 read-only paths. It uses due date ascending with ID ascending as the
@@ -698,11 +698,12 @@ remains read-only.
 The `http-readonly` experiment is list-only. The Accounts page does not migrate
 transaction reads or account-balance calculations in this slice; transaction
 usage checks remain on the existing Dexie path and writes stay disabled in
-HTTP mode. Account images/icons are intentionally omitted because Dexie stores
-account images as blobs and the disposable SQLite import/API selected-read path
-does not carry account image blobs in this prototype. Full Accounts visual
-parity needs a separate image/blob handling plan if it becomes necessary. The
-selected-read lookup endpoint is capped to a bounded page, and the page applies
+HTTP mode. Valid Account images are stored in SQLite and loaded through the
+authenticated binary Account image endpoint. The frontend creates temporary
+object URLs and revokes them on refresh or unmount; missing images fall back to
+initials, while API failures remain distinct safe error states. It does not
+read image data from the preserved Dexie origin in SQLite mode. The selected-
+read lookup endpoint is capped to a bounded page, and the page applies
 the existing Accounts screen display order after loading so the visible list
 matches the Dexie page as closely as practical. The page labels the result if
 the loaded account count is lower than the reported total. Roll back by turning
@@ -717,9 +718,10 @@ active/credit count match, currency distribution match, image-presence count
 match, credit-limit-presence count match, truncation status, and safe result
 codes. It does not render account names, descriptions, balances,
 credit-limit values, image URLs, image data, raw rows, tokens, or SQLite paths.
-Because account images/icons are intentionally omitted in `http-readonly`, the
-diagnostic reports image-presence mismatches as a visible limitation/warning
-rather than a hard failure when the remaining read-path checks pass.
+For a fresh import, image-presence counts should match. Older SQLite databases
+that predate image import support remain a documented warning until they are
+re-imported or hydrated from their matching full backup with the controlled
+image-only CLI.
 This diagnostic does not replace the normal gates: use a fresh backup,
 matching SQLite import, restarted API server, `verify:sqlite`, `smoke:api`,
 and `npm run check:local-api-safety` before trusting Dexie-vs-HTTP results.

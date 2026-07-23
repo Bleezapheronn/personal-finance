@@ -43,6 +43,7 @@ import {
   AddRecipientModal,
   type RecipientFormValues,
 } from "../components/AddRecipientModal";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import { findAllDuplicatePairs } from "../utils/recipientMerge";
 import { MergeRecipientsModal } from "../components/MergeRecipientsModal";
 import { recipientRepository, transactionRepository } from "../repositories";
@@ -916,6 +917,7 @@ const RecipientsManagement: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Recipients</IonTitle>
+          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 

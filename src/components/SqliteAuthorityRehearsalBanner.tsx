@@ -1,10 +1,29 @@
 import React from "react";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 
+export interface SqliteAuthorityIndicatorState {
+  selected: boolean;
+  ready: boolean;
+  authoritativeMode: boolean;
+}
+
+export const sqliteAuthorityIndicatorClassName = (
+  state: SqliteAuthorityIndicatorState,
+): string => {
+  return `sqlite-authority-indicator ${
+    state.ready
+      ? "sqlite-authority-indicator-rehearsal"
+      : "sqlite-authority-indicator-blocked"
+  }`;
+};
+
 const SqliteAuthorityRehearsalBanner: React.FC = () => {
   const readiness = useSqliteAuthorityRehearsal();
 
-  if (!readiness.selected) {
+  if (
+    !readiness.selected ||
+    (readiness.ready && readiness.authoritativeMode)
+  ) {
     return null;
   }
 
@@ -24,27 +43,46 @@ const SqliteAuthorityRehearsalBanner: React.FC = () => {
   const blockedMessage = readiness.authoritativeMode
     ? " Writes are disabled. Restore the verified backup or return to Dexie mode."
     : " Writes are disabled because required local API capabilities are missing or unavailable.";
-
   return (
     <div
-      className={`sqlite-rehearsal-banner ${
-        readiness.ready ? "sqlite-rehearsal-banner-ready" : "sqlite-rehearsal-banner-blocked"
-      }`}
+      className={sqliteAuthorityIndicatorClassName(readiness)}
       role={readiness.ready ? "status" : "alert"}
     >
-      <strong>
-        {readiness.ready
-          ? activeTitle
-          : blockedTitle}
-      </strong>{" "}
+      <strong>{readiness.ready ? activeTitle : blockedTitle}</strong>{" "}
       {readiness.ready ? activeMessage : blockedMessage}
       {readiness.checking && " Checking local API capabilities."}
       {missing.length > 0 && (
-        <span className="sqlite-rehearsal-banner-missing">
+        <span className="sqlite-authority-indicator-missing">
           Missing: {missing.join(", ")}.
         </span>
       )}
     </div>
+  );
+};
+
+export const SqliteAuthorityToolbarStatus: React.FC = () => {
+  const readiness = useSqliteAuthorityRehearsal();
+
+  if (
+    !readiness.selected ||
+    !readiness.ready ||
+    !readiness.authoritativeMode
+  ) {
+    return null;
+  }
+
+  return (
+    <span
+      className="sqlite-authority-toolbar-status"
+      slot="end"
+      role="status"
+      aria-label="SQLite authoritative mode is active"
+    >
+      <span>SQLite</span>
+      <span className="sqlite-authority-toolbar-status-detail">
+        {" "}authoritative
+      </span>
+    </span>
   );
 };
 

@@ -1,5 +1,6 @@
 import {
   localApiGet,
+  localApiGetBlob,
   type LocalApiQueryParams,
 } from "../../api/localApiClient";
 import {
@@ -71,6 +72,11 @@ export const getAccountById = async (
 ): Promise<AccountDto | undefined> => {
   return getLookupRowById<AccountDto>("accounts", "account", id);
 };
+
+export const getAccountImage = async (
+  id: number,
+): Promise<Blob | undefined> =>
+  localApiGetBlob(`/prototype/repositories/accounts/${id}/image`);
 
 export const listBuckets = async (
   options: LookupListOptions = {},
