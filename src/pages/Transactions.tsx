@@ -76,10 +76,12 @@ import {
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import {
-  isCostBudgetTransactionWriteEligible,
   isBasicTransactionWriteEligible,
   isTransactionsBasicWriteExperimentEnabled,
   isTransactionsCostBudgetWriteExperimentEnabled,
+  transactionCostBudgetBaseEligibilityReason,
+  transactionCostBudgetEligibilityReason,
+  transactionEditEligibilityMessage,
   type TransactionBudgetReference,
   type TransactionBudgetSnapshotReference,
 } from "../repositories/http/transactionBasicWriteExperiment";
@@ -402,72 +404,6 @@ const loadSelectedReadLookupRows = async (
   };
 };
 
-const loadSelectedReadReferenceRows = async (
-  list: (options: {
-    limit: number;
-    offset: number;
-  }) => Promise<unknown>,
-  errorCode: string,
-): Promise<Array<{ id?: unknown }>> => {
-  const rows: Array<{ id?: unknown }> = [];
-  while (rows.length < LOOKUP_READ_EXPERIMENT_LIMIT) {
-    const limit = Math.min(
-      TRANSACTIONS_READ_EXPERIMENT_PAGE_SIZE,
-      LOOKUP_READ_EXPERIMENT_LIMIT - rows.length,
-    );
-    const result = (await list({
-      limit,
-      offset: rows.length,
-    })) as DevPreviewListResult;
-    const page = selectedReadListRows(result, errorCode);
-    rows.push(...page);
-    const count = previewCount(result);
-    if (
-      page.length === 0 ||
-      page.length < limit ||
-      (count !== undefined && rows.length >= count)
-    ) {
-      break;
-    }
-  }
-  return rows;
-};
-
-const loadSelectedReadCostBudgetReferences = async (
-  repositories: ReturnType<typeof getSelectedReadRepositories>,
-): Promise<{
-  budgets: TransactionBudgetReference[];
-  snapshots: TransactionBudgetSnapshotReference[];
-}> => {
-  const [budgetRows, snapshotRows] = await Promise.all([
-    loadSelectedReadReferenceRows(
-      (options) => repositories.budgets.list(options),
-      "invalid_transactions_budget_reference_response",
-    ),
-    loadSelectedReadReferenceRows(
-      (options) => repositories.budgetSnapshots.list(options),
-      "invalid_transactions_budget_snapshot_reference_response",
-    ),
-  ]);
-
-  return {
-    budgets: budgetRows.map((row) => ({
-      id: optionalNumber((row as Record<string, unknown>).id),
-    })),
-    snapshots: snapshotRows.map((row) => {
-      const source = row as Record<string, unknown>;
-      return {
-        id: optionalNumber(source.id),
-        budgetId: optionalNumber(source.budgetId),
-        dueDate:
-          source.dueDate instanceof Date || typeof source.dueDate === "string"
-            ? source.dueDate
-            : undefined,
-      };
-    }),
-  };
-};
-
 const toDayKey = (value: unknown): string | undefined => {
   if (typeof value !== "string" && !(value instanceof Date)) {
     return undefined;
@@ -509,10 +445,6 @@ const Transactions: React.FC = () => {
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [costBudgetReferences, setCostBudgetReferences] = useState<{
-    budgets: TransactionBudgetReference[];
-    snapshots: TransactionBudgetSnapshotReference[];
-  }>({ budgets: [], snapshots: [] });
   const [accountImages, setAccountImages] = useState<Map<number, string>>(
     new Map(),
   );
@@ -635,12 +567,9 @@ const Transactions: React.FC = () => {
 
       if (transactionsHttpSelectedReadActive) {
         const repositories = getSelectedReadRepositories(selectedBackend);
-        const [transactionLoad, lookupRows, references] = await Promise.all([
+        const [transactionLoad, lookupRows] = await Promise.all([
           loadSelectedReadTransactionExperimentRows(repositories),
           loadSelectedReadLookupRows(repositories),
-          transactionsCostBudgetWriteExperimentActive
-            ? loadSelectedReadCostBudgetReferences(repositories)
-            : Promise.resolve({ budgets: [], snapshots: [] }),
         ]);
 
         allTransactions = transactionLoad.transactions;
@@ -649,7 +578,6 @@ const Transactions: React.FC = () => {
         recs = lookupRows.recipients;
         accs = lookupRows.accounts;
         experimentLoad = transactionLoad;
-        setCostBudgetReferences(references);
       } else {
         [allTransactions, cats, bkts, recs, accs] = await Promise.all([
           transactionRepository.listTransactions(),
@@ -658,7 +586,6 @@ const Transactions: React.FC = () => {
           recipientRepository.listRecipients(),
           accountRepository.listAccounts(),
         ]);
-        setCostBudgetReferences({ budgets: [], snapshots: [] });
       }
 
       // REMOVED: paymentMethods fetch - no longer needed
@@ -765,28 +692,79 @@ const Transactions: React.FC = () => {
   };
 
   // Handler to navigate to Edit Transaction page
-  const handleEdit = (transaction: Transaction) => {
-    const editEligible = transaction.isTransfer
-      ? isTransferWriteEligible(transaction)
-      : transactionsCostBudgetWriteExperimentActive
-        ? isCostBudgetTransactionWriteEligible(
-            transaction,
-            costBudgetReferences.snapshots,
-            costBudgetReferences.budgets,
-          )
-        : isBasicTransactionWriteEligible(transaction);
-    if (
-      transactionsHttpSelectedReadActive &&
-      (!transactionsSqliteWriteExperimentActive || !editEligible)
-    ) {
+  const handleEdit = async (transaction: Transaction) => {
+    if (!transactionsHttpSelectedReadActive) {
+      if (transaction.id !== undefined) {
+        history.push(`/edit/${transaction.id}`);
+      }
+      return;
+    }
+
+    if (!transactionsSqliteWriteExperimentActive) {
       setError(
-        transactionsSqliteWriteExperimentActive
-          ? transactionsCostBudgetWriteExperimentActive
-            ? transaction.isTransfer
-              ? "This transfer pair is malformed, ambiguous, or unsupported and remains read-only."
-              : "This transaction has unsupported or inconsistent cost or budget linkage and remains read-only."
-            : "Advanced transaction editing is not available in the SQLite experiment."
-          : "Transactions HTTP reads are active, but the basic write experiment is off.",
+        "Transactions HTTP reads are active, but the basic write experiment is off.",
+      );
+      return;
+    }
+
+    if (transaction.isTransfer) {
+      if (!isTransferWriteEligible(transaction)) {
+        setError(
+          "This transfer pair is malformed, ambiguous, or unsupported and remains read-only.",
+        );
+        return;
+      }
+    } else if (transactionsCostBudgetWriteExperimentActive) {
+      const baseReason =
+        transactionCostBudgetBaseEligibilityReason(transaction);
+      if (baseReason) {
+        setError(transactionEditEligibilityMessage(baseReason));
+        return;
+      }
+
+      try {
+        const repositories = getSelectedReadRepositories(selectedBackend);
+        const exactSnapshots: TransactionBudgetSnapshotReference[] = [];
+        const exactBudgets: TransactionBudgetReference[] = [];
+
+        if (transaction.budgetSnapshotId != null) {
+          const snapshot = await repositories.budgetSnapshots.getById(
+            transaction.budgetSnapshotId,
+          );
+          if (snapshot) {
+            exactSnapshots.push({
+              id: numberValue(snapshot.id),
+              budgetId: numberValue(snapshot.budgetId),
+              dueDate: snapshot.dueDate,
+            });
+            const parentBudgetId = numberValue(snapshot.budgetId);
+            if (parentBudgetId !== undefined) {
+              const budget = await repositories.budgets.getById(parentBudgetId);
+              if (budget) {
+                exactBudgets.push({ id: numberValue(budget.id) });
+              }
+            }
+          }
+        }
+
+        const reason = transactionCostBudgetEligibilityReason(
+          transaction,
+          exactSnapshots,
+          exactBudgets,
+        );
+        if (reason) {
+          setError(transactionEditEligibilityMessage(reason));
+          return;
+        }
+      } catch {
+        setError(
+          "Transaction edit eligibility could not be verified. No changes were made.",
+        );
+        return;
+      }
+    } else if (!isBasicTransactionWriteEligible(transaction)) {
+      setError(
+        "Advanced transaction editing is not available in the SQLite experiment.",
       );
       return;
     }
@@ -2565,23 +2543,25 @@ const Transactions: React.FC = () => {
                                 </IonCol>
                               </IonRow>
                             )}
-                            {transactionsSqliteWriteExperimentActive &&
-                              (txn.isTransfer
-                                ? isTransferWriteEligible(txn)
-                                : transactionsCostBudgetWriteExperimentActive
-                                  ? isCostBudgetTransactionWriteEligible(
-                                      txn,
-                                      costBudgetReferences.snapshots,
-                                      costBudgetReferences.budgets,
-                                    )
-                                  : isBasicTransactionWriteEligible(txn)) && (
+                            {transactionsSqliteWriteExperimentActive && (
                                 <IonRow className="item-actions">
                                   <IonCol className="item-actions-container">
                                     <IonButton
                                       fill="clear"
                                       size="small"
                                       style={{ marginRight: "0" }}
-                                      onClick={() => handleEdit(txn)}
+                                      onClick={() => void handleEdit(txn)}
+                                      disabled={
+                                        txn.isTransfer
+                                          ? !isTransferWriteEligible(txn)
+                                          : transactionsCostBudgetWriteExperimentActive
+                                            ? transactionCostBudgetBaseEligibilityReason(
+                                                txn,
+                                              ) !== undefined
+                                            : !isBasicTransactionWriteEligible(
+                                                txn,
+                                              )
+                                      }
                                       title={
                                         rehearsal.authoritativeMode
                                           ? "Edit transaction in authoritative SQLite"

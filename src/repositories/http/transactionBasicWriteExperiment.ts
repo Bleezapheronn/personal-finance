@@ -102,10 +102,8 @@ const sameInstant = (
   );
 };
 
-export const transactionCostBudgetEligibilityReason = (
+export const transactionCostBudgetBaseEligibilityReason = (
   transaction: BasicTransactionEligibilityInput,
-  snapshots: TransactionBudgetSnapshotReference[],
-  budgets: TransactionBudgetReference[],
 ): string | undefined => {
   if (
     typeof transaction.id !== "number" ||
@@ -134,6 +132,18 @@ export const transactionCostBudgetEligibilityReason = (
       transaction.transactionCost > 0)
   ) {
     return "transaction_cost_invalid";
+  }
+  return undefined;
+};
+
+export const transactionCostBudgetEligibilityReason = (
+  transaction: BasicTransactionEligibilityInput,
+  snapshots: TransactionBudgetSnapshotReference[],
+  budgets: TransactionBudgetReference[],
+): string | undefined => {
+  const baseReason = transactionCostBudgetBaseEligibilityReason(transaction);
+  if (baseReason) {
+    return baseReason;
   }
 
   const hasSnapshot = transaction.budgetSnapshotId != null;
@@ -174,6 +184,31 @@ export const isCostBudgetTransactionWriteEligible = (
 ): boolean =>
   transactionCostBudgetEligibilityReason(transaction, snapshots, budgets) ===
   undefined;
+
+export const transactionEditEligibilityMessage = (
+  reason: string,
+): string => {
+  switch (reason) {
+    case "transaction_basic_fields_invalid":
+      return "Required transaction fields are incomplete or invalid.";
+    case "transfers_not_supported":
+      return "This transaction is governed by transfer-pair eligibility.";
+    case "transaction_cost_invalid":
+      return "The transaction cost is invalid.";
+    case "legacy_only_budget_link_not_supported":
+      return "Legacy-only Budget linkage remains read-only.";
+    case "budget_linkage_incomplete":
+      return "The Budget snapshot linkage is incomplete.";
+    case "budget_snapshot_not_found":
+      return "The linked Budget snapshot is unavailable.";
+    case "budget_snapshot_budget_mismatch":
+      return "The linked Budget and snapshot do not match.";
+    case "budget_snapshot_occurrence_mismatch":
+      return "The transaction occurrence and snapshot date do not match.";
+    default:
+      return "This transaction remains read-only because its linkage is unsupported.";
+  }
+};
 
 export const isBasicTransactionWriteEligible = (
   transaction: BasicTransactionEligibilityInput,

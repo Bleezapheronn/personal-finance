@@ -28,7 +28,9 @@ export const SelectableDropdown: React.FC<SelectableDropdownProps> = ({
         name: opt.label,
       }))}
       onIonChange={(selectedId) => {
-        if (selectedId !== undefined && options[selectedId]) {
+        if (selectedId === undefined) {
+          onValueChange("");
+        } else if (options[selectedId]) {
           onValueChange(options[selectedId].value);
         }
       }}

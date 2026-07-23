@@ -210,7 +210,7 @@ export const AddCategoryModal: React.FC<AddCategoryModalProps> = ({
                   className="form-input"
                   placeholder="e.g., Groceries"
                   value={name}
-                  onIonChange={(e) => setName(e.detail.value ?? "")}
+                  onIonInput={(e) => setName(e.detail.value ?? "")}
                 />
               </div>
             </IonCol>

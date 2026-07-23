@@ -61,6 +61,11 @@ import {
   isBudgetLifecycleWriteExperimentEnabled,
   writeBudgetLifecycle,
 } from "../repositories/http/budgetLifecycleWriteExperiment";
+import {
+  budgetActiveStateForEdit,
+  budgetActiveStateForSubmission,
+  shouldShowBudgetLifecycleActiveControl,
+} from "./budgetLifecycleForm";
 
 type BudgetType = "expense" | "income";
 
@@ -164,6 +169,7 @@ const AddBudget: React.FC = () => {
   const [remainingCyclesTotal, setRemainingCyclesTotal] = useState<string>("");
   const [isGoal, setIsGoal] = useState(false);
   const [isFlexible, setIsFlexible] = useState(false);
+  const [isActive, setIsActive] = useState(true);
   const [amountMode, setAmountMode] = useState<"fixed" | "percentage">("fixed");
   const [goalPercentage, setGoalPercentage] = useState<string>("");
 
@@ -548,6 +554,7 @@ const AddBudget: React.FC = () => {
             setRecipientId(budget.recipientId);
             setIsGoal(budget.isGoal);
             setIsFlexible(budget.isFlexible ?? false);
+            setIsActive(budgetActiveStateForEdit(budget.isActive));
             if (budget.goalPercentage) {
               setAmountMode("percentage");
               setGoalPercentage(String(budget.goalPercentage));
@@ -625,6 +632,7 @@ const AddBudget: React.FC = () => {
 
             setIsGoal(false);
             setIsFlexible(false);
+            setIsActive(true);
           }
         } catch (err) {
           console.error("Failed to load transaction:", err);
@@ -711,6 +719,7 @@ const AddBudget: React.FC = () => {
     setRemainingCyclesTotal("");
     setIsGoal(false);
     setIsFlexible(false);
+    setIsActive(true);
     setAmountMode("fixed");
     setGoalPercentage("");
     setEditingBudget(null);
@@ -837,7 +846,10 @@ const AddBudget: React.FC = () => {
               ? "income"
               : "expense"
             : undefined,
-        isActive: true,
+        isActive: budgetActiveStateForSubmission(
+          budgetLifecycleWriteExperimentActive,
+          isActive,
+        ),
         remainingCyclesTotal:
           parsedRemainingCycles && parsedRemainingCycles > 0
             ? parsedRemainingCycles
@@ -1636,6 +1648,20 @@ const AddBudget: React.FC = () => {
                   This is Flexible (partial payment acceptable)
                 </label>
               </IonCol>
+              {shouldShowBudgetLifecycleActiveControl(
+                budgetLifecycleWriteExperimentActive,
+              ) && (
+                <IonCol>
+                  <IonCheckbox
+                    checked={isActive}
+                    onIonChange={(e) => setIsActive(e.detail.checked)}
+                    style={{ width: "18px", height: "18px" }}
+                  />
+                  <label style={{ cursor: "pointer", marginBottom: 0 }}>
+                    Active (generate scheduled snapshots)
+                  </label>
+                </IonCol>
+              )}
             </IonRow>
 
             {/* Submit Button */}

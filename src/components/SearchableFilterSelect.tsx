@@ -78,6 +78,7 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
 
   // NEW: Handle clear button click
   const handleClear = (e: React.MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
     onIonChange(undefined);
     setSearchText("");
@@ -117,6 +118,7 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
             {/* NEW: Clear button - only show if value is selected */}
             {selectedOption && (
               <button
+                type="button"
                 onClick={handleClear}
                 style={{
                   position: "absolute", // ADD THIS - remove from flex flow

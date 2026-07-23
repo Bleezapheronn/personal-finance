@@ -81,6 +81,12 @@ import {
   type BudgetDeleteWriteResponse,
   writeBudgetDelete,
 } from "../repositories/http/budgetDeleteWriteExperiment";
+import {
+  budgetDeleteBlockedMessage,
+  budgetDeleteConfirmationMessage,
+  budgetDeleteRefreshFailureMessage,
+  shouldShowBudgetDeleteControl,
+} from "../repositories/http/budgetDeleteControl";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -1533,9 +1539,7 @@ const BudgetPage: React.FC = () => {
       try {
         const plan = await dryRunBudgetDelete(budgetId);
         if (!plan.eligible || !plan.planFingerprint) {
-          setError(
-            `Budget deletion blocked: ${plan.transactionDependencyCount} protected transaction dependency/dependencies and ${plan.conflictCount} conflict(s). No rows changed.`,
-          );
+          setError(budgetDeleteBlockedMessage(plan));
           return;
         }
         setSqliteDeletePlan(plan);
@@ -1600,7 +1604,7 @@ const BudgetPage: React.FC = () => {
       } catch (err) {
         setError(
           sqliteMutated
-            ? "budget_delete_refresh_failed_sqlite_may_have_changed"
+            ? budgetDeleteRefreshFailureMessage(true)
             : budgetDeleteWriteErrorCode(err),
         );
       } finally {
@@ -2339,7 +2343,7 @@ const BudgetPage: React.FC = () => {
           header="Delete Budget"
           message={
             sqliteDeletePlan
-              ? `This permanently removes the Budget and ${sqliteDeletePlan.snapshotCount} unlinked snapshot(s) from SQLite. Transaction dependencies: ${sqliteDeletePlan.transactionDependencyCount}. No transactions will be unlinked or deleted. Rotate the authority checkpoint before restart.`
+              ? budgetDeleteConfirmationMessage(sqliteDeletePlan)
               : deleteAnalysis
               ? deleteAnalysis.totalSnapshots === 0
                 ? "This budget has no snapshots. Delete it?"
@@ -2713,8 +2717,11 @@ const BudgetPage: React.FC = () => {
                               <IonCol
                                 style={{ paddingRight: 0, textAlign: "right" }}
                               >
-                                {(!budgetHttpReadonlyExperimentActive ||
-                                  budgetDeleteWriteExperimentActive) && (
+                                {shouldShowBudgetDeleteControl(
+                                  currentGoal.budget.id,
+                                  budgetHttpReadonlyExperimentActive,
+                                  budgetDeleteWriteExperimentActive,
+                                ) && (
                                   <IonButton
                                     fill="clear"
                                     size="small"
@@ -2742,7 +2749,8 @@ const BudgetPage: React.FC = () => {
                                 >
                                   <IonIcon icon={createOutline} slot="end" />
                                 </IonButton>
-                                {!budgetHttpReadonlyExperimentActive && (
+                                {(!budgetHttpReadonlyExperimentActive ||
+                                  budgetDeleteWriteExperimentActive) && (
                                   <IonButton
                                     fill="clear"
                                     size="small"
@@ -2993,8 +3001,11 @@ const BudgetPage: React.FC = () => {
                                   budgetDefinitionWriteExperimentActive) && (
                                   <IonRow className="item-actions">
                                     <IonCol className="item-actions-container">
-                                      {(!budgetHttpReadonlyExperimentActive ||
-                                        budgetDeleteWriteExperimentActive) && (
+                                      {shouldShowBudgetDeleteControl(
+                                        occ.budget.id,
+                                        budgetHttpReadonlyExperimentActive,
+                                        budgetDeleteWriteExperimentActive,
+                                      ) && (
                                         <IonButton
                                           fill="clear"
                                           size="small"
@@ -3028,7 +3039,8 @@ const BudgetPage: React.FC = () => {
                                           slot="end"
                                         />
                                       </IonButton>
-                                      {!budgetHttpReadonlyExperimentActive && (
+                                      {(!budgetHttpReadonlyExperimentActive ||
+                                        budgetDeleteWriteExperimentActive) && (
                                         <IonButton
                                           fill="clear"
                                           size="small"
