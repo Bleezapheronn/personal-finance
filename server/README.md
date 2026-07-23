@@ -432,6 +432,38 @@ unchanged Dexie remains available. Checkpoints do not synchronize SQLite with
 Dexie, reconcile divergent histories, upload files, or authorize unsupported
 operations; all files remain operator-managed outside Git.
 
+### Authority Operations Phase 3
+
+The root `authority:ops` command manages an explicit versioned profile for
+local rehearsal or authoritative operation:
+
+```powershell
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" status
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" verify
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" start --dry-run
+```
+
+Use `init` to create the profile, `start` to launch API and Vite as attached
+child processes, `checkpoint` after stopped-service authoritative writes, and
+`rollback --to-manifest <prior-manifest> --confirm-rollback` to restore an
+earlier checkpoint into a new writable runtime file. `--api-only` and
+`--vite-only` narrow startup. `PERSONAL_FINANCE_AUTHORITY_PROFILE_PATH` may
+supply the profile path, but explicit `--profile` wins.
+
+The profile, database, manifest, token file, backup directory, generated
+profile backups, and lock must use absolute outside-repository paths. The
+profile stores only the token-file path. Capabilities are disabled unless
+explicitly selected, and one registry generates matching server and browser
+flags. Authoritative startup refuses a changed database until a checkpoint is
+created and verified. The CLI never writes `.env.local`, uses an immutable
+backup as a runtime database, overwrites the active database during rollback,
+or changes the default Dexie backend.
+
+See
+[`docs/sqlite-write-experiment-operational-readiness.md`](../docs/sqlite-write-experiment-operational-readiness.md#authority-operations-phase-3)
+for the schema, initialization examples, checkpoint/rollback policy, status
+interpretation, and stale-lock recovery.
+
 ## API Smoke Test
 
 The API smoke-test CLI checks a running local API server. Start the server first with `PERSONAL_FINANCE_SQLITE_PATH` pointing at a verified disposable SQLite database outside the repository.

@@ -7,6 +7,10 @@ export const API_VERSION = "0.1.0" as const;
 export const READONLY_MODE = true as const;
 export const TOKEN_HEADER_NAME = "x-personal-finance-token" as const;
 export const TOKEN_FILE_NAME = ".server-token" as const;
+export const TOKEN_FILE_PATH_ENV_VAR =
+  "PERSONAL_FINANCE_TOKEN_FILE_PATH" as const;
+export const ADDITIONAL_ALLOWED_ORIGIN_ENV_VAR =
+  "PERSONAL_FINANCE_ADDITIONAL_ALLOWED_ORIGIN" as const;
 export const SQLITE_PATH_ENV_VAR = "PERSONAL_FINANCE_SQLITE_PATH" as const;
 export const SQLITE_AUTHORITY_ENABLED_ENV_VAR =
   "PERSONAL_FINANCE_SQLITE_AUTHORITY_ENABLED" as const;
@@ -47,11 +51,36 @@ export const BUDGET_LIFECYCLE_WRITES_ENV_VAR =
 export const BUDGET_DELETE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUDGET_DELETE_WRITES" as const;
 
+const configuredAdditionalOrigin =
+  process.env[ADDITIONAL_ALLOWED_ORIGIN_ENV_VAR]?.trim();
+
+if (configuredAdditionalOrigin) {
+  let parsedOrigin: URL;
+  try {
+    parsedOrigin = new URL(configuredAdditionalOrigin);
+  } catch {
+    throw new Error("PERSONAL_FINANCE_ADDITIONAL_ALLOWED_ORIGIN must be a local HTTP origin.");
+  }
+  if (
+    parsedOrigin.protocol !== "http:" ||
+    (parsedOrigin.hostname !== "127.0.0.1" &&
+      parsedOrigin.hostname !== "localhost") ||
+    parsedOrigin.username !== "" ||
+    parsedOrigin.password !== "" ||
+    parsedOrigin.pathname !== "/" ||
+    parsedOrigin.search !== "" ||
+    parsedOrigin.hash !== ""
+  ) {
+    throw new Error("PERSONAL_FINANCE_ADDITIONAL_ALLOWED_ORIGIN must be a local HTTP origin.");
+  }
+}
+
 export const ALLOWED_ORIGINS = new Set([
   "http://localhost:8100",
   "http://127.0.0.1:8100",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  ...(configuredAdditionalOrigin ? [configuredAdditionalOrigin] : []),
 ]);
 
 export const getServerPort = (): number => {
@@ -70,6 +99,11 @@ export const getServerPort = (): number => {
 
 export const getDataDir = (): string => {
   return process.env.PERSONAL_FINANCE_DATA_DIR || "C:\\dev\\personal-finance-data";
+};
+
+export const getTokenFilePath = (): string | undefined => {
+  const tokenPath = process.env[TOKEN_FILE_PATH_ENV_VAR];
+  return tokenPath && tokenPath.trim().length > 0 ? tokenPath : undefined;
 };
 
 export const getSqlitePath = (): string | undefined => {

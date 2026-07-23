@@ -1,12 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { getDataDir, TOKEN_FILE_NAME } from "./config.js";
+import { getDataDir, getTokenFilePath, TOKEN_FILE_NAME } from "./config.js";
 
 const generateTokenValue = (): string => randomBytes(32).toString("hex");
 
 export const getTokenPath = (): string => {
-  return join(getDataDir(), TOKEN_FILE_NAME);
+  return getTokenFilePath() ?? join(getDataDir(), TOKEN_FILE_NAME);
 };
 
 export const readOrCreateToken = async (): Promise<string> => {

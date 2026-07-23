@@ -431,6 +431,120 @@ automatic backup retention, checkpoint deletion, synchronization, dual-write,
 cloud upload, arbitrary filesystem endpoint, UI path picker, schema migration,
 snapshot pruning/repair, or new entity mutation route.
 
+## Authority Operations Phase 3
+
+`authority:ops` is the guarded local operator entry point for rehearsal and
+authoritative startup. It coordinates existing verification, native backup,
+checkpoint, and restore primitives; it does not replace them or change the
+default Dexie backend. The version 1 profile and every path it contains must be
+absolute and outside the repository. The profile stores paths and capability
+names, never token contents or finance rows.
+
+```json
+{
+  "schemaVersion": 1,
+  "mode": "rehearsal",
+  "activeDatabasePath": "C:\\outside-repo\\runtime\\active.sqlite",
+  "authorityManifestPath": null,
+  "sourceBackupPath": null,
+  "tokenFilePath": "C:\\outside-repo\\token",
+  "backupDirectory": "C:\\outside-repo\\backups",
+  "apiHost": "127.0.0.1",
+  "apiPort": 3160,
+  "viteHost": "127.0.0.1",
+  "vitePort": 5173,
+  "enabledWriteCapabilities": []
+}
+```
+
+`sourceBackupPath` is optional. When present, `verify` also runs the complete
+six-part backup-to-SQLite comparison. Authoritative profiles require a
+matching cutover or checkpoint manifest and all ten authority-baseline
+capabilities. Optional later capabilities remain disabled unless named.
+Recipient active-state and create/update capabilities are selected as a pair
+because they share one frontend gate. Unknown, duplicate, retired, incomplete,
+or authority-incomplete capability selections fail closed.
+
+Initialize only after creating the database, token file, and backup directory:
+
+```powershell
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" init --mode rehearsal --sqlite "C:\outside-repo\runtime\active.sqlite" --token-file "C:\outside-repo\token" --backup-directory "C:\outside-repo\backups" --api-port 3160 --vite-port 5173
+
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" init --mode authoritative --sqlite "C:\outside-repo\runtime\active.sqlite" --manifest "C:\outside-repo\backups\checkpoint.manifest.json" --source-backup "C:\outside-repo\matching-full-backup.json" --token-file "C:\outside-repo\token" --backup-directory "C:\outside-repo\backups" --api-port 3160 --vite-port 5173 --capability recipientActiveStateWrites --capability recipientCreateUpdateWrites --capability bucketCategoryWrites --capability accountWrites --capability transactionBasicWrites --capability transactionCostBudgetWrites --capability transactionTransferWrites --capability smsTemplateWrites --capability budgetDefinitionWrites --capability budgetSnapshotGenerationWrites
+```
+
+The profile refuses an immutable manifest-referenced backup as its writable
+runtime database. Existing profiles are not overwritten unless `--replace` is
+explicit; replacement preserves a timestamped `.bak` copy beside the profile.
+Writes use a temporary file and atomic rename. The explicit `--profile` wins
+over `PERSONAL_FINANCE_AUTHORITY_PROFILE_PATH`; no profile is selected from the
+current directory.
+
+Inspect and verify without mutation:
+
+```powershell
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" status
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" verify
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" start --dry-run
+```
+
+`status` reports paths, sizes, local addresses, capability names, logical and
+manifest fingerprints, chain verification, port availability, WAL/SHM
+presence, lock state, and overall readiness. A healthy authoritative database
+changed by legitimate writes is `checkpoint required before authoritative
+restart`, not corruption. Unsafe paths, missing dependencies, occupied ports,
+locks, verification failures, and checkpoint-required state exit nonzero.
+Token contents, confirmation phrases, rows, and sensitive file contents are
+never printed.
+
+Start API and Vite as attached foreground children after a successful dry run:
+
+```powershell
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" start
+```
+
+`--api-only` and `--vite-only` are available for narrow diagnostics. The CLI
+sets child environments from one capability registry, including explicit
+`false` values for unselected write capabilities. It does not read or write
+`.env.local`. Ctrl+C stops both children, and one child failing stops the
+other. Only local hosts are accepted.
+
+After supported authoritative writes, stop both services and rotate:
+
+```powershell
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" checkpoint --label operator-label
+```
+
+Both configured ports must be free. The command creates a verified native
+safety backup first, then creates and verifies a fresh immutable checkpoint
+backup and manifest, verifies the complete lineage, and only then atomically
+advances the profile. Existing runtime, backup, and manifest files are never
+overwritten or deleted. Backup retention remains manual.
+
+Rollback is explicit, stopped-service, lineage-bound, and non-destructive:
+
+```powershell
+npm run authority:ops -- --profile "C:\outside-repo\authority-profile.json" rollback --to-manifest "C:\outside-repo\backups\prior-checkpoint.manifest.json" --confirm-rollback
+```
+
+The target must be an earlier checkpoint in the current lineage. The command
+creates a native safety backup, restores the selected immutable checkpoint to
+a new writable runtime filename, verifies the new copy and unchanged backup,
+and atomically updates the profile. The former runtime, later checkpoints, and
+prior profile remain preserved. Rollback never starts the app, touches Dexie,
+or enables capabilities.
+
+Mutating commands use `<profile>.lock` with process, host, command, and start
+time only. A live or uncertain lock is never broken. An obviously stale lock
+is reported but retained; after independently confirming no operation is
+running and preserving evidence, the operator may remove only that lock file.
+Interrupted checkpoint/rollback artifacts remain for inspection. Run `status`
+and `verify` before retrying.
+
+Profiles, profile backups, locks, databases, manifests, backups, tokens, logs,
+reports, WAL files, and SHM files remain outside Git. Immutable checkpoints
+must never be configured as writable runtime databases.
+
 ## Not Ready For Authority Migration
 
 SQLite must not become authoritative until all of the following are complete:

@@ -71,6 +71,14 @@ const suspiciousPathPatterns = [
     reason: "generated SQLite authority manifest JSON",
   },
   {
+    pattern: /(^|\/)[^/]*authority[^/]*profile[^/]*\.json(?:\.[^/]*)?$/i,
+    reason: "generated SQLite authority operations profile",
+  },
+  {
+    pattern: /(^|\/)[^/]*authority[^/]*profile[^/]*\.lock$/i,
+    reason: "generated SQLite authority operations lock",
+  },
+  {
     pattern: /(^|\/)[^/]*checkpoint[^/]*\.json$/i,
     reason: "generated SQLite authority checkpoint JSON",
   },

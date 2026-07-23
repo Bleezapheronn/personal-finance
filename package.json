@@ -17,6 +17,7 @@
     "create:sqlite-authority-checkpoint": "npm --prefix server run create:sqlite-authority-checkpoint --",
     "verify:sqlite-authority-checkpoint": "npm --prefix server run verify:sqlite-authority-checkpoint --",
     "verify:sqlite-authority-checkpoint-chain": "npm --prefix server run verify:sqlite-authority-checkpoint-chain --",
+    "authority:ops": "node server/node_modules/tsx/dist/cli.mjs server/src/authorityOps.ts",
     "test.e2e": "cypress run",
     "test.unit": "vitest",
     "lint": "eslint"
