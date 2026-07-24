@@ -721,6 +721,17 @@ const BudgetPage: React.FC = () => {
     });
   };
 
+  const handleUnlinkPaymentInSqlite = async (transaction: Transaction): Promise<boolean> => {
+    if (!rehearsal.ready || !rehearsal.budgetSnapshotOccurrenceWritesAvailable) {
+      throw new Error("budget_snapshot_occurrence_writes_unavailable");
+    }
+    const input = { transactionId: transaction.id!, ...(transaction.budgetSnapshotId != null ? { snapshotId: transaction.budgetSnapshotId } : {}) };
+    const dryRun = await dryRunBudgetSnapshotOccurrence("unlink", input);
+    if (!window.confirm("Remove this Budget link? The Transaction and occurrence will remain.")) return false;
+    await writeBudgetSnapshotOccurrence("unlink", input, dryRun.planFingerprint!);
+    return true;
+  };
+
   // Load all data
   useIonViewWillEnter(() => {
     loadData();
@@ -1336,33 +1347,8 @@ const BudgetPage: React.FC = () => {
   };
 
   const loadMoreBudgetOccurrences = async () => {
-    if (budgetHttpReadonlyExperimentActive) {
-      setError(
-        "Budget read experiment is read-only. Load more budget items is disabled.",
-      );
-      return;
-    }
-
     const nextHorizon = visibleBudgetHorizonDays + BUDGET_BATCH_DAYS;
-
-    try {
-      setIsLoadingMoreBudgetOccurrences(true);
-      const horizonDate = new Date();
-      horizonDate.setHours(0, 0, 0, 0);
-      horizonDate.setDate(horizonDate.getDate() + nextHorizon);
-
-      await Promise.all(
-        budgets
-          .filter((budget) => budget.isActive)
-          .map((budget) => ensureBudgetSnapshotCoverage(budget, horizonDate)),
-      );
-
-      const refreshedSnapshots = await db.budgetSnapshots.toArray();
-      setBudgetSnapshots(refreshedSnapshots);
-      setVisibleBudgetHorizonDays(nextHorizon);
-    } finally {
-      setIsLoadingMoreBudgetOccurrences(false);
-    }
+    setVisibleBudgetHorizonDays(nextHorizon);
   };
 
   // Calculate next occurrence based on frequency with intelligent month boundary handling
@@ -3123,14 +3109,7 @@ const BudgetPage: React.FC = () => {
                 ))}
 
                 <div style={{ padding: "16px 0 32px" }}>
-                  {budgetHttpReadonlyExperimentActive ? (
-                    <IonText color="medium">
-                      <p style={{ textAlign: "center", fontSize: "0.85rem" }}>
-                        Load more budget items is disabled in the read-only
-                        Budget experiment.
-                      </p>
-                    </IonText>
-                  ) : hasMoreBudgetOccurrences ? (
+                  {hasMoreBudgetOccurrences ? (
                     <IonButton
                       expand="block"
                       fill="outline"
@@ -3196,6 +3175,11 @@ const BudgetPage: React.FC = () => {
                     selectedBudgetForCompletion,
                     input,
                   )
+              : undefined
+          }
+          onUnlinkInSqlite={
+            budgetHttpReadonlyExperimentActive
+              ? handleUnlinkPaymentInSqlite
               : undefined
           }
         />

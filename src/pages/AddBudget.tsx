@@ -626,12 +626,10 @@ const AddBudget: React.FC = () => {
               );
               setRecipientId(Number(transaction.recipientId));
               setFrequency("monthly");
-              const nextMonthDate = getNextMonthDueDate(
-                new Date(transaction.date),
-              );
-              setDueDate(nextMonthDate);
+              const transactionLocalDate = new Date(transaction.date);
+              setDueDate(`${transactionLocalDate.getFullYear()}-${String(transactionLocalDate.getMonth() + 1).padStart(2, "0")}-${String(transactionLocalDate.getDate()).padStart(2, "0")}`);
               setDayOfMonth(
-                new Date(transaction.date).getDate().toString(),
+                transactionLocalDate.getDate().toString(),
               );
               setIsGoal(false);
               setIsFlexible(false);
@@ -657,12 +655,10 @@ const AddBudget: React.FC = () => {
             setRecipientId(transaction.recipientId);
 
             setFrequency("monthly");
-            const nextMonthDate = getNextMonthDueDate(
-              new Date(transaction.date),
-            );
-            setDueDate(nextMonthDate);
+            const transactionLocalDate = new Date(transaction.date);
+            setDueDate(`${transactionLocalDate.getFullYear()}-${String(transactionLocalDate.getMonth() + 1).padStart(2, "0")}-${String(transactionLocalDate.getDate()).padStart(2, "0")}`);
 
-            const dayOfMonthValue = new Date(transaction.date).getDate();
+            const dayOfMonthValue = transactionLocalDate.getDate();
             setDayOfMonth(dayOfMonthValue.toString());
 
             setIsGoal(false);
@@ -1557,7 +1553,9 @@ const AddBudget: React.FC = () => {
             <IonRow>
               <IonCol size="2">
                 <div className="form-input-wrapper">
-                  <label className="form-label">Due Date</label>
+                  <label className="form-label">
+                    {isFromTransaction ? "First occurrence date" : "Due Date"}
+                  </label>
                   <IonInput
                     className="form-input"
                     type="date"

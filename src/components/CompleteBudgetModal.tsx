@@ -57,6 +57,7 @@ interface CompleteBudgetModalProps {
     transactionCost?: number;
     transactionReference?: string;
   }) => Promise<void>;
+  onUnlinkInSqlite?: (transaction: Transaction) => Promise<boolean>;
 }
 
 export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
@@ -66,6 +67,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
   onComplete,
   lookupData,
   onCompleteInSqlite,
+  onUnlinkInSqlite,
 }) => {
   const [transactionReference, setTransactionReference] = useState("");
   const [transactionTime, setTransactionTime] = useState("");
@@ -357,11 +359,21 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
 
   const handleDeleteLinkedTransaction = async (txnId: number) => {
     try {
-      await db.transactions.update(txnId, {
-        budgetId: undefined,
-        occurrenceDate: undefined,
-        budgetSnapshotId: undefined,
-      });
+      const transaction = budgetOccurrence.linkedTransactions.find(
+        (candidate) => candidate.id === txnId,
+      );
+      if (!transaction) return;
+      if (onUnlinkInSqlite) {
+        if (!(await onUnlinkInSqlite(transaction))) return;
+      } else {
+        await db.transactions.update(txnId, {
+          budgetId: undefined,
+          occurrenceDate: undefined,
+          budgetSnapshotId: undefined,
+        });
+      }
+      setSuccessMsg("Budget link removed successfully.");
+      setShowSuccessToast(true);
       onComplete();
     } catch (error) {
       console.error("Error unlinking transaction:", error);

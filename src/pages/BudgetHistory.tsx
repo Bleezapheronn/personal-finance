@@ -1755,6 +1755,17 @@ const BudgetHistory: React.FC = () => {
     });
   };
 
+  const handleUnlinkPaymentInSqlite = async (transaction: Transaction): Promise<boolean> => {
+    if (!occurrenceWritesActive) {
+      throw new Error("budget_snapshot_occurrence_writes_unavailable");
+    }
+    const input = { transactionId: transaction.id!, ...(transaction.budgetSnapshotId != null ? { snapshotId: transaction.budgetSnapshotId } : {}) };
+    const dryRun = await dryRunBudgetSnapshotOccurrence("unlink", input);
+    if (!window.confirm("Remove this Budget link? The Transaction and occurrence will remain.")) return false;
+    await writeBudgetSnapshotOccurrence("unlink", input, dryRun.planFingerprint!);
+    return true;
+  };
+
   const selectedReadInputsTruncated =
     selectedReadLoadMeta?.snapshotTruncated === true ||
     selectedReadLoadMeta?.transactionTruncated === true ||
@@ -2811,6 +2822,11 @@ const BudgetHistory: React.FC = () => {
                       selectedOccurrenceForCompletion,
                       input,
                     )
+                : undefined
+            }
+            onUnlinkInSqlite={
+              budgetHistoryHttpReadonlyExperimentActive
+                ? handleUnlinkPaymentInSqlite
                 : undefined
             }
           />

@@ -31,6 +31,38 @@ describe("SQLite main-app workflow parity cleanup", () => {
     expect(budget).toContain("e.stopPropagation();");
   });
 
+  it("routes linked-payment removal through the shared SQLite unlink path", () => {
+    const modal = source("src/components/CompleteBudgetModal.tsx");
+    const budget = source("src/pages/Budget.tsx");
+    const history = source("src/pages/BudgetHistory.tsx");
+    expect(modal).toContain("onUnlinkInSqlite");
+    expect(modal).toContain("budgetSnapshotId: undefined");
+    expect(modal).toContain("budgetId: undefined");
+    expect(modal).toContain("occurrenceDate: undefined");
+    expect(budget).toContain('dryRunBudgetSnapshotOccurrence("unlink"');
+    expect(history).toContain('dryRunBudgetSnapshotOccurrence("unlink"');
+  });
+
+  it("uses the originating transaction date as the first Budget occurrence", () => {
+    const addBudget = source("src/pages/AddBudget.tsx");
+    expect(addBudget).toContain("First occurrence date");
+    expect(addBudget).toContain("transactionLocalDate.getFullYear()");
+    expect(addBudget).not.toContain("setDueDate(nextMonthDate)");
+  });
+
+  it("does not write when authoritative Budget Load More extends the horizon", () => {
+    const budget = source("src/pages/Budget.tsx");
+    expect(budget).toContain("setVisibleBudgetHorizonDays(nextHorizon)");
+    expect(budget).toContain("Load 30 More Days");
+    expect(budget).not.toContain(
+      "Load more budget items is disabled in the read-only Budget experiment.",
+    );
+    expect(budget).not.toContain("ensureBudgetSnapshotCoverage(budget, horizonDate)");
+    expect(budget).not.toContain(
+      "Budget read experiment is read-only. Load more budget items is disabled.",
+    );
+  });
+
   it("does not expose snapshot selection in Add Transaction", () => {
     const addTransaction = source("src/pages/AddTransaction.tsx");
     expect(addTransaction).not.toContain("Existing Budget Snapshot (optional)");
