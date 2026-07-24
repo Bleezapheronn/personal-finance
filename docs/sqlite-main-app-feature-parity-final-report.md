@@ -1,5 +1,9 @@
 # SQLite Main-App Feature Parity Final Report
 
+> **Historical report:** This records the completed parity migration and its
+> acceptance evidence. The current living project state is maintained in
+> [`docs/PROJECT_STATE.md`](PROJECT_STATE.md).
+
 Date: 2026-07-24
 
 Baseline commit: `7642d5c`
