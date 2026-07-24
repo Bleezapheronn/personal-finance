@@ -88,6 +88,11 @@ import {
   budgetDeleteRefreshFailureMessage,
   shouldShowBudgetDeleteControl,
 } from "../repositories/http/budgetDeleteControl";
+import { createBasicTransactionInDisposableSqlite } from "../repositories/http/transactionBasicWriteExperiment";
+import {
+  dryRunBudgetSnapshotOccurrence,
+  writeBudgetSnapshotOccurrence,
+} from "../repositories/http/budgetSnapshotOccurrenceWrite";
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
 import "./Budget.css";
 
@@ -667,6 +672,54 @@ const BudgetPage: React.FC = () => {
     useState(BUDGET_BATCH_DAYS);
   const [isLoadingMoreBudgetOccurrences, setIsLoadingMoreBudgetOccurrences] =
     useState(false);
+
+  const handleCompleteOccurrenceInSqlite = async (
+    occurrence: BudgetOccurrence,
+    input: {
+      date: Date;
+      amount: number;
+      transactionCost?: number;
+      transactionReference?: string;
+    },
+  ) => {
+    if (!rehearsal.ready || !rehearsal.budgetSnapshotOccurrenceWritesAvailable) {
+      throw new Error("budget_snapshot_occurrence_writes_unavailable");
+    }
+    if (!occurrence.budget.accountId || !occurrence.budget.categoryId || !occurrence.budget.recipientId) {
+      throw new Error("budget_occurrence_transaction_fields_incomplete");
+    }
+    const occurrenceInput = {
+      budgetId: occurrence.budgetId,
+      occurrenceDate: occurrence.dueDate,
+    };
+    const review = await dryRunBudgetSnapshotOccurrence("create", occurrenceInput);
+    const created = await writeBudgetSnapshotOccurrence(
+      "create",
+      occurrenceInput,
+      review.planFingerprint!,
+    );
+    if (typeof created.target.snapshotId !== "number") {
+      throw new Error("budget_snapshot_occurrence_missing_target");
+    }
+    await createBasicTransactionInDisposableSqlite({
+      classification:
+        occurrence.budget.goalDirection === "expense" ||
+        (occurrence.budget.goalDirection === undefined && occurrence.budget.amount < 0)
+          ? "expense"
+          : "income",
+      date: input.date.toISOString(),
+      amount: input.amount,
+      transactionCost: input.transactionCost ?? null,
+      transactionReference: input.transactionReference,
+      categoryId: occurrence.budget.categoryId,
+      accountId: occurrence.budget.accountId,
+      recipientId: occurrence.budget.recipientId,
+      description: occurrence.budget.description,
+      budgetId: occurrence.budgetId,
+      occurrenceDate: occurrence.dueDate.toISOString(),
+      budgetSnapshotId: created.target.snapshotId,
+    });
+  };
 
   // Load all data
   useIonViewWillEnter(() => {
@@ -2797,16 +2850,21 @@ const BudgetPage: React.FC = () => {
                         <IonItem
                           key={`${occ.budgetSnapshotId ?? "legacy"}-${occ.budgetId}-${occ.dueDate.getTime()}`}
                           onClick={() => {
-                            if (budgetHttpReadonlyExperimentActive) {
+                            if (
+                              budgetHttpReadonlyExperimentActive &&
+                              (!rehearsal.ready ||
+                                !rehearsal.budgetSnapshotOccurrenceWritesAvailable)
+                            ) {
+                              setError(
+                                "Budget occurrence completion requires the SQLite occurrence capability.",
+                              );
                               return;
                             }
                             setSelectedBudgetForCompletion(occ);
                             setShowCompleteModal(true);
                           }}
                           style={{
-                            cursor: budgetHttpReadonlyExperimentActive
-                              ? "default"
-                              : "pointer",
+                            cursor: "pointer",
                           }}
                         >
                           <IonGrid style={{ width: "100%" }}>
@@ -3113,7 +3171,7 @@ const BudgetPage: React.FC = () => {
       )}
 
       {/* Complete Budget Modal */}
-      {!budgetHttpReadonlyExperimentActive && selectedBudgetForCompletion && (
+      {selectedBudgetForCompletion && (
         <CompleteBudgetModal
           isOpen={showCompleteModal}
           onClose={() => {
@@ -3126,6 +3184,20 @@ const BudgetPage: React.FC = () => {
             setShowCompleteModal(false);
             setSelectedBudgetForCompletion(null);
           }}
+          lookupData={
+            budgetHttpReadonlyExperimentActive
+              ? { categories, buckets, accounts, transactions }
+              : undefined
+          }
+          onCompleteInSqlite={
+            budgetHttpReadonlyExperimentActive
+              ? (input) =>
+                  handleCompleteOccurrenceInSqlite(
+                    selectedBudgetForCompletion,
+                    input,
+                  )
+              : undefined
+          }
         />
       )}
 

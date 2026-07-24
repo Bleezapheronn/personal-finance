@@ -1145,15 +1145,19 @@ const AddTransaction: React.FC = () => {
             : transactionType === "expense"
               ? -Math.abs(numericOriginalAmountRaw)
               : Math.abs(numericOriginalAmountRaw);
+        // Preserve an existing contextual Budget link without exposing raw
+        // snapshot selection in the standard transaction form.
+        const linkedSnapshotId =
+          isEditMode ? editingTransaction?.budgetSnapshotId : budgetSnapshotId;
         const selectedSnapshot =
-          budgetSnapshotId === undefined
+          linkedSnapshotId === undefined
             ? undefined
             : selectedBudgetSnapshots.find(
-                (snapshot) => snapshot.id === budgetSnapshotId,
+                (snapshot) => snapshot.id === linkedSnapshotId,
               );
         if (
           transactionsCostBudgetWriteExperimentActive &&
-          budgetSnapshotId !== undefined &&
+          linkedSnapshotId !== undefined &&
           !selectedSnapshot
         ) {
           setErrorMsg("The selected budget snapshot is unavailable.");
@@ -2396,44 +2400,20 @@ const AddTransaction: React.FC = () => {
               )}
             </IonRow>
 
-            {transactionsCostBudgetWriteExperimentActive && (
-              <IonRow>
-                <IonCol size="11">
-                  <div className="form-input-wrapper">
-                    <label className="form-label">
-                      Existing Budget Snapshot (optional)
-                    </label>
-                    <SelectableDropdown
-                      label="Budget snapshot"
-                      placeholder="No budget snapshot"
-                      value={
-                        budgetSnapshotId === undefined
-                          ? undefined
-                          : String(budgetSnapshotId)
-                      }
-                      options={[
-                        { value: "", label: "No budget snapshot" },
-                        ...selectedBudgetSnapshots.map((snapshot) => ({
-                          value: String(snapshot.id),
-                          label: `Snapshot ${snapshot.id} / Budget ${snapshot.budgetId} / ${snapshot.dueDate.toLocaleDateString()}`,
-                        })),
-                      ]}
-                      onValueChange={(value) =>
-                        setBudgetSnapshotId(
-                          value === "" ? undefined : Number(value),
-                        )
-                      }
-                    />
+            {transactionsCostBudgetWriteExperimentActive &&
+              isEditMode &&
+              editingTransaction?.budgetSnapshotId !== undefined && (
+                <IonRow>
+                  <IonCol size="11">
                     <IonText color="medium">
                       <small>
-                        Existing snapshots only. This form does not generate or
-                        modify budget snapshots.
+                        This transaction is linked to a Budget occurrence. Manage
+                        the link from Transaction Details.
                       </small>
                     </IonText>
-                  </div>
-                </IonCol>
-              </IonRow>
-            )}
+                  </IonCol>
+                </IonRow>
+              )}
 
             {/* Original Amount, Currency, Exchange Rate */}
             <IonRow>

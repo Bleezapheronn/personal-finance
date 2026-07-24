@@ -622,12 +622,6 @@ const Transactions: React.FC = () => {
     fetchTransactions();
   });
 
-  const showTransactionsReadExperimentActionDisabled = () => {
-    setError(
-      "Transactions HTTP experiment is active. This action remains available only in Dexie.",
-    );
-  };
-
   const isTransferWriteEligible = (transaction: Transaction): boolean => {
     if (
       !transactionsTransferWriteExperimentActive ||
@@ -659,11 +653,6 @@ const Transactions: React.FC = () => {
 
   // Handler to navigate to Transaction Details page with transaction ID
   const handleView = (id?: number) => {
-    if (transactionsHttpSelectedReadActive) {
-      showTransactionsReadExperimentActionDisabled();
-      return;
-    }
-
     if (id !== undefined) {
       history.push(`/transaction-details/${id}`);
     }

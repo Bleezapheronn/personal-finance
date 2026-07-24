@@ -82,6 +82,7 @@ import {
   dryRunBudgetSnapshotOccurrence,
   writeBudgetSnapshotOccurrence,
 } from "../repositories/http/budgetSnapshotOccurrenceWrite";
+import { createBasicTransactionInDisposableSqlite } from "../repositories/http/transactionBasicWriteExperiment";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -553,14 +554,6 @@ const BudgetHistory: React.FC = () => {
   >(undefined);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showCreateOccurrenceAlert, setShowCreateOccurrenceAlert] =
-    useState(false);
-  const [createOccurrenceReview, setCreateOccurrenceReview] = useState<{
-    input: { budgetId: number; occurrenceDate: string };
-    planFingerprint: string;
-    occurrenceReused: boolean;
-    message: string;
-  } | null>(null);
   const [budgetToDelete, setBudgetToDelete] = useState<number | undefined>(
     undefined,
   );
@@ -1709,67 +1702,57 @@ const BudgetHistory: React.FC = () => {
     }
   };
 
-  const handleReviewCreateMissingOccurrence = async (values: {
-    budgetId?: string;
-    occurrenceDate?: string;
-  }) => {
+  const handleCompleteOccurrenceInSqlite = async (
+    occurrence: BudgetOccurrence,
+    input: {
+      date: Date;
+      amount: number;
+      transactionCost?: number;
+      transactionReference?: string;
+    },
+  ) => {
     if (!occurrenceWritesActive) {
-      setError("Budget occurrence creation is currently unavailable.");
-      return;
+      throw new Error("budget_snapshot_occurrence_writes_unavailable");
     }
-    const budgetId = Number(values.budgetId);
-    const occurrenceDate = values.occurrenceDate?.trim();
-    if (!Number.isInteger(budgetId) || budgetId <= 0) {
-      setError("Enter a valid Budget ID.");
-      return;
+    if (
+      !occurrence.budget.accountId ||
+      !occurrence.budget.categoryId ||
+      !occurrence.budget.recipientId
+    ) {
+      throw new Error("budget_occurrence_transaction_fields_incomplete");
     }
-    if (!occurrenceDate) {
-      setError("Choose an occurrence date.");
-      return;
+    const occurrenceInput = {
+      budgetId: occurrence.budgetId,
+      occurrenceDate: occurrence.dueDate,
+    };
+    const review = await dryRunBudgetSnapshotOccurrence("create", occurrenceInput);
+    const occurrenceWrite = await writeBudgetSnapshotOccurrence(
+      "create",
+      occurrenceInput,
+      review.planFingerprint!,
+    );
+    const snapshotId = occurrenceWrite.target.snapshotId;
+    if (typeof snapshotId !== "number") {
+      throw new Error("budget_snapshot_occurrence_missing_target");
     }
-    try {
-      const input = { budgetId, occurrenceDate };
-      const dryRun = await dryRunBudgetSnapshotOccurrence("create", input);
-      setCreateOccurrenceReview({
-        input,
-        planFingerprint: dryRun.planFingerprint!,
-        occurrenceReused: dryRun.occurrenceReused === true,
-        message: dryRun.occurrenceReused
-          ? "This occurrence already exists. No duplicate will be created."
-          : `Create the ${dryRun.target.occurrenceDate} occurrence for Budget ${budgetId}? Only one occurrence will be created.`,
-      });
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Budget occurrence review failed.",
-      );
-    }
-  };
-
-  const handleConfirmCreateMissingOccurrence = async () => {
-    if (!createOccurrenceReview) return;
-    try {
-      await writeBudgetSnapshotOccurrence(
-        "create",
-        createOccurrenceReview.input,
-        createOccurrenceReview.planFingerprint,
-      );
-      setSuccessMsg(
-        createOccurrenceReview.occurrenceReused
-          ? "Budget occurrence already exists"
-          : "Budget occurrence created successfully",
-      );
-      setCreateOccurrenceReview(null);
-      setShowSuccessToast(true);
-      await loadData();
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Budget occurrence creation failed.",
-      );
-    }
+    await createBasicTransactionInDisposableSqlite({
+      classification:
+        occurrence.budget.goalDirection === "expense" ||
+        (occurrence.budget.goalDirection === undefined && occurrence.budget.amount < 0)
+          ? "expense"
+          : "income",
+      date: input.date.toISOString(),
+      amount: input.amount,
+      transactionCost: input.transactionCost ?? null,
+      transactionReference: input.transactionReference,
+      categoryId: occurrence.budget.categoryId,
+      accountId: occurrence.budget.accountId,
+      recipientId: occurrence.budget.recipientId ?? 0,
+      description: occurrence.budget.description,
+      budgetId: occurrence.budgetId,
+      occurrenceDate: occurrence.dueDate.toISOString(),
+      budgetSnapshotId: snapshotId,
+    });
   };
 
   const selectedReadInputsTruncated =
@@ -1786,64 +1769,10 @@ const BudgetHistory: React.FC = () => {
           </IonButtons>
           <IonTitle>Budget History</IonTitle>
           <SqliteAuthorityToolbarStatus />
-          {occurrenceWritesActive && (
-            <IonButtons slot="end">
-              <IonButton onClick={() => setShowCreateOccurrenceAlert(true)}>
-                Create occurrence
-              </IonButton>
-            </IonButtons>
-          )}
         </IonToolbar>
       </IonHeader>
 
       <IonContent className="ion-padding">
-        <IonAlert
-          isOpen={showCreateOccurrenceAlert}
-          onDidDismiss={() => setShowCreateOccurrenceAlert(false)}
-          header="Create Budget occurrence"
-          message="Review one exact scheduled occurrence before writing."
-          inputs={[
-            {
-              name: "budgetId",
-              type: "number",
-              placeholder: "Budget ID",
-              min: 1,
-            },
-            {
-              name: "occurrenceDate",
-              type: "date",
-              placeholder: "Occurrence date",
-            },
-          ]}
-          buttons={[
-            { text: "Cancel", role: "cancel" },
-            {
-              text: "Review",
-              handler: (values) => {
-                void handleReviewCreateMissingOccurrence(values);
-              },
-            },
-          ]}
-        />
-
-        <IonAlert
-          isOpen={createOccurrenceReview !== null}
-          onDidDismiss={() => setCreateOccurrenceReview(null)}
-          header="Confirm Budget occurrence"
-          message={createOccurrenceReview?.message}
-          buttons={[
-            { text: "Cancel", role: "cancel" },
-            {
-              text: createOccurrenceReview?.occurrenceReused
-                ? "Continue"
-                : "Create",
-              handler: () => {
-                void handleConfirmCreateMissingOccurrence();
-              },
-            },
-          ]}
-        />
-
         <IonAlert
           isOpen={showDeleteConfirm}
           onDidDismiss={() => {
@@ -2566,16 +2495,20 @@ const BudgetHistory: React.FC = () => {
                     <IonItem
                       key={`${occ.budgetSnapshotId ?? "legacy"}-${occ.budgetId}-${occ.dueDate.getTime()}`}
                       onClick={() => {
-                        if (budgetHistoryHttpReadonlyExperimentActive) {
+                        if (
+                          budgetHistoryHttpReadonlyExperimentActive &&
+                          !occurrenceWritesActive
+                        ) {
+                          setError(
+                            "Budget occurrence completion requires the SQLite occurrence capability.",
+                          );
                           return;
                         }
                         setSelectedOccurrenceForCompletion(occ);
                         setShowCompleteModal(true);
                       }}
                       style={{
-                        cursor: budgetHistoryHttpReadonlyExperimentActive
-                          ? "default"
-                          : "pointer",
+                        cursor: "pointer",
                       }}
                     >
                       <IonGrid style={{ width: "100%" }}>
@@ -2853,8 +2786,7 @@ const BudgetHistory: React.FC = () => {
           />
         )}
 
-        {!budgetHistoryHttpReadonlyExperimentActive &&
-          selectedOccurrenceForCompletion && (
+        {selectedOccurrenceForCompletion && (
           <CompleteBudgetModal
             isOpen={showCompleteModal}
             onClose={() => {
@@ -2867,11 +2799,24 @@ const BudgetHistory: React.FC = () => {
               setSelectedOccurrenceForCompletion(null);
               loadData();
             }}
+            lookupData={
+              budgetHistoryHttpReadonlyExperimentActive
+                ? { categories, buckets, accounts, transactions }
+                : undefined
+            }
+            onCompleteInSqlite={
+              budgetHistoryHttpReadonlyExperimentActive
+                ? (input) =>
+                    handleCompleteOccurrenceInSqlite(
+                      selectedOccurrenceForCompletion,
+                      input,
+                    )
+                : undefined
+            }
           />
         )}
 
-        {!budgetHistoryHttpReadonlyExperimentActive && (
-          <LinkPastTransactionsModal
+        <LinkPastTransactionsModal
             isOpen={showLinkModal}
             onClose={() => {
               setShowLinkModal(false);
@@ -2885,8 +2830,7 @@ const BudgetHistory: React.FC = () => {
             categories={categories}
             recipients={recipients}
             occurrenceDate={budgetOccurrenceDateForLinking || new Date()}
-          />
-        )}
+        />
       </IonContent>
     </IonPage>
   );

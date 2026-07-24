@@ -1,6 +1,8 @@
 param(
   [Parameter(Mandatory = $false)]
-  [string]$ProfilePath = $env:PERSONAL_FINANCE_AUTHORITY_PROFILE_PATH
+  [string]$ProfilePath = $env:PERSONAL_FINANCE_AUTHORITY_PROFILE_PATH,
+  [switch]$OpenBrowser,
+  [string]$BrowserPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,8 +60,18 @@ try {
   if (-not $ready) {
     throw "Personal Finance did not become ready in time."
   }
-  Start-Process $viteUrl
   Write-Host "Personal Finance is ready at $viteUrl"
+  Write-Host "Open this URL in your preferred browser."
+  if ($OpenBrowser) {
+    if ($BrowserPath) {
+      if (-not (Test-Path -LiteralPath $BrowserPath -PathType Leaf)) {
+        throw "The requested browser path is unavailable."
+      }
+      Start-Process -FilePath $BrowserPath -ArgumentList $viteUrl
+    } else {
+      Start-Process $viteUrl
+    }
+  }
   Write-Host "Keep this window open. Close it or press Ctrl+C to stop the app."
   Wait-Process -Id $process.Id
 } catch {

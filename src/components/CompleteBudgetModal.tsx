@@ -45,6 +45,18 @@ interface CompleteBudgetModalProps {
   onClose: () => void;
   budgetOccurrence: BudgetOccurrence;
   onComplete: () => void;
+  lookupData?: {
+    categories: Category[];
+    buckets: Bucket[];
+    accounts: Account[];
+    transactions: Transaction[];
+  };
+  onCompleteInSqlite?: (input: {
+    date: Date;
+    amount: number;
+    transactionCost?: number;
+    transactionReference?: string;
+  }) => Promise<void>;
 }
 
 export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
@@ -52,6 +64,8 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
   onClose,
   budgetOccurrence,
   onComplete,
+  lookupData,
+  onCompleteInSqlite,
 }) => {
   const [transactionReference, setTransactionReference] = useState("");
   const [transactionTime, setTransactionTime] = useState("");
@@ -76,6 +90,13 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
 
   const loadLookupData = async () => {
     try {
+      if (lookupData) {
+        setCategories(lookupData.categories);
+        setBuckets(lookupData.buckets);
+        setAccounts(lookupData.accounts);
+        setTransactions(lookupData.transactions);
+        return;
+      }
       const [cats, bkts, accts, txns] = await Promise.all([
         db.categories.toArray(),
         db.buckets.toArray(),
@@ -277,19 +298,26 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
         ? -Math.abs(amount)
         : Math.abs(amount);
 
-      const snapshot = await ensureBudgetSnapshotForOccurrence(
-        budgetOccurrence.budget,
-        budgetOccurrence.dueDate,
-      );
-
       // Calculate signed transaction cost if it exists
       let signedCost: number | undefined = undefined;
       if (cost !== undefined) {
         signedCost = isExpenseBudget() ? -Math.abs(cost) : Math.abs(cost);
       }
 
-      // Create transaction with accountId from budget
-      const newTransaction: Omit<Transaction, "id"> = {
+      if (onCompleteInSqlite) {
+        await onCompleteInSqlite({
+          date: transactionDate,
+          amount: signedAmount,
+          transactionCost: signedCost,
+          transactionReference: transactionReference.trim() || undefined,
+        });
+      } else {
+        const snapshot = await ensureBudgetSnapshotForOccurrence(
+          budgetOccurrence.budget,
+          budgetOccurrence.dueDate,
+        );
+        // Create transaction with accountId from budget
+        const newTransaction: Omit<Transaction, "id"> = {
         categoryId: budgetOccurrence.budget.categoryId,
         accountId: budgetOccurrence.budget.accountId,
         recipientId: budgetOccurrence.budget.recipientId || 0,
@@ -301,9 +329,10 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
         budgetId: budgetOccurrence.budgetId,
         occurrenceDate: budgetOccurrence.dueDate,
         budgetSnapshotId: snapshot.id,
-      };
+        };
 
-      await db.transactions.add(newTransaction);
+        await db.transactions.add(newTransaction);
+      }
 
       setSuccessMsg("Transaction added successfully!");
       setShowSuccessToast(true);
