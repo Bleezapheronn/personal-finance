@@ -7,6 +7,7 @@ import {
   BUDGET_DELETE_WRITES_ENV_VAR,
   BUDGET_LIFECYCLE_WRITES_ENV_VAR,
   BUDGET_SNAPSHOT_GENERATION_WRITES_ENV_VAR,
+  BUDGET_SNAPSHOT_OCCURRENCE_WRITES_ENV_VAR,
   CATEGORY_DELETE_MERGE_WRITES_ENV_VAR,
   RECIPIENT_ACTIVE_STATE_WRITES_ENV_VAR,
   RECIPIENT_CREATE_UPDATE_WRITES_ENV_VAR,
@@ -196,6 +197,14 @@ export const AUTHORITY_OPS_CAPABILITIES = [
     frontendEnvironmentVariable:
       "VITE_PERSONAL_FINANCE_BUDGET_DELETE_WRITE_EXPERIMENT",
     apiCapabilityField: "budgetDeleteWrites",
+    authorityRequired: false,
+    rehearsalAllowed: true,
+    authoritativeAllowed: true,
+  },
+  {
+    name: "budgetSnapshotOccurrenceWrites",
+    backendEnvironmentVariable: BUDGET_SNAPSHOT_OCCURRENCE_WRITES_ENV_VAR,
+    apiCapabilityField: "budgetSnapshotOccurrenceWrites",
     authorityRequired: false,
     rehearsalAllowed: true,
     authoritativeAllowed: true,

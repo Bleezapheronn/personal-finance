@@ -26,6 +26,7 @@ interface RecipientWriteResponse {
   sqliteMutated?: boolean;
   rowsChanged?: number;
   targetIdPresent?: boolean;
+  targetId?: number | null;
   validationErrors?: string[];
   warnings?: string[];
   resultCodes?: string[];

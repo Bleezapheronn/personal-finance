@@ -50,6 +50,8 @@ export const BUDGET_LIFECYCLE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUDGET_LIFECYCLE_WRITES" as const;
 export const BUDGET_DELETE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUDGET_DELETE_WRITES" as const;
+export const BUDGET_SNAPSHOT_OCCURRENCE_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_BUDGET_SNAPSHOT_OCCURRENCE_WRITES" as const;
 
 const configuredAdditionalOrigin =
   process.env[ADDITIONAL_ALLOWED_ORIGIN_ENV_VAR]?.trim();
@@ -171,3 +173,6 @@ export const areBudgetLifecycleWritesEnabled = (): boolean =>
 
 export const areBudgetDeleteWritesEnabled = (): boolean =>
   process.env[BUDGET_DELETE_WRITES_ENV_VAR] === "true";
+
+export const areBudgetSnapshotOccurrenceWritesEnabled = (): boolean =>
+  process.env[BUDGET_SNAPSHOT_OCCURRENCE_WRITES_ENV_VAR] === "true";

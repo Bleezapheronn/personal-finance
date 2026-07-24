@@ -395,9 +395,11 @@ const getMonthSequence = (start: Date, end: Date): Date[] => {
   return months;
 };
 
-export const getMonthlyChartData = async (
+export const getMonthlyChartDataFromInputs = (
   options: MonthlyChartDataOptions,
-): Promise<MonthlyChartDataResult> => {
+  transactions: ReportTransactionInput[],
+  categories: ReportCategoryInput[],
+): MonthlyChartDataResult => {
   const parsedStart = parseMonthInput(options.startMonth);
   const parsedEnd = parseMonthInput(options.endMonth);
 
@@ -419,11 +421,6 @@ export const getMonthlyChartData = async (
   if (startDate > endDate) {
     return { rows: [], seriesKeys: [] };
   }
-
-  const [transactions, categories] = await Promise.all([
-    db.transactions.where("date").between(startDate, endDate).toArray(),
-    db.categories.toArray(),
-  ]);
 
   const categoriesById = new Map<number, { bucketId: number; name: string }>();
   categories.forEach((category) => {
@@ -502,19 +499,45 @@ export const getMonthlyChartData = async (
   return { rows, seriesKeys };
 };
 
-export const getCategoryBreakdownForBucket = async (
+export const getMonthlyChartData = async (
+  options: MonthlyChartDataOptions,
+): Promise<MonthlyChartDataResult> => {
+  const parsedStart = parseMonthInput(options.startMonth);
+  const parsedEnd = parseMonthInput(options.endMonth);
+  if (!parsedStart || !parsedEnd) {
+    return { rows: [], seriesKeys: [] };
+  }
+  const startDate = new Date(parsedStart.year, parsedStart.monthIndex, 1);
+  const endDate = new Date(
+    parsedEnd.year,
+    parsedEnd.monthIndex + 1,
+    0,
+    23,
+    59,
+    59,
+    999,
+  );
+  const [transactions, categories] = await Promise.all([
+    db.transactions.where("date").between(startDate, endDate).toArray(),
+    db.categories.toArray(),
+  ]);
+  return getMonthlyChartDataFromInputs(options, transactions, categories);
+};
+
+export const getCategoryBreakdownForBucketFromInputs = (
   periodType: PeriodType,
   date: Date,
   bucketId: number,
+  transactions: ReportTransactionInput[],
+  categories: ReportCategoryInput[],
+  buckets: ReportBucketInput[],
   includeExcludedBucket: boolean = false,
-): Promise<BucketCategoryBreakdownResult> => {
+): BucketCategoryBreakdownResult => {
   const { start, end, label } = getDateRangeForPeriod(periodType, date);
-
-  const [transactions, categories, buckets] = await Promise.all([
-    db.transactions.where("date").between(start, end).toArray(),
-    db.categories.toArray(),
-    db.buckets.toArray(),
-  ]);
+  const periodTransactions = transactions.filter((transaction) => {
+    const transactionDate = new Date(transaction.date);
+    return transactionDate >= start && transactionDate <= end;
+  });
 
   const bucket = buckets.find(
     (item) =>
@@ -533,7 +556,7 @@ export const getCategoryBreakdownForBucket = async (
   );
   const totalsByCategory = new Map<number, number>();
 
-  transactions.forEach((txn) => {
+  periodTransactions.forEach((txn) => {
     const category = categoryLookup.get(txn.categoryId);
     if (!category) {
       return;
@@ -575,6 +598,29 @@ export const getCategoryBreakdownForBucket = async (
     totalAmount,
     items: itemsWithPercentages,
   };
+};
+
+export const getCategoryBreakdownForBucket = async (
+  periodType: PeriodType,
+  date: Date,
+  bucketId: number,
+  includeExcludedBucket: boolean = false,
+): Promise<BucketCategoryBreakdownResult> => {
+  const { start, end } = getDateRangeForPeriod(periodType, date);
+  const [transactions, categories, buckets] = await Promise.all([
+    db.transactions.where("date").between(start, end).toArray(),
+    db.categories.toArray(),
+    db.buckets.toArray(),
+  ]);
+  return getCategoryBreakdownForBucketFromInputs(
+    periodType,
+    date,
+    bucketId,
+    transactions,
+    categories,
+    buckets,
+    includeExcludedBucket,
+  );
 };
 
 // Format number as comma-separated value

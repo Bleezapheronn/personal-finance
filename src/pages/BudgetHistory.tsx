@@ -77,6 +77,11 @@ import {
   stringValue,
 } from "../utils/devPreview";
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
+import {
+  dryRunBudgetSnapshotOccurrence,
+  writeBudgetSnapshotOccurrence,
+} from "../repositories/http/budgetSnapshotOccurrenceWrite";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -508,6 +513,13 @@ const BudgetHistory: React.FC = () => {
   const budgetHistoryHttpReadonlyExperimentActive =
     rehearsalSelected ||
     (budgetHistoryReadExperimentEnabled && repositoryBackend === "http-readonly");
+  const authority = useSqliteAuthorityRehearsal();
+  const occurrenceWritesActive =
+    budgetHistoryHttpReadonlyExperimentActive &&
+    authority.ready &&
+    authority.budgetSnapshotOccurrenceWritesAvailable;
+  const showBudgetHistoryDiagnostics =
+    !authority.authoritativeMode || !authority.ready;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -541,6 +553,14 @@ const BudgetHistory: React.FC = () => {
   >(undefined);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCreateOccurrenceAlert, setShowCreateOccurrenceAlert] =
+    useState(false);
+  const [createOccurrenceReview, setCreateOccurrenceReview] = useState<{
+    input: { budgetId: number; occurrenceDate: string };
+    planFingerprint: string;
+    occurrenceReused: boolean;
+    message: string;
+  } | null>(null);
   const [budgetToDelete, setBudgetToDelete] = useState<number | undefined>(
     undefined,
   );
@@ -1397,8 +1417,11 @@ const BudgetHistory: React.FC = () => {
   }, [selectedBucketId]);
 
   const handleDeleteClick = (occ: BudgetOccurrence) => {
-    if (budgetHistoryHttpReadonlyExperimentActive) {
-      setError("Budget History read experiment is read-only. Delete is disabled.");
+    if (
+      budgetHistoryHttpReadonlyExperimentActive &&
+      !occurrenceWritesActive
+    ) {
+      setError("Budget occurrence changes are currently unavailable.");
       return;
     }
 
@@ -1480,13 +1503,6 @@ const BudgetHistory: React.FC = () => {
   };
 
   const handleConfirmDeleteOccurrence = async () => {
-    if (budgetHistoryHttpReadonlyExperimentActive) {
-      setError(
-        "Budget History read experiment is read-only. Occurrence delete is disabled.",
-      );
-      return;
-    }
-
     if (snapshotToDeleteId === undefined) {
       setError("This occurrence cannot be deleted because no snapshot exists.");
       return;
@@ -1500,6 +1516,34 @@ const BudgetHistory: React.FC = () => {
     }
 
     try {
+      if (budgetHistoryHttpReadonlyExperimentActive) {
+        if (!occurrenceWritesActive) {
+          setError("Budget occurrence changes are currently unavailable.");
+          return;
+        }
+        const input = { snapshotId: snapshotToDeleteId };
+        const dryRun = await dryRunBudgetSnapshotOccurrence("delete", input);
+        const confirmed = window.confirm(
+          `Delete this Budget occurrence?\n\n` +
+            `Linked transactions: ${dryRun.linkedTransactionCount}\n` +
+            `Ambiguous legacy references: ${dryRun.ambiguousLegacyReferenceCount}\n` +
+            "The Budget definition and all Transactions will remain unchanged.",
+        );
+        if (!confirmed) return;
+        await writeBudgetSnapshotOccurrence(
+          "delete",
+          input,
+          dryRun.planFingerprint!,
+        );
+        setSuccessMsg("Budget occurrence deleted successfully");
+        setShowSuccessToast(true);
+        setShowDeleteConfirm(false);
+        setSnapshotToDeleteId(undefined);
+        setOccurrenceHasLinkedTransactions(false);
+        setBudgetToDelete(undefined);
+        await loadData();
+        return;
+      }
       await db.budgetSnapshots.delete(snapshotToDeleteId);
       setSuccessMsg("Budget occurrence deleted successfully");
       setShowSuccessToast(true);
@@ -1515,10 +1559,8 @@ const BudgetHistory: React.FC = () => {
   };
 
   const handleOpenLinkModal = (budgetOccurrence: BudgetOccurrence) => {
-    if (budgetHistoryHttpReadonlyExperimentActive) {
-      setError(
-        "Budget History read experiment is read-only. Transaction linking is disabled.",
-      );
+    if (budgetHistoryHttpReadonlyExperimentActive && !occurrenceWritesActive) {
+      setError("Budget occurrence transaction linking is currently unavailable.");
       return;
     }
 
@@ -1547,13 +1589,6 @@ const BudgetHistory: React.FC = () => {
     transactionIds: number[],
     occurrenceDate: Date,
   ) => {
-    if (budgetHistoryHttpReadonlyExperimentActive) {
-      setError(
-        "Budget History read experiment is read-only. Transaction linking is disabled.",
-      );
-      return;
-    }
-
     if (budgetIdForLinking === undefined) return;
 
     try {
@@ -1563,10 +1598,85 @@ const BudgetHistory: React.FC = () => {
         return;
       }
 
-      const snapshot = await ensureBudgetSnapshotForOccurrence(
-        budget,
-        occurrenceDate,
-      );
+      if (budgetHistoryHttpReadonlyExperimentActive) {
+        if (!occurrenceWritesActive) {
+          setError("Budget occurrence transaction linking is currently unavailable.");
+          return;
+        }
+        let targetSnapshotId = budgetSnapshotIdForLinking;
+        const reviewed: Array<{
+          action: "link" | "createAndLink";
+          input: {
+            transactionId: number;
+            snapshotId?: number;
+            budgetId?: number;
+            occurrenceDate?: Date;
+          };
+        }> = [];
+        for (const transactionId of transactionIds) {
+          const action = targetSnapshotId ? "link" : "createAndLink";
+          const input = targetSnapshotId
+            ? { transactionId, snapshotId: targetSnapshotId }
+            : {
+                transactionId,
+                budgetId: budgetIdForLinking,
+                occurrenceDate,
+              };
+          const dryRun = await dryRunBudgetSnapshotOccurrence(action, input);
+          reviewed.push({
+            action,
+            input,
+          });
+          if (!targetSnapshotId && dryRun.target.snapshotId) {
+            targetSnapshotId = dryRun.target.snapshotId;
+          }
+        }
+        const confirmed = window.confirm(
+          `Link ${transactionIds.length} transaction${
+            transactionIds.length === 1 ? "" : "s"
+          } to this Budget occurrence?\n\nOnly the selected transaction linkage fields will change.`,
+        );
+        if (!confirmed) return;
+        for (const item of reviewed) {
+          const currentInput =
+            targetSnapshotId && item.action === "createAndLink"
+              ? {
+                  transactionId: item.input.transactionId,
+                  snapshotId: targetSnapshotId,
+                }
+              : item.input;
+          const currentAction =
+            targetSnapshotId && item.action === "createAndLink"
+              ? "link"
+              : item.action;
+          const currentDryRun = await dryRunBudgetSnapshotOccurrence(
+            currentAction,
+            currentInput,
+          );
+          const result = await writeBudgetSnapshotOccurrence(
+            currentAction,
+            currentInput,
+            currentDryRun.planFingerprint!,
+          );
+          targetSnapshotId =
+            result.target.snapshotId ?? targetSnapshotId;
+        }
+        setSuccessMsg(
+          `Successfully linked ${transactionIds.length} transaction${
+            transactionIds.length !== 1 ? "s" : ""
+          } to budget`,
+        );
+        setShowSuccessToast(true);
+        setShowLinkModal(false);
+        setBudgetIdForLinking(undefined);
+        setBudgetSnapshotIdForLinking(undefined);
+        setBudgetOccurrenceDateForLinking(undefined);
+        setMatchingTransactionsForLink([]);
+        await loadData();
+        return;
+      }
+
+      const snapshot = await ensureBudgetSnapshotForOccurrence(budget, occurrenceDate);
 
       const targetSnapshotId =
         budgetSnapshotIdForLinking !== undefined
@@ -1599,6 +1709,69 @@ const BudgetHistory: React.FC = () => {
     }
   };
 
+  const handleReviewCreateMissingOccurrence = async (values: {
+    budgetId?: string;
+    occurrenceDate?: string;
+  }) => {
+    if (!occurrenceWritesActive) {
+      setError("Budget occurrence creation is currently unavailable.");
+      return;
+    }
+    const budgetId = Number(values.budgetId);
+    const occurrenceDate = values.occurrenceDate?.trim();
+    if (!Number.isInteger(budgetId) || budgetId <= 0) {
+      setError("Enter a valid Budget ID.");
+      return;
+    }
+    if (!occurrenceDate) {
+      setError("Choose an occurrence date.");
+      return;
+    }
+    try {
+      const input = { budgetId, occurrenceDate };
+      const dryRun = await dryRunBudgetSnapshotOccurrence("create", input);
+      setCreateOccurrenceReview({
+        input,
+        planFingerprint: dryRun.planFingerprint!,
+        occurrenceReused: dryRun.occurrenceReused === true,
+        message: dryRun.occurrenceReused
+          ? "This occurrence already exists. No duplicate will be created."
+          : `Create the ${dryRun.target.occurrenceDate} occurrence for Budget ${budgetId}? Only one occurrence will be created.`,
+      });
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Budget occurrence review failed.",
+      );
+    }
+  };
+
+  const handleConfirmCreateMissingOccurrence = async () => {
+    if (!createOccurrenceReview) return;
+    try {
+      await writeBudgetSnapshotOccurrence(
+        "create",
+        createOccurrenceReview.input,
+        createOccurrenceReview.planFingerprint,
+      );
+      setSuccessMsg(
+        createOccurrenceReview.occurrenceReused
+          ? "Budget occurrence already exists"
+          : "Budget occurrence created successfully",
+      );
+      setCreateOccurrenceReview(null);
+      setShowSuccessToast(true);
+      await loadData();
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Budget occurrence creation failed.",
+      );
+    }
+  };
+
   const selectedReadInputsTruncated =
     selectedReadLoadMeta?.snapshotTruncated === true ||
     selectedReadLoadMeta?.transactionTruncated === true ||
@@ -1613,14 +1786,66 @@ const BudgetHistory: React.FC = () => {
           </IonButtons>
           <IonTitle>Budget History</IonTitle>
           <SqliteAuthorityToolbarStatus />
+          {occurrenceWritesActive && (
+            <IonButtons slot="end">
+              <IonButton onClick={() => setShowCreateOccurrenceAlert(true)}>
+                Create occurrence
+              </IonButton>
+            </IonButtons>
+          )}
         </IonToolbar>
       </IonHeader>
 
       <IonContent className="ion-padding">
         <IonAlert
-          isOpen={
-            !budgetHistoryHttpReadonlyExperimentActive && showDeleteConfirm
-          }
+          isOpen={showCreateOccurrenceAlert}
+          onDidDismiss={() => setShowCreateOccurrenceAlert(false)}
+          header="Create Budget occurrence"
+          message="Review one exact scheduled occurrence before writing."
+          inputs={[
+            {
+              name: "budgetId",
+              type: "number",
+              placeholder: "Budget ID",
+              min: 1,
+            },
+            {
+              name: "occurrenceDate",
+              type: "date",
+              placeholder: "Occurrence date",
+            },
+          ]}
+          buttons={[
+            { text: "Cancel", role: "cancel" },
+            {
+              text: "Review",
+              handler: (values) => {
+                void handleReviewCreateMissingOccurrence(values);
+              },
+            },
+          ]}
+        />
+
+        <IonAlert
+          isOpen={createOccurrenceReview !== null}
+          onDidDismiss={() => setCreateOccurrenceReview(null)}
+          header="Confirm Budget occurrence"
+          message={createOccurrenceReview?.message}
+          buttons={[
+            { text: "Cancel", role: "cancel" },
+            {
+              text: createOccurrenceReview?.occurrenceReused
+                ? "Continue"
+                : "Create",
+              handler: () => {
+                void handleConfirmCreateMissingOccurrence();
+              },
+            },
+          ]}
+        />
+
+        <IonAlert
+          isOpen={showDeleteConfirm}
           onDidDismiss={() => {
             setShowDeleteConfirm(false);
             setSnapshotToDeleteId(undefined);
@@ -1656,13 +1881,17 @@ const BudgetHistory: React.FC = () => {
                   },
                 ]
               : []),
-            {
-              text: budgetDeleteHasTransactions
-                ? "Deactivate Budget"
-                : "Delete Budget",
-              role: "destructive",
-              handler: handleConfirmDelete,
-            },
+            ...(!budgetHistoryHttpReadonlyExperimentActive
+              ? [
+                  {
+                    text: budgetDeleteHasTransactions
+                      ? "Deactivate Budget"
+                      : "Delete Budget",
+                    role: "destructive" as const,
+                    handler: handleConfirmDelete,
+                  },
+                ]
+              : []),
           ]}
         />
 
@@ -1678,19 +1907,23 @@ const BudgetHistory: React.FC = () => {
         {loading && <IonSpinner name="crescent" />}
         {error && <IonText color="danger">{error}</IonText>}
 
-        {!loading && budgetHistoryReadExperimentEnabled && (
+        {!loading &&
+          budgetHistoryReadExperimentEnabled &&
+          showBudgetHistoryDiagnostics && (
           <IonItem
             color={budgetHistoryHttpReadonlyExperimentActive ? "warning" : "light"}
             lines="none"
             style={{ marginBottom: "16px", borderRadius: "4px" }}
           >
             <IonLabel>
-              <h3>Budget History read experiment is active</h3>
+              <h3>Budget History data source</h3>
               <p>
                 Backend: {repositoryBackend}.{" "}
                 {budgetHistoryHttpReadonlyExperimentActive
-                  ? "History inputs are loaded through selected-read http-readonly; snapshot lifecycle and mutation actions are disabled. Switch back to Dexie for normal Budget History behavior."
-                  : "The experiment flag is on, but the selected backend is Dexie, so Budget History uses the existing Dexie read and lifecycle path."}
+                  ? occurrenceWritesActive
+                    ? "Budget History is using verified SQLite data. Explicit occurrence creation, deletion, and Transaction linking are available."
+                    : "Budget History is using SQLite data. Occurrence changes are unavailable until authority readiness and capability checks pass."
+                  : "Budget History is using local app data."}
               </p>
             </IonLabel>
           </IonItem>
@@ -1698,6 +1931,7 @@ const BudgetHistory: React.FC = () => {
 
         {!loading &&
           budgetHistoryHttpReadonlyExperimentActive &&
+          showBudgetHistoryDiagnostics &&
           selectedReadLoadMeta && (
             <IonItem
               color={selectedReadInputsTruncated ? "danger" : "light"}
@@ -2502,7 +2736,8 @@ const BudgetHistory: React.FC = () => {
                               style={{ marginTop: "4px" }}
                             />
 
-                            {!budgetHistoryHttpReadonlyExperimentActive && (
+                            {(!budgetHistoryHttpReadonlyExperimentActive ||
+                              occurrenceWritesActive) && (
                               <IonRow className="item-actions">
                                 <IonCol className="item-actions-container">
                                   <IonButton
@@ -2517,56 +2752,60 @@ const BudgetHistory: React.FC = () => {
                                   >
                                     <IonIcon icon={linkOutline} slot="end" />
                                   </IonButton>
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const snap = snapshots.find(
-                                        (s) => s.id === occ.budgetSnapshotId,
-                                      );
-                                      if (snap) {
-                                        const liveBudget = budgets.find(
-                                          (b) => b.id === occ.budgetId,
-                                        );
-                                        setSnapshotToEdit(snap);
-                                        setBudgetDueDateForEdit(
-                                          liveBudget?.dueDate,
-                                        );
-                                        setShowEditSnapshotModal(true);
-                                      }
-                                    }}
-                                    title="Edit This Occurrence"
-                                  >
-                                    <IonIcon icon={createOutline} slot="end" />
-                                  </IonButton>
-                                  <IonButton
-                                    fill="clear"
-                                    size="small"
-                                    style={{ marginRight: "0" }}
-                                    color={
-                                      occ.budget.isActive ? "success" : "medium"
-                                    }
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleToggleBudgetActive(occ.budget);
-                                    }}
-                                    title={
-                                      occ.budget.isActive
-                                        ? "Active (click to deactivate)"
-                                        : "Inactive (click to activate)"
-                                    }
-                                  >
-                                    <IonIcon
-                                      icon={
-                                        occ.budget.isActive
-                                          ? checkmarkCircleOutline
-                                          : closeCircleOutline
-                                      }
-                                      slot="end"
-                                    />
-                                  </IonButton>
+                                  {!budgetHistoryHttpReadonlyExperimentActive && (
+                                    <>
+                                      <IonButton
+                                        fill="clear"
+                                        size="small"
+                                        style={{ marginRight: "0" }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const snap = snapshots.find(
+                                            (s) => s.id === occ.budgetSnapshotId,
+                                          );
+                                          if (snap) {
+                                            const liveBudget = budgets.find(
+                                              (b) => b.id === occ.budgetId,
+                                            );
+                                            setSnapshotToEdit(snap);
+                                            setBudgetDueDateForEdit(
+                                              liveBudget?.dueDate,
+                                            );
+                                            setShowEditSnapshotModal(true);
+                                          }
+                                        }}
+                                        title="Edit This Occurrence"
+                                      >
+                                        <IonIcon icon={createOutline} slot="end" />
+                                      </IonButton>
+                                      <IonButton
+                                        fill="clear"
+                                        size="small"
+                                        style={{ marginRight: "0" }}
+                                        color={
+                                          occ.budget.isActive ? "success" : "medium"
+                                        }
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleToggleBudgetActive(occ.budget);
+                                        }}
+                                        title={
+                                          occ.budget.isActive
+                                            ? "Active (click to deactivate)"
+                                            : "Inactive (click to activate)"
+                                        }
+                                      >
+                                        <IonIcon
+                                          icon={
+                                            occ.budget.isActive
+                                              ? checkmarkCircleOutline
+                                              : closeCircleOutline
+                                          }
+                                          slot="end"
+                                        />
+                                      </IonButton>
+                                    </>
+                                  )}
                                   <IonButton
                                     fill="clear"
                                     size="small"
@@ -2594,7 +2833,8 @@ const BudgetHistory: React.FC = () => {
           </>
         )}
 
-        {!budgetHistoryHttpReadonlyExperimentActive && (
+        {(!budgetHistoryHttpReadonlyExperimentActive ||
+          occurrenceWritesActive) && (
           <EditSnapshotModal
             snapshot={snapshotToEdit}
             budgetDueDate={budgetDueDateForEdit}

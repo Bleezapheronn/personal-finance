@@ -36,6 +36,12 @@ interface BucketCategoryPieModalProps {
   periodDate: Date;
   includeExcludedBucket?: boolean;
   onClose: () => void;
+  loadBreakdown?: (
+    periodType: PeriodType,
+    periodDate: Date,
+    bucketId: number,
+    includeExcludedBucket: boolean,
+  ) => Promise<BucketCategoryBreakdownResult>;
 }
 
 const PIE_COLORS = [
@@ -64,6 +70,7 @@ const BucketCategoryPieModal: React.FC<BucketCategoryPieModalProps> = ({
   periodDate,
   includeExcludedBucket = false,
   onClose,
+  loadBreakdown: loadBreakdownData,
 }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -89,11 +96,19 @@ const BucketCategoryPieModal: React.FC<BucketCategoryPieModalProps> = ({
       setError("");
 
       try {
-        const result = await reportRepository.getCategoryBreakdownForBucket(
-          periodType,
-          periodDate,
-          bucketId,
-          includeExcludedBucket,
+        const result = await (
+          loadBreakdownData?.(
+            periodType,
+            periodDate,
+            bucketId,
+            includeExcludedBucket,
+          ) ??
+          reportRepository.getCategoryBreakdownForBucket(
+            periodType,
+            periodDate,
+            bucketId,
+            includeExcludedBucket,
+          )
         );
 
         if (!cancelled) {
@@ -117,7 +132,14 @@ const BucketCategoryPieModal: React.FC<BucketCategoryPieModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [bucketId, includeExcludedBucket, isOpen, periodDate, periodType]);
+  }, [
+    bucketId,
+    includeExcludedBucket,
+    isOpen,
+    loadBreakdownData,
+    periodDate,
+    periodType,
+  ]);
 
   const handleDismiss = () => {
     onClose();

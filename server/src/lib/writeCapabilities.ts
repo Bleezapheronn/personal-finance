@@ -7,6 +7,7 @@ import {
   areBudgetLifecycleWritesEnabled,
   areBudgetDeleteWritesEnabled,
   areBudgetSnapshotGenerationWritesEnabled,
+  areBudgetSnapshotOccurrenceWritesEnabled,
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
@@ -40,6 +41,7 @@ export const OPTIONAL_WRITE_CAPABILITY_KEYS = [
   "categoryDeleteMergeWrites",
   "bucketDeleteMergeWrites",
   "budgetDeleteWrites",
+  "budgetSnapshotOccurrenceWrites",
 ] as const;
 export type OptionalWriteCapabilityKey =
   (typeof OPTIONAL_WRITE_CAPABILITY_KEYS)[number];
@@ -88,6 +90,8 @@ export const readWriteCapabilities = (): WriteCapabilities => ({
     areBudgetSnapshotGenerationWritesEnabled(),
   budgetLifecycleWrites: areBudgetLifecycleWritesEnabled(),
   budgetDeleteWrites: areBudgetDeleteWritesEnabled(),
+  budgetSnapshotOccurrenceWrites:
+    areBudgetSnapshotOccurrenceWritesEnabled(),
 });
 
 interface AuthorityStatusForCapabilities {
@@ -142,6 +146,9 @@ export const buildWriteCapabilitiesResponse = (
       }
       if (operation === "budget_definition_delete") {
         return !areBudgetDeleteWritesEnabled();
+      }
+      if (operation === "budget_snapshot_deletion") {
+        return !areBudgetSnapshotOccurrenceWritesEnabled();
       }
       return true;
     },

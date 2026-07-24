@@ -21,6 +21,10 @@ import {
 import { formatCurrency } from "../utils/reportService";
 import { reportRepository } from "../repositories";
 import type { MonthlyChartRow } from "../repositories/reportRepository";
+import type {
+  MonthlyChartDataOptions,
+  MonthlyChartDataResult,
+} from "../utils/reportService";
 import { SearchableFilterSelect } from "./SearchableFilterSelect";
 import "./SpendingChart.css";
 
@@ -32,6 +36,14 @@ interface BucketOption {
 interface CategoryOption {
   id: number;
   name: string;
+}
+
+export interface SpendingChartDataSource {
+  listBuckets: () => Promise<BucketOption[]>;
+  listCategories: (bucketId: number) => Promise<CategoryOption[]>;
+  getMonthlyChartData: (
+    options: MonthlyChartDataOptions,
+  ) => Promise<MonthlyChartDataResult>;
 }
 
 const CHART_COLORS = [
@@ -66,7 +78,9 @@ const getDefaultMonthRange = (): { startMonth: string; endMonth: string } => {
   };
 };
 
-const SpendingChart: React.FC = () => {
+const SpendingChart: React.FC<{ dataSource?: SpendingChartDataSource }> = ({
+  dataSource,
+}) => {
   const [buckets, setBuckets] = useState<BucketOption[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [selectedBucketId, setSelectedBucketId] = useState<
@@ -84,7 +98,10 @@ const SpendingChart: React.FC = () => {
 
   useEffect(() => {
     const loadBuckets = async () => {
-      const activeBuckets = await reportRepository.listActiveReportBuckets();
+      const activeBuckets = await (
+        dataSource?.listBuckets() ??
+        reportRepository.listActiveReportBuckets()
+      );
 
       setBuckets(activeBuckets);
       if (activeBuckets.length > 0) {
@@ -93,7 +110,7 @@ const SpendingChart: React.FC = () => {
     };
 
     loadBuckets();
-  }, []);
+  }, [dataSource]);
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -103,15 +120,17 @@ const SpendingChart: React.FC = () => {
         return;
       }
 
-      const bucketCategories =
-        await reportRepository.listActiveCategoriesForBucket(selectedBucketId);
+      const bucketCategories = await (
+        dataSource?.listCategories(selectedBucketId) ??
+        reportRepository.listActiveCategoriesForBucket(selectedBucketId)
+      );
 
       setCategories(bucketCategories);
       setSelectedCategoryIds([]);
     };
 
     loadCategories();
-  }, [selectedBucketId]);
+  }, [dataSource, selectedBucketId]);
 
   useEffect(() => {
     const loadChartData = async () => {
@@ -132,12 +151,16 @@ const SpendingChart: React.FC = () => {
       setError("");
 
       try {
-        const result = await reportRepository.getMonthlyChartData({
+        const options = {
           bucketId: selectedBucketId,
           categoryIds: selectedCategoryIds,
           startMonth,
           endMonth,
-        });
+        };
+        const result = await (
+          dataSource?.getMonthlyChartData(options) ??
+          reportRepository.getMonthlyChartData(options)
+        );
 
         setChartRows(result.rows);
         setSeriesKeys(result.seriesKeys);
@@ -150,7 +173,7 @@ const SpendingChart: React.FC = () => {
     };
 
     loadChartData();
-  }, [selectedBucketId, selectedCategoryIds, startMonth, endMonth]);
+  }, [dataSource, selectedBucketId, selectedCategoryIds, startMonth, endMonth]);
 
   const bucketFilterOptions = buckets.map((bucket) => ({
     id: bucket.id,

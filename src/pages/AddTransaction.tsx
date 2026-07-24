@@ -43,8 +43,14 @@ import {
   validateTransactionCost,
   ValidationErrors,
 } from "../utils/transactionValidation";
-import { AddRecipientModal } from "../components/AddRecipientModal";
-import { AddCategoryModal } from "../components/AddCategoryModal";
+import {
+  AddRecipientModal,
+  type RecipientFormValues,
+} from "../components/AddRecipientModal";
+import {
+  AddCategoryModal,
+  type CategoryFormValues,
+} from "../components/AddCategoryModal";
 import { SmsImportModal } from "../components/SmsImportModal";
 import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import { ParsedSmsData } from "../hooks/useSmsParser";
@@ -77,8 +83,19 @@ import type {
   BucketDto,
   CategoryDto,
   RecipientDto,
+  SmsImportTemplateDto,
   TransactionDto,
 } from "../repositories/http/types";
+import {
+  createRecipientInDisposableSqlite,
+  isRecipientsWriteExperimentEnabled,
+  recipientWriteErrorCode,
+} from "../repositories/http/recipientWriteExperiment";
+import {
+  bucketCategoryWriteErrorCode,
+  createCategoryInDisposableSqlite,
+  isBucketsCategoriesWriteExperimentEnabled,
+} from "../repositories/http/bucketCategoryWriteExperiment";
 import {
   createBasicTransactionInDisposableSqlite,
   isCostBudgetTransactionWriteEligible,
@@ -199,6 +216,27 @@ const normalizeSelectedRecipient = (
   updatedAt: selectedDate(recipient.updatedAt),
 });
 
+const normalizeSelectedSmsTemplate = (
+  template: SmsImportTemplate | SmsImportTemplateDto,
+): SmsImportTemplate => ({
+  id: template.id,
+  name: template.name,
+  description: template.description ?? undefined,
+  paymentMethodId: template.paymentMethodId ?? undefined,
+  accountId: template.accountId ?? undefined,
+  referencePattern: template.referencePattern ?? undefined,
+  amountPattern: template.amountPattern ?? undefined,
+  recipientNamePattern: template.recipientNamePattern ?? undefined,
+  recipientPhonePattern: template.recipientPhonePattern ?? undefined,
+  dateTimePattern: template.dateTimePattern ?? undefined,
+  costPattern: template.costPattern ?? undefined,
+  incomePattern: template.incomePattern ?? undefined,
+  expensePattern: template.expensePattern ?? undefined,
+  isActive: selectedBoolean(template.isActive),
+  createdAt: selectedDate(template.createdAt),
+  updatedAt: selectedDate(template.updatedAt),
+});
+
 const normalizeSelectedTransaction = (
   transaction: Transaction | TransactionDto,
 ): Transaction => ({
@@ -310,6 +348,16 @@ const AddTransaction: React.FC = () => {
   const transactionsTransferWriteExperimentActive =
     transactionsSqliteWriteExperimentActive &&
     (transactionsTransferWriteExperimentEnabled || rehearsalSelected);
+  const inlineRecipientWritesAvailable =
+    !transactionsHttpBackendSelected ||
+    (transactionsHttpBackendSelected &&
+      ((rehearsalSelected && rehearsal.ready) ||
+        isRecipientsWriteExperimentEnabled()));
+  const inlineCategoryWritesAvailable =
+    !transactionsHttpBackendSelected ||
+    (transactionsHttpBackendSelected &&
+      ((rehearsalSelected && rehearsal.ready) ||
+        isBucketsCategoriesWriteExperimentEnabled()));
 
   // Combined date and time into single datetime state
   const [transactionDateTime, setTransactionDateTime] = useState<string>("");
@@ -424,6 +472,7 @@ const AddTransaction: React.FC = () => {
           categoryResult,
           accountResult,
           recipientResult,
+          templateResult,
           budgetRows,
           snapshotRows,
         ] = await Promise.all([
@@ -431,6 +480,7 @@ const AddTransaction: React.FC = () => {
           repositories.categories.list({ limit: 5000 }),
           repositories.accounts.list({ limit: 5000 }),
           repositories.recipients.list({ limit: 5000 }),
+          repositories.smsImportTemplates.list({ limit: 5000 }),
           transactionsCostBudgetWriteExperimentActive
             ? loadSelectedPages<Budget | BudgetDto>((options) =>
                 repositories.budgets.list(options),
@@ -454,6 +504,9 @@ const AddTransaction: React.FC = () => {
         const selectedRecipients = selectedRows<Recipient | RecipientDto>(
           recipientResult,
         ).map(normalizeSelectedRecipient);
+        const selectedTemplates = selectedRows<
+          SmsImportTemplate | SmsImportTemplateDto
+        >(templateResult).map(normalizeSelectedSmsTemplate);
 
         const activeAccounts = isEditMode
           ? selectedAccounts
@@ -481,7 +534,9 @@ const AddTransaction: React.FC = () => {
         setSortedCategories(activeCategories);
         setSortedAccounts(activeAccounts);
         setSortedRecipients(activeRecipients);
-        setSmsTemplates([]);
+        setSmsTemplates(
+          selectedTemplates.filter((template) => template.isActive !== false),
+        );
         setSelectedBudgets(budgetRows.map(normalizeSelectedBudget));
         setSelectedBudgetSnapshots(
           snapshotRows.map(normalizeSelectedBudgetSnapshot),
@@ -736,9 +791,10 @@ const AddTransaction: React.FC = () => {
 
     const loadDescriptions = async () => {
       if (transactionsHttpBackendSelected) {
-        if (isMounted) {
-          setDescriptionSuggestions([]);
-        }
+        const suggestions = await getSelectedReadRepositories(
+          selectedBackend,
+        ).transactions.listDescriptionSuggestions(100);
+        if (isMounted) setDescriptionSuggestions(suggestions);
         return;
       }
 
@@ -765,7 +821,7 @@ const AddTransaction: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [transactionsHttpBackendSelected]);
+  }, [selectedBackend, transactionsHttpBackendSelected]);
 
   // Close suggestions when clicking outside
   useEffect(() => {
@@ -1383,19 +1439,12 @@ const AddTransaction: React.FC = () => {
 
   const populateFromLastTransaction = async (description: string) => {
     if (!description || !description.trim()) return;
-    if (transactionsHttpBackendSelected) return;
     try {
-      const txs = await db.transactions
-        .where("description")
-        .equals(description)
-        .toArray();
-      if (!txs || txs.length === 0) return;
-      // pick the most recent by date
-      const latest = txs.reduce((a, b) => {
-        const ta = a.date ? new Date(a.date).getTime() : 0;
-        const tb = b.date ? new Date(b.date).getTime() : 0;
-        return ta >= tb ? a : b;
-      });
+      const selected = await getSelectedReadRepositories(
+        selectedBackend,
+      ).transactions.getMostRecentByDescription(description.trim());
+      if (!selected) return;
+      const latest = normalizeSelectedTransaction(selected);
 
       // only populate if the destination fields are currently empty
       if (recipientId == null && latest.recipientId != null) {
@@ -1480,6 +1529,60 @@ const AddTransaction: React.FC = () => {
           }),
         );
       }
+    }
+  };
+
+  const handleSqliteRecipientSave = async (
+    input: RecipientFormValues,
+  ): Promise<void> => {
+    try {
+      const response = await createRecipientInDisposableSqlite(input);
+      if (!response.targetId) {
+        throw new Error("recipient_write_missing_target");
+      }
+      const created = await getSelectedReadRepositories(
+        selectedBackend,
+      ).recipients.getById(response.targetId);
+      if (!created) {
+        throw new Error("recipient_refresh_failed");
+      }
+      const recipient = normalizeSelectedRecipient(created);
+      setSortedRecipients((current) => [
+        recipient,
+        ...current.filter((row) => row.id !== recipient.id),
+      ]);
+      setRecipientId(recipient.id);
+      setSuccessToastMessage("Recipient added");
+      setShowSuccessToast(true);
+    } catch (error) {
+      throw new Error(recipientWriteErrorCode(error));
+    }
+  };
+
+  const handleSqliteCategorySave = async (
+    input: CategoryFormValues,
+  ): Promise<void> => {
+    try {
+      const response = await createCategoryInDisposableSqlite(input);
+      if (!response.targetId) {
+        throw new Error("category_write_missing_target");
+      }
+      const created = await getSelectedReadRepositories(
+        selectedBackend,
+      ).categories.getById(response.targetId);
+      if (!created) {
+        throw new Error("category_refresh_failed");
+      }
+      const category = normalizeSelectedCategory(created);
+      setSortedCategories((current) => [
+        category,
+        ...current.filter((row) => row.id !== category.id),
+      ]);
+      setCategoryId(category.id);
+      setSuccessToastMessage("Category added");
+      setShowSuccessToast(true);
+    } catch (error) {
+      throw new Error(bucketCategoryWriteErrorCode(error));
     }
   };
 
@@ -1586,17 +1689,18 @@ const AddTransaction: React.FC = () => {
           </IonTitle>
           <SqliteAuthorityToolbarStatus />
           <IonButtons slot="end">
-            {!transactionsHttpBackendSelected && (
-              <IonButton onClick={() => setShowSmsImportModal(true)}>
+            <IonButton
+              onClick={() => setShowSmsImportModal(true)}
+              disabled={smsTemplates.length === 0}
+            >
                 <IonIcon icon={documentTextOutline} />
                 Import SMS
-              </IonButton>
-            )}
+            </IonButton>
           </IonButtons>
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
-        {transactionsHttpBackendSelected && (
+        {transactionsHttpBackendSelected && !rehearsal.authoritativeMode && (
           <IonText color="warning">
             <p
               style={{
@@ -1853,7 +1957,7 @@ const AddTransaction: React.FC = () => {
                       )}
                     </div>
                   </IonCol>
-                  {!transactionsHttpBackendSelected && (
+                  {inlineRecipientWritesAvailable && (
                     <IonCol size="1">
                       <IonButton
                         style={{ marginTop: "23px" }}
@@ -1908,7 +2012,7 @@ const AddTransaction: React.FC = () => {
                       )}
                     </div>
                   </IonCol>
-                  {!transactionsHttpBackendSelected && (
+                  {inlineCategoryWritesAvailable && (
                     <IonCol size="1">
                       <IonButton
                         style={{ marginTop: "23px" }}
@@ -1968,7 +2072,7 @@ const AddTransaction: React.FC = () => {
                       )}
                     </div>
                   </IonCol>
-                  {!transactionsHttpBackendSelected && (
+                  {inlineRecipientWritesAvailable && (
                     <IonCol size="1">
                       <IonButton
                         style={{ marginTop: "23px" }}
@@ -2117,7 +2221,7 @@ const AddTransaction: React.FC = () => {
                       </IonText>
                     )}
                   </IonCol>
-                  {!transactionsHttpBackendSelected && (
+                  {inlineRecipientWritesAvailable && (
                     <IonCol size="1">
                       <IonButton
                         style={{ marginTop: "23px" }}
@@ -2185,7 +2289,7 @@ const AddTransaction: React.FC = () => {
                       )}
                     </div>
                   </IonCol>
-                  {!transactionsHttpBackendSelected && (
+                  {inlineCategoryWritesAvailable && (
                     <IonCol size="1">
                       <IonButton
                         style={{ marginTop: "23px" }}
@@ -2406,20 +2510,22 @@ const AddTransaction: React.FC = () => {
       </IonContent>
 
       {/* Modal: Add Recipient */}
-      {!transactionsHttpBackendSelected && (
-        <AddRecipientModal
+      <AddRecipientModal
           isOpen={showRecipientModal}
           onClose={() => setShowRecipientModal(false)}
           onRecipientAdded={(recipient) => {
             setSortedRecipients((prev) => [recipient, ...prev]);
             setRecipientId(recipient.id);
           }}
+          onSaveRecipient={
+            transactionsHttpBackendSelected
+              ? handleSqliteRecipientSave
+              : undefined
+          }
         />
-      )}
 
       {/* Modal: Add Category */}
-      {!transactionsHttpBackendSelected && (
-        <AddCategoryModal
+      <AddCategoryModal
           isOpen={showCategoryModal}
           onClose={() => setShowCategoryModal(false)}
           onCategoryAdded={(category) => {
@@ -2427,22 +2533,25 @@ const AddTransaction: React.FC = () => {
             setCategoryId(category.id);
           }}
           buckets={buckets}
+          onSaveCategory={
+            transactionsHttpBackendSelected
+              ? handleSqliteCategorySave
+              : undefined
+          }
         />
-      )}
 
       {/* REMOVED: Modal: Add Payment Method */}
 
       {/* Modal: Import SMS */}
-      {!transactionsHttpBackendSelected && (
-        <SmsImportModal
+      <SmsImportModal
           isOpen={showSmsImportModal}
           onClose={() => setShowSmsImportModal(false)}
           onImport={handleSmsImport}
           smsTemplates={smsTemplates}
           accounts={sortedAccounts}
           accountId={accountId}
+          recipients={sortedRecipients}
         />
-      )}
 
       {/* TOAST NOTIFICATIONS */}
       <IonToast

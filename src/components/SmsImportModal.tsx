@@ -16,7 +16,7 @@ import {
   IonCheckbox,
 } from "@ionic/react";
 import { close } from "ionicons/icons";
-import { SmsImportTemplate, Account } from "../db";
+import { SmsImportTemplate, Account, Recipient } from "../db";
 import { useSmsParser, ParsedSmsData } from "../hooks/useSmsParser";
 import { SelectableDropdown } from "./SelectableDropdown";
 
@@ -27,6 +27,7 @@ interface SmsImportModalProps {
   smsTemplates: SmsImportTemplate[];
   accounts: Account[]; // CHANGED: from paymentMethods to accounts
   accountId?: number; // CHANGED: from paymentMethodId to accountId
+  recipients?: Recipient[];
 }
 
 export const SmsImportModal: React.FC<SmsImportModalProps> = ({
@@ -36,6 +37,7 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
   smsTemplates,
   accounts, // CHANGED
   accountId, // CHANGED
+  recipients,
 }) => {
   const [smsText, setSmsText] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<
@@ -61,7 +63,7 @@ export const SmsImportModal: React.FC<SmsImportModalProps> = ({
     parseError: smsParseError,
     previewParse,
     clearParsedData,
-  } = useSmsParser(smsTemplates, accountId); // CHANGED: accountId
+  } = useSmsParser(smsTemplates, accountId, recipients); // CHANGED: accountId
 
   const handleClose = () => {
     setSmsText("");

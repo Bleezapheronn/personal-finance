@@ -67,6 +67,7 @@ import {
   budgetActiveStateForSubmission,
   shouldShowBudgetLifecycleActiveControl,
 } from "./budgetLifecycleForm";
+import { createBudgetFromTransactionInSqlite } from "../repositories/http/budgetFromTransactionWrite";
 
 type BudgetType = "expense" | "income";
 
@@ -152,6 +153,10 @@ const AddBudget: React.FC = () => {
     rehearsal.ready &&
     rehearsal.budgetLifecycleWritesAvailable &&
     isBudgetLifecycleWriteExperimentEnabled();
+  const budgetFromTransactionWriteActive =
+    budgetDefinitionHttpMode &&
+    rehearsal.ready &&
+    rehearsal.budgetSnapshotOccurrenceWritesAvailable;
 
   // Budget fields
   const [budgetType, setBudgetType] = useState<BudgetType>("expense");
@@ -600,9 +605,38 @@ const AddBudget: React.FC = () => {
       const loadTransactionData = async () => {
         try {
           if (budgetDefinitionHttpMode) {
-            setErrorMsg(
-              "Creating a Budget definition from a transaction is not available in the SQLite write experiment.",
-            );
+            const transaction =
+              await getSelectedReadRepositories(
+                repositoryBackend,
+              ).transactions.getById(Number(transactionId));
+            if (transaction) {
+              setBudgetType(Number(transaction.amount) < 0 ? "expense" : "income");
+              setDescription(transaction.description || "");
+              setAmount(Math.abs(Number(transaction.amount)).toString());
+              if (transaction.transactionCost) {
+                setTransactionCost(
+                  Math.abs(Number(transaction.transactionCost)).toString(),
+                );
+              }
+              setCategoryId(Number(transaction.categoryId));
+              setAccountId(
+                transaction.accountId == null
+                  ? undefined
+                  : Number(transaction.accountId),
+              );
+              setRecipientId(Number(transaction.recipientId));
+              setFrequency("monthly");
+              const nextMonthDate = getNextMonthDueDate(
+                new Date(transaction.date),
+              );
+              setDueDate(nextMonthDate);
+              setDayOfMonth(
+                new Date(transaction.date).getDate().toString(),
+              );
+              setIsGoal(false);
+              setIsFlexible(false);
+              setIsActive(true);
+            }
             return;
           }
           const transaction = await db.transactions.get(Number(transactionId));
@@ -735,7 +769,8 @@ const AddBudget: React.FC = () => {
     if (
       budgetDefinitionHttpMode &&
       !budgetDefinitionWriteExperimentActive &&
-      !budgetLifecycleWriteExperimentActive
+      !budgetLifecycleWriteExperimentActive &&
+      !budgetFromTransactionWriteActive
     ) {
       setErrorMsg(
         rehearsalSelected
@@ -859,13 +894,47 @@ const AddBudget: React.FC = () => {
         updatedAt: new Date(),
       };
 
-      if (budgetLifecycleWriteExperimentActive) {
-        if (isFromTransaction) {
-          setErrorMsg(
-            "Creating a Budget from a transaction is not available in the SQLite lifecycle experiment.",
-          );
-          return;
+      if (
+        isFromTransaction &&
+        transactionId &&
+        budgetFromTransactionWriteActive
+      ) {
+        const definition: BudgetDefinitionWriteInput = {
+          description: budgetData.description,
+          categoryId: budgetData.categoryId,
+          accountId: budgetData.accountId!,
+          recipientId: budgetData.recipientId ?? null,
+          amount: budgetData.amount,
+          transactionCost: budgetData.transactionCost ?? null,
+          frequency: budgetData.frequency,
+          frequencyDetails: budgetData.frequencyDetails ?? null,
+          isGoal: budgetData.isGoal,
+          isFlexible: budgetData.isFlexible,
+          goalPercentage: budgetData.goalPercentage ?? null,
+          goalDirection: budgetData.goalDirection ?? null,
+          remainingCyclesTotal: budgetData.remainingCyclesTotal ?? null,
+          dueDate: budgetData.dueDate.toISOString(),
+        };
+        const write = await createBudgetFromTransactionInSqlite({
+          definition,
+          transactionId: Number(transactionId),
+          occurrenceDate: budgetData.dueDate,
+        });
+        sqliteWriteConfirmed = true;
+        const repositories = getSelectedReadRepositories(repositoryBackend);
+        const [refreshedBudget, refreshedTransaction] = await Promise.all([
+          repositories.budgets.getById(write.targetBudgetId!),
+          repositories.transactions.getById(Number(transactionId)),
+        ]);
+        if (!refreshedBudget || !refreshedTransaction) {
+          throw new Error("budget_from_transaction_refresh_failed");
         }
+        setSuccessToastMessage(
+          "Budget created and Transaction linked successfully.",
+        );
+        setShowSuccessToast(true);
+        setTimeout(() => history.push("/budget"), 500);
+      } else if (budgetLifecycleWriteExperimentActive) {
         const action = isEditMode && id ? "update" : "create";
         const now = new Date();
         const pad = (value: number) => String(value).padStart(2, "0");
@@ -1020,6 +1089,20 @@ const AddBudget: React.FC = () => {
       }
     } catch (error) {
       console.error("Error saving budget:", error);
+      if (isFromTransaction && budgetFromTransactionWriteActive) {
+        if (sqliteWriteConfirmed) {
+          setErrorMsg(
+            "The Budget was created, but refresh failed. Reload before retrying.",
+          );
+          return;
+        }
+        setErrorMsg(
+          error instanceof Error
+            ? error.message
+            : "Create Budget from Transaction failed.",
+        );
+        return;
+      }
       if (budgetLifecycleWriteExperimentActive) {
         if (sqliteWriteConfirmed) {
           setErrorMsg(
@@ -1077,13 +1160,15 @@ const AddBudget: React.FC = () => {
               <IonText>
                 <h3>
                   {rehearsalSelected
-                    ? "Safer SQLite Budget lifecycle"
-                    : "Budget Definitions SQLite write experiment"}
+                    ? "Budget lifecycle"
+                    : "Budget data source"}
                 </h3>
                 <p>
-                  {budgetLifecycleWriteExperimentActive
+                  {isFromTransaction && budgetFromTransactionWriteActive
+                    ? "Creating this Budget will also create the selected occurrence and link the originating Transaction in one reviewed operation."
+                    : budgetLifecycleWriteExperimentActive
                     ? rehearsal.authoritativeMode
-                      ? "SQLite authoritative mode is active. Create/update uses atomic target-Budget cleanup and coverage generation. Linked and historical snapshots remain unchanged."
+                      ? "Create and update use the verified Budget lifecycle. Linked and historical occurrences remain unchanged."
                       : "Writes use the safer disposable SQLite lifecycle policy. Dexie remains unchanged; linked and historical snapshots are preserved."
                     : budgetDefinitionWriteExperimentActive
                     ? rehearsal.authoritativeMode
@@ -1094,7 +1179,9 @@ const AddBudget: React.FC = () => {
                       : "The HTTP backend is selected, but Budget definition writes are disabled. No write will be attempted."}
                 </p>
                 <p>
-                  {budgetLifecycleWriteExperimentActive
+                  {isFromTransaction && budgetFromTransactionWriteActive
+                    ? "Review and confirmation are required. No unrelated occurrence will be created or changed."
+                    : budgetLifecycleWriteExperimentActive
                     ? "Dry-run and confirmation are required. No global pruning, repair, relinking, or automatic checkpoint is performed."
                     : "Create/update definitions only. Existing Budget History remains unchanged, delete is unavailable, and SQLite must be re-imported before clean parity checks."}
                 </p>

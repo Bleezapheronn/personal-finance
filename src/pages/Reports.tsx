@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   IonPage,
   IonHeader,
@@ -30,7 +30,11 @@ import {
   PeriodType,
   formatCurrency,
   generatePeriodReportFromInputs,
+  getCategoryBreakdownForBucketFromInputs,
   getDateRangeForPeriod,
+  getMonthlyChartDataFromInputs,
+  type BucketCategoryBreakdownResult,
+  type MonthlyChartDataOptions,
   type ReportBucketInput,
   type ReportCategoryInput,
   type ReportTransactionInput,
@@ -44,7 +48,9 @@ import {
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import BucketCategoryPieModal from "../components/BucketCategoryPieModal";
 import SpendingChart from "../components/SpendingChart";
+import type { SpendingChartDataSource } from "../components/SpendingChart";
 import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import "./Reports.css";
 
 const REPORTS_READ_EXPERIMENT_FLAG =
@@ -233,10 +239,143 @@ const Reports: React.FC = () => {
   } | null>(null);
   const reportsExperimentEnabled = isReportsReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
+  const rehearsal = useSqliteAuthorityRehearsal();
   const rehearsalSelected = isSqliteAuthorityControlledBackend(repositoryBackend);
   const reportsHttpReadonlyExperimentActive =
     rehearsalSelected ||
     (reportsExperimentEnabled && repositoryBackend === "http-readonly");
+
+  const loadSelectedReportInputs = useCallback(
+    async (dateFrom?: string, dateTo?: string) => {
+      const repositories = getSelectedReadRepositories(repositoryBackend);
+      const [transactionLoad, categoryLoad, bucketLoad] = await Promise.all([
+        loadPagedRows<unknown>((options) =>
+          repositories.transactions.list({
+            ...options,
+            ...(dateFrom ? { dateFrom } : {}),
+            ...(dateTo ? { dateTo } : {}),
+          }),
+        ),
+        loadPagedRows<unknown>(repositories.categories.list),
+        loadPagedRows<unknown>(repositories.buckets.list),
+      ]);
+      const transactions = transactionLoad.rows
+        .map(normalizeTransactionInput)
+        .filter((row): row is ReportTransactionInput => row !== undefined);
+      const categories = categoryLoad.rows
+        .map(normalizeCategoryInput)
+        .filter((row): row is ReportCategoryInput => row !== undefined);
+      const buckets = bucketLoad.rows
+        .map(normalizeBucketInput)
+        .filter((row): row is ReportBucketInput => row !== undefined);
+
+      if (
+        transactions.length !== transactionLoad.rows.length ||
+        categories.length !== categoryLoad.rows.length ||
+        buckets.length !== bucketLoad.rows.length
+      ) {
+        throw new Error("reports_selected_read_input_normalization_failed");
+      }
+      return { transactions, categories, buckets, transactionLoad };
+    },
+    [repositoryBackend],
+  );
+
+  const selectedReportDataSource = useMemo<SpendingChartDataSource | undefined>(
+    () =>
+      reportsHttpReadonlyExperimentActive
+        ? {
+            listBuckets: async () => {
+              const { buckets } = await loadSelectedReportInputs();
+              return buckets
+                .filter(
+                  (bucket) =>
+                    Boolean(bucket.id) &&
+                    Boolean(bucket.isActive) &&
+                    !Boolean(bucket.excludeFromReports),
+                )
+                .sort(
+                  (left, right) =>
+                    left.displayOrder - right.displayOrder ||
+                    (left.id ?? 0) - (right.id ?? 0),
+                )
+                .map((bucket) => ({
+                  id: bucket.id!,
+                  name: bucket.name || "Unnamed",
+                }));
+            },
+            listCategories: async (bucketId) => {
+              const { categories } = await loadSelectedReportInputs();
+              return categories
+                .filter(
+                  (category) =>
+                    Boolean(category.id) &&
+                    category.bucketId === bucketId &&
+                    Boolean(category.isActive),
+                )
+                .map((category) => ({
+                  id: category.id!,
+                  name: category.name || "Unnamed",
+                }))
+                .sort((left, right) => left.name.localeCompare(right.name));
+            },
+            getMonthlyChartData: async (
+              options: MonthlyChartDataOptions,
+            ) => {
+              const start = new Date(`${options.startMonth}-01T00:00:00`);
+              const [endYear, endMonth] = options.endMonth
+                .split("-")
+                .map(Number);
+              const end = new Date(
+                endYear,
+                endMonth,
+                0,
+                23,
+                59,
+                59,
+                999,
+              );
+              const { transactions, categories } =
+                await loadSelectedReportInputs(
+                  start.toISOString(),
+                  end.toISOString(),
+                );
+              return getMonthlyChartDataFromInputs(
+                options,
+                transactions,
+                categories,
+              );
+            },
+          }
+        : undefined,
+    [loadSelectedReportInputs, reportsHttpReadonlyExperimentActive],
+  );
+
+  const loadSelectedBreakdown = useCallback(
+    async (
+      selectedPeriodType: PeriodType,
+      selectedDate: Date,
+      bucketId: number,
+      includeExcludedBucket: boolean,
+    ): Promise<BucketCategoryBreakdownResult> => {
+      const { start, end } = getDateRangeForPeriod(
+        selectedPeriodType,
+        selectedDate,
+      );
+      const { transactions, categories, buckets } =
+        await loadSelectedReportInputs(start.toISOString(), end.toISOString());
+      return getCategoryBreakdownForBucketFromInputs(
+        selectedPeriodType,
+        selectedDate,
+        bucketId,
+        transactions,
+        categories,
+        buckets,
+        includeExcludedBucket,
+      );
+    },
+    [loadSelectedReportInputs],
+  );
 
   // Load report whenever period type or date changes
   const loadReport = useCallback(async () => {
@@ -252,51 +391,13 @@ const Reports: React.FC = () => {
           currentDate,
         );
       } else {
-        const repositories = getSelectedReadRepositories(repositoryBackend);
         const { start, end } = getDateRangeForPeriod(periodType, currentDate);
-        const [transactionLoad, categoryLoad, bucketLoad] = await Promise.all([
-          loadPagedRows<unknown>(
-            (options) =>
-              repositories.transactions.list({
-                ...options,
-                dateFrom: start.toISOString(),
-                dateTo: end.toISOString(),
-              }),
-            REPORT_INPUT_LIMIT,
-            REPORT_INPUT_PAGE_SIZE,
-          ),
-          loadPagedRows<unknown>(
-            repositories.categories.list,
-            REPORT_INPUT_LIMIT,
-            REPORT_INPUT_PAGE_SIZE,
-          ),
-          loadPagedRows<unknown>(
-            repositories.buckets.list,
-            REPORT_INPUT_LIMIT,
-            REPORT_INPUT_PAGE_SIZE,
-          ),
-        ]);
-        const transactions = transactionLoad.rows
-          .map(normalizeTransactionInput)
-          .filter((row): row is ReportTransactionInput => row !== undefined);
-        const categories = categoryLoad.rows
-          .map(normalizeCategoryInput)
-          .filter((row): row is ReportCategoryInput => row !== undefined);
-        const buckets = bucketLoad.rows
-          .map(normalizeBucketInput)
-          .filter((row): row is ReportBucketInput => row !== undefined);
-
-        if (
-          transactions.length !== transactionLoad.rows.length ||
-          categories.length !== categoryLoad.rows.length ||
-          buckets.length !== bucketLoad.rows.length
-        ) {
-          throw new Error("reports_read_experiment_input_normalization_failed");
-        }
+        const { transactions, categories, buckets, transactionLoad } =
+          await loadSelectedReportInputs(start.toISOString(), end.toISOString());
 
         setReportInputMeta({
           backend: repositoryBackend,
-          source: repositories.source,
+          source: getSelectedReadRepositories(repositoryBackend).source,
           loadedCount: transactionLoad.rows.length,
           reportedCount: transactionLoad.reportedCount,
           pagesLoaded: transactionLoad.pagesLoaded,
@@ -318,7 +419,13 @@ const Reports: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [periodType, currentDate, reportsHttpReadonlyExperimentActive, repositoryBackend]);
+  }, [
+    periodType,
+    currentDate,
+    loadSelectedReportInputs,
+    reportsHttpReadonlyExperimentActive,
+    repositoryBackend,
+  ]);
 
   useEffect(() => {
     loadReport();
@@ -333,10 +440,6 @@ const Reports: React.FC = () => {
   };
 
   const handleBucketClick = (bucketId: number, bucketName: string) => {
-    if (reportsHttpReadonlyExperimentActive) {
-      return;
-    }
-
     setSelectedBucketForPie({ bucketId, bucketName });
   };
 
@@ -345,16 +448,16 @@ const Reports: React.FC = () => {
   };
 
   const handleIncomeSummaryClick = async () => {
-    if (reportsHttpReadonlyExperimentActive) {
-      return;
-    }
-
     if (!report) {
       return;
     }
 
     try {
-      const incomeBucket = await reportRepository.getExcludedReportBucket();
+      const incomeBucket = reportsHttpReadonlyExperimentActive
+        ? (
+            await loadSelectedReportInputs()
+          ).buckets.find((bucket) => Boolean(bucket.excludeFromReports))
+        : await reportRepository.getExcludedReportBucket();
 
       if (!incomeBucket?.id) {
         return;
@@ -451,7 +554,7 @@ const Reports: React.FC = () => {
         </div>
 
         {/* Error Message */}
-        {reportsExperimentEnabled && (
+        {reportsExperimentEnabled && !rehearsalSelected && (
           <IonCard color={reportsHttpReadonlyExperimentActive ? "warning" : undefined}>
             <IonCardContent>
               <IonText>
@@ -467,7 +570,9 @@ const Reports: React.FC = () => {
           </IonCard>
         )}
 
-        {reportsHttpReadonlyExperimentActive && reportInputMeta && (
+        {reportsHttpReadonlyExperimentActive &&
+          !(rehearsal.authoritativeMode && rehearsal.ready) &&
+          reportInputMeta && (
           <IonCard color={reportInputMeta.truncated ? "danger" : "light"}>
             <IonCardContent>
               <IonText>
@@ -514,7 +619,6 @@ const Reports: React.FC = () => {
                         type="button"
                         className="summary-item summary-item-button"
                         onClick={handleIncomeSummaryClick}
-                        disabled={reportsHttpReadonlyExperimentActive}
                       >
                         <IonText color="medium" className="summary-label">
                           Total Income
@@ -529,7 +633,6 @@ const Reports: React.FC = () => {
                         type="button"
                         className="summary-item summary-item-button"
                         onClick={handleIncomeSummaryClick}
-                        disabled={reportsHttpReadonlyExperimentActive}
                       >
                         <IonText color="medium" className="summary-label">
                           Total Expense
@@ -544,7 +647,6 @@ const Reports: React.FC = () => {
                         type="button"
                         className="summary-item summary-item-button"
                         onClick={handleIncomeSummaryClick}
-                        disabled={reportsHttpReadonlyExperimentActive}
                       >
                         <IonText color="medium" className="summary-label">
                           Net Total
@@ -586,7 +688,6 @@ const Reports: React.FC = () => {
                                 bucket.bucketName,
                               )
                             }
-                            disabled={reportsHttpReadonlyExperimentActive}
                           >
                             <IonText>
                               <h5 className="bucket-name">
@@ -714,22 +815,9 @@ const Reports: React.FC = () => {
               )}
             </div>
 
-            {reportsHttpReadonlyExperimentActive ? (
-              <IonCard>
-                <IonCardContent>
-                  <IonText color="medium">
-                    Monthly spending chart and category drilldowns are disabled
-                    in the Reports `http-readonly` experiment because those
-                    paths still use Dexie-backed report helpers.
-                  </IonText>
-                </IonCardContent>
-              </IonCard>
-            ) : (
-              <SpendingChart />
-            )}
+            <SpendingChart dataSource={selectedReportDataSource} />
 
-            {!reportsHttpReadonlyExperimentActive && (
-              <BucketCategoryPieModal
+            <BucketCategoryPieModal
                 isOpen={selectedBucketForPie !== null}
                 bucketId={selectedBucketForPie?.bucketId ?? null}
                 bucketName={selectedBucketForPie?.bucketName ?? "Bucket"}
@@ -739,8 +827,12 @@ const Reports: React.FC = () => {
                   selectedBucketForPie?.bucketName === "Total Income"
                 }
                 onClose={handleCloseBucketPie}
+                loadBreakdown={
+                  reportsHttpReadonlyExperimentActive
+                    ? loadSelectedBreakdown
+                    : undefined
+                }
               />
-            )}
           </>
         )}
       </IonContent>

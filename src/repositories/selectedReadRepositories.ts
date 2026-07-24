@@ -381,6 +381,12 @@ export interface SelectedReadRepositories {
     count: (
       options?: transactionHttpRepository.TransactionCountOptions,
     ) => Promise<number>;
+    listDescriptionSuggestions: (
+      limit?: number,
+    ) => Promise<transactionHttpRepository.TransactionDescriptionSuggestion[]>;
+    getMostRecentByDescription: (
+      description: string,
+    ) => ReadOne<Transaction, TransactionDto>;
   };
   accounts: {
     list: (
@@ -437,6 +443,42 @@ const dexieReadRepositories: SelectedReadRepositories = {
     list: (options) => applyTransactionFiltersAndPage(options),
     getById: (id) => transactionRepository.getTransactionById(id),
     count: (options) => countSelectedReadTransactions(options),
+    listDescriptionSuggestions: async (limit = 100) => {
+      const rows = await db.transactions.toArray();
+      const counts = new Map<string, { count: number; latest: number }>();
+      rows.forEach((transaction) => {
+        const text = transaction.description?.trim();
+        if (!text) {
+          return;
+        }
+        const current = counts.get(text) ?? { count: 0, latest: 0 };
+        counts.set(text, {
+          count: current.count + 1,
+          latest: Math.max(current.latest, transactionTime(transaction.date)),
+        });
+      });
+      return [...counts.entries()]
+        .map(([text, value]) => ({ text, ...value }))
+        .sort(
+          (left, right) =>
+            right.count - left.count ||
+            right.latest - left.latest ||
+            compareText(left.text, right.text),
+        )
+        .slice(0, limit)
+        .map(({ text, count }) => ({ text, count }));
+    },
+    getMostRecentByDescription: async (description) => {
+      const rows = await db.transactions
+        .where("description")
+        .equals(description)
+        .toArray();
+      return rows.sort(
+        (left, right) =>
+          transactionTime(right.date) - transactionTime(left.date) ||
+          (right.id ?? 0) - (left.id ?? 0),
+      )[0];
+    },
   },
   accounts: {
     list: (options) =>
@@ -483,6 +525,12 @@ const httpReadonlyReadRepositories: SelectedReadRepositories = {
     list: (options) => transactionHttpRepository.listTransactions(options),
     getById: (id) => transactionHttpRepository.getTransactionById(id),
     count: (options) => transactionHttpRepository.countTransactions(options),
+    listDescriptionSuggestions: (limit) =>
+      transactionHttpRepository.listTransactionDescriptionSuggestions(limit),
+    getMostRecentByDescription: (description) =>
+      transactionHttpRepository.getMostRecentTransactionByDescription(
+        description,
+      ),
   },
   accounts: {
     list: (options) => lookupHttpRepositories.listAccounts(options),

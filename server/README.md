@@ -1629,3 +1629,30 @@ its outside-repository SQLite database:
 npm run test:budget-delete
 npm run smoke:api -- -- --token-file <token-file> --allow-budget-delete-write-smoke
 ```
+### Explicit Budget occurrence lifecycle
+
+`PERSONAL_FINANCE_ENABLE_BUDGET_SNAPSHOT_OCCURRENCE_WRITES=true` enables the
+optional, dry-run-first lifecycle for one exact Budget occurrence. It supports
+creating or deleting one occurrence, linking/changing/unlinking one
+Transaction, and atomically creating one occurrence while linking one
+Transaction. The capability is optional so authority profiles and manifests
+created with the original required capability set remain valid.
+
+The lifecycle never performs global pruning, repair, deduplication, historical
+relinking, or Budget definition deletion. Create Budget from Transaction uses a
+separate atomic route that creates one definition, one requested occurrence,
+and one link; both Budget definition and occurrence capabilities must be
+enabled.
+
+For profile-driven daily operation, the repository provides:
+
+```powershell
+.\scripts\Start-PersonalFinance.ps1 -ProfilePath "C:\outside-repo\authoritative-profile.json"
+.\scripts\Checkpoint-PersonalFinance.ps1 -ProfilePath "C:\outside-repo\authoritative-profile.json"
+```
+
+The start helper refuses checkpoint-required state, waits for API and Vite
+readiness, and opens the app. The checkpoint helper refuses while either
+service is running, creates a routine checkpoint only when required, and
+verifies it before reporting that restart is safe. Profile-specific wrappers
+and Desktop shortcuts must remain outside the repository.

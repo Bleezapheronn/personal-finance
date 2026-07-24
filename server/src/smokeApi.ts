@@ -25,6 +25,7 @@ import { ACCOUNT_LIFECYCLE_CONFIRMATIONS } from "./lib/accountLifecycle.js";
 import { CATEGORY_LIFECYCLE_CONFIRMATIONS } from "./lib/categoryLifecycle.js";
 import { BUCKET_LIFECYCLE_CONFIRMATIONS } from "./lib/bucketLifecycle.js";
 import { BUDGET_DELETE_WRITE_CONFIRMATION } from "./lib/budgetDelete.js";
+import { BUDGET_SNAPSHOT_OCCURRENCE_CONFIRMATIONS } from "./lib/budgetSnapshotOccurrence.js";
 import {
   calculateBudgetOccurrenceSchedule,
   calculateMissingBudgetSnapshotPlan,
@@ -71,6 +72,7 @@ interface SmokeArgs {
   allowBudgetSnapshotGenerationWriteSmoke: boolean;
   allowBudgetLifecycleWriteSmoke: boolean;
   allowBudgetDeleteWriteSmoke: boolean;
+  allowBudgetSnapshotOccurrenceWriteSmoke: boolean;
   help: boolean;
 }
 
@@ -190,6 +192,8 @@ Options:
                          Opt in to safer atomic Budget lifecycle create/update smoke.
   --allow-budget-delete-write-smoke
                          Opt in to one unused Budget plus unlinked snapshots delete smoke.
+  --allow-budget-snapshot-occurrence-write-smoke
+                         Opt in to no-op existing-occurrence lifecycle write smoke.
   --help                 Show this help text.
 `;
 
@@ -214,6 +218,7 @@ const parseArgs = (argv: string[]): SmokeArgs => {
     allowBudgetSnapshotGenerationWriteSmoke: false,
     allowBudgetLifecycleWriteSmoke: false,
     allowBudgetDeleteWriteSmoke: false,
+    allowBudgetSnapshotOccurrenceWriteSmoke: false,
     help: false,
   };
 
@@ -336,6 +341,11 @@ const parseArgs = (argv: string[]): SmokeArgs => {
 
     if (arg === "--allow-budget-delete-write-smoke") {
       args.allowBudgetDeleteWriteSmoke = true;
+      continue;
+    }
+
+    if (arg === "--allow-budget-snapshot-occurrence-write-smoke") {
+      args.allowBudgetSnapshotOccurrenceWriteSmoke = true;
       continue;
     }
 
@@ -947,6 +957,7 @@ const buildChecks = (
   allowBudgetSnapshotGenerationWriteSmoke: boolean,
   allowBudgetLifecycleWriteSmoke: boolean,
   allowBudgetDeleteWriteSmoke: boolean,
+  allowBudgetSnapshotOccurrenceWriteSmoke: boolean,
 ): SmokeCheck[] => {
   const authedOptions = { token, origin };
   const allowedPreflightOrigin = origin ?? DEFAULT_ALLOWED_ORIGIN;
@@ -993,6 +1004,9 @@ const buildChecks = (
       ? ["budgetLifecycleWrites"]
       : []),
     ...(allowBudgetDeleteWriteSmoke ? ["budgetDeleteWrites"] : []),
+    ...(allowBudgetSnapshotOccurrenceWriteSmoke
+      ? ["budgetSnapshotOccurrenceWrites"]
+      : []),
   ]);
   const writeCapabilityKeys = [
     "recipientActiveStateWrites",
@@ -1012,10 +1026,14 @@ const buildChecks = (
     "budgetSnapshotGenerationWrites",
     "budgetLifecycleWrites",
     "budgetDeleteWrites",
+    "budgetSnapshotOccurrenceWrites",
   ] as const;
   let sampledTransactionId: number | undefined;
   let sampledBudgetId: number | undefined;
   let sampledBudgetSnapshotId: number | undefined;
+  let sampledBudgetSnapshot:
+    | { budgetId: number; occurrenceDate: string }
+    | undefined;
   let recipientCountBeforeDryRun: number | undefined;
   let recipientFingerprintBeforeDryRun: string | undefined;
   let sampledRecipientName: string | undefined;
@@ -1509,6 +1527,11 @@ const buildChecks = (
             (json.budgetSnapshot as Record<string, unknown>).id === sampledBudgetSnapshotId,
           "unexpected_budget_snapshot_repository_detail_response",
         );
+        const snapshot = json.budgetSnapshot as Record<string, unknown>;
+        sampledBudgetSnapshot = {
+          budgetId: Number(snapshot.budgetId),
+          occurrenceDate: String(snapshot.occurrenceDate),
+        };
       },
     },
     {
@@ -7845,6 +7868,71 @@ const buildChecks = (
         ]
       : []),
     {
+      name: "Budget occurrence lifecycle is protected and capability-gated",
+      run: async () => {
+        expect(
+          sampledBudgetSnapshot !== undefined,
+          "sample_budget_snapshot_missing",
+        );
+        const path =
+          "/prototype/repositories/budget-snapshot-occurrences";
+        const body = {
+          budgetId: sampledBudgetSnapshot!.budgetId,
+          occurrenceDate: sampledBudgetSnapshot!.occurrenceDate,
+        };
+        const missingToken = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          { method: "POST", body, origin },
+        );
+        expectStatus(missingToken.status, 401);
+
+        const dryRun = await requestJson(
+          baseUrl,
+          `${path}/dry-run/create`,
+          { ...authedOptions, method: "POST", body },
+        );
+        expectStatus(dryRun.status, 200);
+        expect(
+          dryRun.json.ok === true &&
+            dryRun.json.dryRun === true &&
+            dryRun.json.wouldMutate === false &&
+            typeof dryRun.json.planFingerprint === "string",
+          "budget_snapshot_occurrence_dry_run_invalid",
+        );
+        const write = await requestJson(
+          baseUrl,
+          `${path}/write/create`,
+          {
+            ...authedOptions,
+            method: "POST",
+            body: {
+              ...body,
+              dryRunReviewed: true,
+              confirmation:
+                BUDGET_SNAPSHOT_OCCURRENCE_CONFIRMATIONS.create,
+              expectedPlanFingerprint: dryRun.json.planFingerprint,
+            },
+          },
+        );
+        if (allowBudgetSnapshotOccurrenceWriteSmoke) {
+          expectStatus(write.status, 200);
+          expect(
+            write.json.ok === true &&
+              write.json.sqliteMutated === false,
+            "budget_snapshot_occurrence_noop_write_invalid",
+          );
+        } else {
+          expectStatus(write.status, 403);
+          expect(
+            write.json.code ===
+              "budget_snapshot_occurrence_writes_disabled",
+            "budget_snapshot_occurrence_write_not_disabled",
+          );
+        }
+      },
+    },
+    {
       name: "Budget snapshot generation dry-run and disabled write are safe",
       run: async () => {
         const dryRunPath =
@@ -9598,6 +9686,7 @@ const main = async (): Promise<void> => {
     args.allowBudgetSnapshotGenerationWriteSmoke,
     args.allowBudgetLifecycleWriteSmoke,
     args.allowBudgetDeleteWriteSmoke,
+    args.allowBudgetSnapshotOccurrenceWriteSmoke,
   );
   const results = await runChecks(checks);
   printSummary(results);

@@ -99,6 +99,7 @@ export interface SqliteAuthorityRehearsalReadiness {
   unsupportedOperations: string[];
   transactionDeleteWritesAvailable: boolean;
   budgetLifecycleWritesAvailable: boolean;
+  budgetSnapshotOccurrenceWritesAvailable: boolean;
   budgetDeleteWritesAvailable: boolean;
   recipientDeleteMergeWritesAvailable: boolean;
   accountDeleteMergeWritesAvailable: boolean;
@@ -143,6 +144,7 @@ const initialReadiness = (
       unsupportedOperations: [],
       transactionDeleteWritesAvailable: false,
       budgetLifecycleWritesAvailable: false,
+      budgetSnapshotOccurrenceWritesAvailable: false,
       budgetDeleteWritesAvailable: false,
       recipientDeleteMergeWritesAvailable: false,
       accountDeleteMergeWritesAvailable: false,
@@ -168,6 +170,7 @@ const initialReadiness = (
     unsupportedOperations: [],
     transactionDeleteWritesAvailable: false,
     budgetLifecycleWritesAvailable: false,
+    budgetSnapshotOccurrenceWritesAvailable: false,
     budgetDeleteWritesAvailable: false,
     recipientDeleteMergeWritesAvailable: false,
     accountDeleteMergeWritesAvailable: false,
@@ -271,6 +274,8 @@ export const normalizeSqliteAuthorityRehearsalCapabilities = (
       capabilities.transactionDeleteWrites === true,
     budgetLifecycleWritesAvailable:
       capabilities.budgetLifecycleWrites === true,
+    budgetSnapshotOccurrenceWritesAvailable:
+      capabilities.budgetSnapshotOccurrenceWrites === true,
     budgetDeleteWritesAvailable: capabilities.budgetDeleteWrites === true,
     recipientDeleteMergeWritesAvailable:
       capabilities.recipientDeleteMergeWrites === true,
@@ -347,6 +352,9 @@ export const normalizeSqliteAuthoritativeReadiness = (
       if (operation === "budget_definition_delete") {
         return capabilities?.budgetDeleteWrites !== true;
       }
+      if (operation === "budget_snapshot_deletion") {
+        return capabilities?.budgetSnapshotOccurrenceWrites !== true;
+      }
       return true;
     },
   );
@@ -412,6 +420,8 @@ export const normalizeSqliteAuthoritativeReadiness = (
       capabilities?.transactionDeleteWrites === true,
     budgetLifecycleWritesAvailable:
       capabilities?.budgetLifecycleWrites === true,
+    budgetSnapshotOccurrenceWritesAvailable:
+      capabilities?.budgetSnapshotOccurrenceWrites === true,
     budgetDeleteWritesAvailable: capabilities?.budgetDeleteWrites === true,
     recipientDeleteMergeWritesAvailable:
       capabilities?.recipientDeleteMergeWrites === true,

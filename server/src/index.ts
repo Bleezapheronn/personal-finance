@@ -10,6 +10,7 @@ import {
   areBudgetDeleteWritesEnabled,
   areBudgetLifecycleWritesEnabled,
   areBudgetSnapshotGenerationWritesEnabled,
+  areBudgetSnapshotOccurrenceWritesEnabled,
   areBucketCategoryWritesEnabled,
   areRecipientActiveStateWritesEnabled,
   areRecipientCreateUpdateWritesEnabled,
@@ -184,8 +185,24 @@ import {
   validateBudgetSnapshotGenerationWritePayload,
 } from "./lib/budgetSnapshotGenerationWrite.js";
 import {
+  budgetSnapshotOccurrenceDisabledResponse,
+  budgetSnapshotOccurrenceDryRun,
+  budgetSnapshotOccurrenceRealWrite,
+  budgetSnapshotOccurrenceRequestErrorResponse,
+  BudgetSnapshotOccurrenceRequestError,
+  type BudgetSnapshotOccurrenceAction,
+} from "./lib/budgetSnapshotOccurrence.js";
+import {
+  budgetFromTransactionDryRun,
+  budgetFromTransactionRealWrite,
+  budgetFromTransactionRequestErrorResponse,
+  BudgetFromTransactionRequestError,
+} from "./lib/budgetFromTransaction.js";
+import {
   countTransactions,
+  getMostRecentTransactionByDescription,
   getTransactionById,
+  listTransactionDescriptionSuggestions,
   listTransactions,
   type TransactionFilters,
 } from "./lib/transactions.js";
@@ -609,6 +626,9 @@ server.get("/prototype/sqlite/authority-readiness", async () => ({
       if (operation === "budget_definition_delete") {
         return !areBudgetDeleteWritesEnabled();
       }
+      if (operation === "budget_snapshot_deletion") {
+        return !areBudgetSnapshotOccurrenceWritesEnabled();
+      }
       return true;
     },
   ),
@@ -859,6 +879,107 @@ server.get<{
     opened.db.close();
   }
 });
+
+server.get<{ Querystring: { limit?: string } }>(
+  "/prototype/repositories/transactions/descriptions",
+  async (request, reply) => {
+    let limit: number;
+    try {
+      limit = parsePaginationValue(request.query.limit, 100, "limit");
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        code:
+          error instanceof Error
+            ? error.message
+            : "transaction_description_query_invalid",
+      });
+    }
+
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch {
+      return reply.code(503).send({
+        ok: false,
+        code: "sqlite_unavailable",
+      });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+
+    try {
+      return {
+        ok: true,
+        mode: SERVICE_MODE,
+        readonly: READONLY_MODE,
+        limit,
+        rows: listTransactionDescriptionSuggestions(opened.db, limit),
+      };
+    } catch {
+      return reply.code(500).send({
+        ok: false,
+        code: "transaction_description_list_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.get<{ Querystring: { description?: string } }>(
+  "/prototype/repositories/transactions/most-recent-by-description",
+  async (request, reply) => {
+    const description = request.query.description?.trim();
+    if (!description || description.length > 500) {
+      return reply.code(400).send({
+        ok: false,
+        code: "transaction_description_invalid",
+      });
+    }
+
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch {
+      return reply.code(503).send({
+        ok: false,
+        code: "sqlite_unavailable",
+      });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+
+    try {
+      const transaction = getMostRecentTransactionByDescription(
+        opened.db,
+        description,
+      );
+      if (!transaction) {
+        return reply.code(404).send({
+          ok: false,
+          code: "transaction_description_not_found",
+        });
+      }
+
+      return {
+        ok: true,
+        mode: SERVICE_MODE,
+        readonly: READONLY_MODE,
+        transaction,
+      };
+    } catch {
+      return reply.code(500).send({
+        ok: false,
+        code: "transaction_description_read_failed",
+      });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
 
 server.get<{ Params: { id: string } }>(
   "/prototype/repositories/transactions/:id",
@@ -1778,6 +1899,202 @@ for (const action of ["create", "update"] as const) {
     },
   );
 }
+
+for (const action of [
+  "delete",
+  "create",
+  "link",
+  "changeLink",
+  "unlink",
+  "createAndLink",
+] as const satisfies readonly BudgetSnapshotOccurrenceAction[]) {
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/budget-snapshot-occurrences/dry-run/${action}`,
+    async (request, reply) => {
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `budget_snapshot_occurrence_${action}_dry_run_failed`,
+        });
+      }
+      if (!opened.ok) {
+        return reply.code(503).send({ ok: false, code: opened.code });
+      }
+      try {
+        const result = budgetSnapshotOccurrenceDryRun(
+          opened.db,
+          request.body,
+          action,
+        );
+        if (
+          result.code === "snapshot_not_found" ||
+          result.code === "budget_not_found" ||
+          result.code === "transaction_not_found"
+        ) {
+          return reply.code(404).send(result);
+        }
+        return result.ok ? result : reply.code(409).send(result);
+      } catch (error) {
+        if (error instanceof BudgetSnapshotOccurrenceRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(
+              budgetSnapshotOccurrenceRequestErrorResponse(action, error.code),
+            );
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `budget_snapshot_occurrence_${action}_dry_run_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/budget-snapshot-occurrences/write/${action}`,
+    async (request, reply) => {
+      if (!areBudgetSnapshotOccurrenceWritesEnabled()) {
+        return reply
+          .code(403)
+          .send(budgetSnapshotOccurrenceDisabledResponse(action));
+      }
+      let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+      try {
+        opened = openConfiguredWritableDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code:
+            statusCode === 503
+              ? "sqlite_unavailable"
+              : `budget_snapshot_occurrence_${action}_write_failed`,
+        });
+      }
+      if (!opened.ok) {
+        return reply.code(503).send({ ok: false, code: opened.code });
+      }
+      try {
+        const result = budgetSnapshotOccurrenceRealWrite(
+          opened.db,
+          request.body,
+          action,
+        );
+        if (
+          result.code === "snapshot_not_found" ||
+          result.code === "budget_not_found" ||
+          result.code === "transaction_not_found"
+        ) {
+          return reply.code(404).send(result);
+        }
+        return result.ok ? result : reply.code(409).send(result);
+      } catch (error) {
+        if (error instanceof BudgetSnapshotOccurrenceRequestError) {
+          return reply
+            .code(error.statusCode)
+            .send(
+              budgetSnapshotOccurrenceRequestErrorResponse(action, error.code),
+            );
+        }
+        return reply.code(500).send({
+          ok: false,
+          code: `budget_snapshot_occurrence_${action}_write_failed`,
+        });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+}
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/budgets/from-transaction/dry-run",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch {
+      return reply
+        .code(503)
+        .send({ ok: false, code: "sqlite_unavailable" });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+    try {
+      const result = budgetFromTransactionDryRun(opened.db, request.body);
+      if (result.code === "transaction_not_found") {
+        return reply.code(404).send(result);
+      }
+      return result.ok ? result : reply.code(409).send(result);
+    } catch (error) {
+      if (error instanceof BudgetFromTransactionRequestError) {
+        return reply
+          .code(error.statusCode)
+          .send(budgetFromTransactionRequestErrorResponse(error.code));
+      }
+      return reply
+        .code(500)
+        .send({ ok: false, code: "budget_from_transaction_dry_run_failed" });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/budgets/from-transaction/write",
+  async (request, reply) => {
+    if (
+      !areBudgetDefinitionWritesEnabled() ||
+      !areBudgetSnapshotOccurrenceWritesEnabled()
+    ) {
+      return reply.code(403).send(
+        budgetFromTransactionRequestErrorResponse(
+          "budget_from_transaction_writes_disabled",
+        ),
+      );
+    }
+    let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+    try {
+      opened = openConfiguredWritableDatabase();
+    } catch {
+      return reply
+        .code(503)
+        .send({ ok: false, code: "sqlite_unavailable" });
+    }
+    if (!opened.ok) {
+      return reply.code(503).send({ ok: false, code: opened.code });
+    }
+    try {
+      const result = budgetFromTransactionRealWrite(opened.db, request.body);
+      if (result.code === "transaction_not_found") {
+        return reply.code(404).send(result);
+      }
+      return result.ok ? result : reply.code(409).send(result);
+    } catch (error) {
+      if (error instanceof BudgetFromTransactionRequestError) {
+        return reply
+          .code(error.statusCode)
+          .send(budgetFromTransactionRequestErrorResponse(error.code));
+      }
+      return reply
+        .code(500)
+        .send({ ok: false, code: "budget_from_transaction_write_failed" });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
 
 server.post<{ Body: unknown }>(
   "/prototype/repositories/budgets/delete/dry-run",

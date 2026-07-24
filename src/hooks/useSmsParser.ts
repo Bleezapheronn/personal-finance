@@ -17,7 +17,8 @@ export interface ParsedSmsData {
 
 export const useSmsParser = (
   smsTemplates: SmsImportTemplate[],
-  accountId?: number
+  accountId?: number,
+  recipientCandidates?: Recipient[],
 ) => {
   const [parsedPreview, setParsedPreview] = useState<ParsedSmsData | null>(
     null
@@ -58,7 +59,8 @@ export const useSmsParser = (
     if (!recipientName) return null;
 
     try {
-      const allRecipients = await recipientRepository.listRecipients();
+      const allRecipients =
+        recipientCandidates ?? (await recipientRepository.listRecipients());
       const searchName = recipientName.toLowerCase().trim();
 
       // First check exact name match
@@ -181,24 +183,8 @@ export const useSmsParser = (
       // Add template ID
       result.templateId = template.id;
 
-      // Add logging for debugging
-      console.log(`[${template.name}] Parsed:`, {
-        isIncome: result.isIncome,
-        reference: result.reference,
-        amount: result.amount,
-        recipientName: result.recipientName,
-        recipientPhone: result.recipientPhone,
-        cost: result.cost,
-        date: result.date,
-        time: result.time,
-        fieldCount: Object.keys(result).length - 1, // Exclude templateId
-      });
-
       // Only return if we extracted at least some data (more than just templateId)
       const hasData = Object.keys(result).length > 1;
-      if (!hasData) {
-        console.log(`[${template.name}] Rejected: No fields parsed`);
-      }
       return hasData ? result : null;
     } catch (err) {
       console.error("Error parsing with template:", template.name, err);

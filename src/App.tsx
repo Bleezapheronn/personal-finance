@@ -40,6 +40,7 @@ import RecipientsManagement from "./pages/RecipientsManagement";
 import SmsImportTemplatesManagement from "./pages/SmsImportTemplatesManagement";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings"; // NEW
+import SqliteAuthoritySettings from "./pages/SqliteAuthoritySettings";
 import LocalApiDiagnostics, {
   isLocalApiDiagnosticsEnabled,
 } from "./pages/LocalApiDiagnostics";
@@ -120,16 +121,14 @@ const InnerApp: React.FC = () => {
             <IonList>
               <IonListHeader>System</IonListHeader>
               <IonMenuToggle autoHide={true}>
-                {!rehearsal.selected && (
-                  <IonItem button routerLink="/settings">
+                <IonItem button routerLink="/settings">
                     <IonIcon
                       aria-hidden="true"
                       icon={settingsOutline}
                       slot="start"
                     />
                     <IonLabel>Settings & Debug</IonLabel>
-                  </IonItem>
-                )}
+                </IonItem>
                 {showLocalApiDiagnostics && (
                   <IonItem button routerLink="/local-api-diagnostics">
                     <IonIcon
@@ -159,7 +158,7 @@ const InnerApp: React.FC = () => {
               <AddTransaction />
             </Route>
             <Route exact path="/transaction-details/:id">
-              {rehearsal.selected ? <Redirect to="/transactions" /> : <TransactionDetails />}
+              <TransactionDetails />
             </Route>
             <Route
               exact
@@ -195,10 +194,10 @@ const InnerApp: React.FC = () => {
             </Route>
             {/* NEW: Settings route */}
             <Route path="/settings">
-              {rehearsal.selected ? <Redirect to="/transactions" /> : <Settings />}
+              {rehearsal.selected ? <SqliteAuthoritySettings /> : <Settings />}
             </Route>
             <Route path="/local-api-diagnostics">
-              {rehearsal.authoritativeMode ? <Redirect to="/transactions" /> : <LocalApiDiagnostics />}
+              {rehearsal.authoritativeMode ? <SqliteAuthoritySettings /> : <LocalApiDiagnostics />}
             </Route>
             <Route exact path="/">
               <Redirect to="/transactions" />

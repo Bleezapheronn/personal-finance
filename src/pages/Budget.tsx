@@ -2429,7 +2429,8 @@ const BudgetPage: React.FC = () => {
         {!loading && (
           <>
             {(budgetReadExperimentEnabled ||
-              budgetDefinitionWriteExperimentActive) && (
+              budgetDefinitionWriteExperimentActive) &&
+              !(rehearsal.authoritativeMode && rehearsal.ready) && (
               <IonCard color={budgetHttpReadonlyExperimentActive ? "warning" : undefined}>
                 <IonCardContent>
                   <IonText>
@@ -2467,7 +2468,9 @@ const BudgetPage: React.FC = () => {
               </IonCard>
             )}
 
-            {budgetHttpReadonlyExperimentActive && selectedReadLoadMeta && (
+            {budgetHttpReadonlyExperimentActive &&
+              !(rehearsal.authoritativeMode && rehearsal.ready) &&
+              selectedReadLoadMeta && (
               <IonCard color={selectedReadInputsTruncated ? "danger" : "light"}>
                 <IonCardContent>
                   <IonText>

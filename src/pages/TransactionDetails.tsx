@@ -23,18 +23,113 @@ import {
   IonCol,
 } from "@ionic/react";
 import { useParams, useHistory } from "react-router-dom";
-import { createOutline, calendar, trash } from "ionicons/icons";
-import { db, Transaction, Category, Recipient, Account, Budget } from "../db";
+import { createOutline, calendar, linkOutline, trash } from "ionicons/icons";
+import { db, Transaction, Category, Recipient, Account, Budget, BudgetSnapshot } from "../db";
+import { getRepositoryBackend, isHttpSelectedReadRepositoryBackend } from "../repositories/adapterSelection";
+import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import type {
+  AccountDto,
+  BudgetDto,
+  BudgetSnapshotDto,
+  CategoryDto,
+  RecipientDto,
+  TransactionDto,
+} from "../repositories/http/types";
+import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
+import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import {
-  accountRepository,
-  categoryRepository,
-  recipientRepository,
-  transactionRepository,
-} from "../repositories";
+  dryRunBudgetSnapshotOccurrence,
+  writeBudgetSnapshotOccurrence,
+} from "../repositories/http/budgetSnapshotOccurrenceWrite";
+
+const asBoolean = (value: boolean | number): boolean =>
+  value === true || value === 1;
+
+const asDate = (value: Date | string): Date =>
+  value instanceof Date ? value : new Date(value);
+
+const normalizeTransaction = (
+  row: Transaction | TransactionDto,
+): Transaction => ({
+  ...row,
+  accountId: row.accountId ?? undefined,
+  paymentChannelId: row.paymentChannelId ?? undefined,
+  originalAmount: row.originalAmount ?? undefined,
+  originalCurrency: row.originalCurrency ?? undefined,
+  exchangeRate: row.exchangeRate ?? undefined,
+  transactionReference: row.transactionReference ?? undefined,
+  transactionCost: row.transactionCost ?? undefined,
+  description: row.description ?? undefined,
+  transferPairId: row.transferPairId ?? undefined,
+  isTransfer: row.isTransfer == null ? undefined : asBoolean(row.isTransfer),
+  budgetId: row.budgetId ?? undefined,
+  occurrenceDate:
+    row.occurrenceDate == null ? undefined : asDate(row.occurrenceDate),
+  budgetSnapshotId: row.budgetSnapshotId ?? undefined,
+  date: asDate(row.date),
+});
+
+const normalizeCategory = (row: Category | CategoryDto): Category => ({
+  ...row,
+  name: row.name ?? undefined,
+  description: row.description ?? undefined,
+  isActive: asBoolean(row.isActive),
+  createdAt: asDate(row.createdAt),
+  updatedAt: asDate(row.updatedAt),
+});
+
+const normalizeRecipient = (row: Recipient | RecipientDto): Recipient => ({
+  ...row,
+  aliases: row.aliases ?? undefined,
+  email: row.email ?? undefined,
+  phone: row.phone ?? undefined,
+  tillNumber: row.tillNumber ?? undefined,
+  paybill: row.paybill ?? undefined,
+  accountNumber: row.accountNumber ?? undefined,
+  description: row.description ?? undefined,
+  isActive: asBoolean(row.isActive),
+  createdAt: asDate(row.createdAt),
+  updatedAt: asDate(row.updatedAt),
+});
+
+const normalizeAccount = (row: Account | AccountDto): Account => ({
+  ...row,
+  description: row.description ?? undefined,
+  currency: row.currency ?? undefined,
+  isActive: asBoolean(row.isActive),
+  isCredit: asBoolean(row.isCredit),
+  creditLimit: row.creditLimit ?? undefined,
+  createdAt: asDate(row.createdAt),
+  updatedAt: asDate(row.updatedAt),
+});
+
+const normalizeBudget = (row: Budget | BudgetDto): Budget => ({
+  ...row,
+  paymentChannelId: row.paymentChannelId ?? undefined,
+  accountId: row.accountId ?? undefined,
+  recipientId: row.recipientId ?? undefined,
+  transactionCost: row.transactionCost ?? undefined,
+  frequencyDetails:
+    typeof row.frequencyDetails === "string"
+      ? undefined
+      : (row.frequencyDetails ?? undefined),
+  isGoal: asBoolean(row.isGoal),
+  isFlexible: asBoolean(row.isFlexible),
+  goalPercentage: row.goalPercentage ?? undefined,
+  goalDirection: row.goalDirection ?? undefined,
+  isActive: asBoolean(row.isActive),
+  remainingCyclesTotal: row.remainingCyclesTotal ?? undefined,
+  dueDate: asDate(row.dueDate),
+  createdAt: asDate(row.createdAt),
+  updatedAt: asDate(row.updatedAt),
+});
 
 const TransactionDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useHistory();
+  const backend = getRepositoryBackend();
+  const httpSelected = isHttpSelectedReadRepositoryBackend(backend);
+  const authority = useSqliteAuthorityRehearsal();
   const [txn, setTxn] = useState<Transaction | null>(null);
   const [history, setHistory] = useState<Transaction[]>([]);
   const [category, setCategory] = useState<Category | null>(null);
@@ -42,35 +137,42 @@ const TransactionDetails: React.FC = () => {
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [budget, setBudget] = useState<Budget | null>(null);
   const [showRemoveAlert, setShowRemoveAlert] = useState(false);
+  const [mutationError, setMutationError] = useState("");
+  const occurrenceWritesActive =
+    httpSelected &&
+    authority.ready &&
+    authority.budgetSnapshotOccurrenceWritesAvailable;
 
   useIonViewWillEnter(() => {
     const fetchDetail = async () => {
-      const transaction = await transactionRepository.getTransactionById(
-        Number(id),
-      );
+      const repositories = getSelectedReadRepositories(backend);
+      const selectedTransaction = await repositories.transactions.getById(Number(id));
+      const transaction = selectedTransaction
+        ? normalizeTransaction(selectedTransaction)
+        : undefined;
       setTxn(transaction || null);
       if (transaction) {
         // Fetch related data
         const [cat, rec, acc] = await Promise.all([
-          categoryRepository.getCategoryById(transaction.categoryId),
-          recipientRepository.getRecipientById(transaction.recipientId),
-          // CHANGED: Fetch account directly using accountId instead of going through paymentMethods
+          repositories.categories.getById(transaction.categoryId),
+          repositories.recipients.getById(transaction.recipientId),
           transaction.accountId
-            ? accountRepository.getAccountById(transaction.accountId)
+            ? repositories.accounts.getById(transaction.accountId)
             : Promise.resolve(null),
         ]);
-        setCategory(cat || null);
-        setRecipient(rec || null);
-        setAccount(acc || null);
+        setCategory(cat ? normalizeCategory(cat) : null);
+        setRecipient(rec ? normalizeRecipient(rec) : null);
+        setAccount(acc ? normalizeAccount(acc) : null);
 
         // Fetch linked budget through snapshot linkage when present.
         if (transaction.budgetSnapshotId !== undefined) {
-          const linkedSnapshot = await db.budgetSnapshots.get(
+          const linkedSnapshot = await repositories.budgetSnapshots.getById(
             transaction.budgetSnapshotId,
           );
           if (linkedSnapshot) {
-            const linkedBudget = await db.budgets.get(linkedSnapshot.budgetId);
-            setBudget(linkedBudget || null);
+            const snapshot = linkedSnapshot as BudgetSnapshot | BudgetSnapshotDto;
+            const linkedBudget = await repositories.budgets.getById(snapshot.budgetId);
+            setBudget(linkedBudget ? normalizeBudget(linkedBudget) : null);
           } else {
             setBudget(null);
           }
@@ -79,10 +181,16 @@ const TransactionDetails: React.FC = () => {
         }
 
         // Fetch recent history for same recipient
-        const allForRecipient =
-          await transactionRepository.listTransactionsForRecipient(
-            transaction.recipientId,
-          );
+        const selectedHistory = await repositories.transactions.list({
+          recipientId: transaction.recipientId,
+          limit: 4,
+          offset: 0,
+        });
+        const allForRecipient = (
+          Array.isArray(selectedHistory)
+            ? selectedHistory
+            : selectedHistory.rows
+        ).map((row) => normalizeTransaction(row));
         setHistory(
           allForRecipient.filter((t) => t.id !== transaction.id).slice(0, 3),
         );
@@ -95,11 +203,34 @@ const TransactionDetails: React.FC = () => {
     if (!txn) return;
 
     try {
-      await db.transactions.update(txn.id!, {
-        budgetSnapshotId: undefined,
-        budgetId: undefined,
-        occurrenceDate: undefined,
-      });
+      if (httpSelected) {
+        if (!occurrenceWritesActive) {
+          setMutationError("Budget occurrence changes are currently unavailable.");
+          return;
+        }
+        const input = {
+          transactionId: txn.id!,
+          ...(txn.budgetSnapshotId
+            ? { snapshotId: txn.budgetSnapshotId }
+            : {}),
+        };
+        const dryRun = await dryRunBudgetSnapshotOccurrence("unlink", input);
+        const confirmed = window.confirm(
+          "Remove this Budget link?\n\nOnly this Transaction's Budget linkage fields will be cleared. The occurrence remains unchanged.",
+        );
+        if (!confirmed) return;
+        await writeBudgetSnapshotOccurrence(
+          "unlink",
+          input,
+          dryRun.planFingerprint!,
+        );
+      } else {
+        await db.transactions.update(txn.id!, {
+          budgetSnapshotId: undefined,
+          budgetId: undefined,
+          occurrenceDate: undefined,
+        });
+      }
 
       // Update local state
       setTxn({
@@ -112,6 +243,61 @@ const TransactionDetails: React.FC = () => {
       setShowRemoveAlert(false);
     } catch (error) {
       console.error("Error removing transaction from budget:", error);
+      setMutationError(
+        error instanceof Error ? error.message : "Budget unlink failed.",
+      );
+    }
+  };
+
+  const handleLinkSnapshot = async () => {
+    if (!txn || !occurrenceWritesActive) {
+      setMutationError("Budget occurrence changes are currently unavailable.");
+      return;
+    }
+    const snapshotText = window.prompt("Budget occurrence snapshot ID");
+    if (!snapshotText) return;
+    const snapshotId = Number(snapshotText);
+    if (!Number.isInteger(snapshotId) || snapshotId <= 0) {
+      setMutationError("Enter a valid snapshot ID.");
+      return;
+    }
+    const action = txn.budgetSnapshotId ? "changeLink" : "link";
+    const input = {
+      transactionId: txn.id!,
+      snapshotId,
+      ...(txn.budgetSnapshotId
+        ? { expectedCurrentSnapshotId: txn.budgetSnapshotId }
+        : {}),
+    };
+    try {
+      const dryRun = await dryRunBudgetSnapshotOccurrence(action, input);
+      const confirmed = window.confirm(
+        `${txn.budgetSnapshotId ? "Change" : "Add"} this Budget link?\n\n` +
+          "Only this Transaction's Budget linkage fields will change.",
+      );
+      if (!confirmed) return;
+      const result = await writeBudgetSnapshotOccurrence(
+        action,
+        input,
+        dryRun.planFingerprint!,
+      );
+      const repositories = getSelectedReadRepositories(backend);
+      const [snapshotRow, transactionRow] = await Promise.all([
+        repositories.budgetSnapshots.getById(result.target.snapshotId!),
+        repositories.transactions.getById(txn.id!),
+      ]);
+      if (!snapshotRow || !transactionRow) {
+        throw new Error("budget_snapshot_link_refresh_failed");
+      }
+      const snapshot = snapshotRow as BudgetSnapshot | BudgetSnapshotDto;
+      const budgetRow = await repositories.budgets.getById(snapshot.budgetId);
+      setTxn(normalizeTransaction(transactionRow));
+      setBudget(budgetRow ? normalizeBudget(budgetRow) : null);
+      setMutationError("");
+    } catch (error) {
+      setMutationError(
+        error instanceof Error ? error.message : "Budget link failed.",
+      );
     }
   };
 
@@ -144,10 +330,26 @@ const TransactionDetails: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Transaction Details</IonTitle>
+          <SqliteAuthorityToolbarStatus />
           <IonButtons slot="end">
+            {httpSelected && occurrenceWritesActive && (
+              <IonButton
+                onClick={handleLinkSnapshot}
+                title={txn.budgetSnapshotId ? "Change Budget link" : "Link Budget"}
+              >
+                <IonIcon slot="icon-only" icon={linkOutline} />
+              </IonButton>
+            )}
             <IonButton
               onClick={() => navigate.push(`/budget/from-transaction/${id}`)}
               title="Create Budget from Transaction"
+              disabled={
+                httpSelected &&
+                !(
+                  authority.ready &&
+                  authority.budgetSnapshotOccurrenceWritesAvailable
+                )
+              }
             >
               <IonIcon slot="icon-only" icon={calendar} />
             </IonButton>
@@ -158,6 +360,11 @@ const TransactionDetails: React.FC = () => {
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
+        {mutationError && (
+          <IonText color="danger">
+            <p>{mutationError}</p>
+          </IonText>
+        )}
         {/* Amount and Recipient */}
         <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
           <IonText
@@ -318,6 +525,7 @@ const TransactionDetails: React.FC = () => {
                       style={{ marginTop: -4 }}
                       onClick={() => setShowRemoveAlert(true)}
                       title="Remove from budget"
+                      disabled={httpSelected && !authority.ready}
                     >
                       <IonIcon icon={trash} />
                     </IonButton>

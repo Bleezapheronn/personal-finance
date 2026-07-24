@@ -31,6 +31,7 @@ const baseReadiness = {
   unsupportedOperations: [],
   transactionDeleteWritesAvailable: true,
   budgetLifecycleWritesAvailable: true,
+  budgetSnapshotOccurrenceWritesAvailable: true,
   budgetDeleteWritesAvailable: true,
   recipientDeleteMergeWritesAvailable: true,
   accountDeleteMergeWritesAvailable: true,

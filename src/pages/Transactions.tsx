@@ -1610,7 +1610,8 @@ const Transactions: React.FC = () => {
         {(transactionsReadExperimentEnabled ||
           transactionsBasicWriteExperimentEnabled ||
           transactionsDeleteWriteExperimentEnabled ||
-          rehearsalSelected) && (
+          rehearsalSelected) &&
+          !(rehearsal.authoritativeMode && rehearsal.ready) && (
           <IonCard style={{ margin: 0, marginBottom: "16px" }}>
             <IonCardContent>
               <IonText

@@ -23,6 +23,11 @@ export interface TransactionListResult {
   rows: Record<string, unknown>[];
 }
 
+export interface TransactionDescriptionSuggestion {
+  text: string;
+  count: number;
+}
+
 const TRANSACTION_SELECT_SQL = `SELECT id, categoryId, paymentChannelId, accountId,
   recipientId, date, amount, originalAmount, originalCurrency, exchangeRate,
   transactionReference, transactionCost, description, transferPairId, isTransfer,
@@ -133,3 +138,31 @@ export const getTransactionById = (
   db.prepare(`${TRANSACTION_SELECT_SQL} WHERE id = @id`).get({ id }) as
     | Record<string, unknown>
     | undefined;
+
+export const listTransactionDescriptionSuggestions = (
+  db: Database.Database,
+  limit: number,
+): TransactionDescriptionSuggestion[] =>
+  db
+    .prepare(
+      `SELECT description AS text, COUNT(*) AS count
+       FROM transactions
+       WHERE description IS NOT NULL AND TRIM(description) <> ''
+       GROUP BY description
+       ORDER BY count DESC, MAX(date) DESC, description ASC
+       LIMIT @limit`,
+    )
+    .all({ limit }) as TransactionDescriptionSuggestion[];
+
+export const getMostRecentTransactionByDescription = (
+  db: Database.Database,
+  description: string,
+): Record<string, unknown> | undefined =>
+  db
+    .prepare(
+      `${TRANSACTION_SELECT_SQL}
+       WHERE description = @description
+       ORDER BY date DESC, id DESC
+       LIMIT 1`,
+    )
+    .get({ description }) as Record<string, unknown> | undefined;

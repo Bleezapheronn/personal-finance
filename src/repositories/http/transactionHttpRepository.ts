@@ -25,6 +25,11 @@ export type TransactionCountOptions = Omit<
   "limit" | "offset"
 >;
 
+export interface TransactionDescriptionSuggestion {
+  text: string;
+  count: number;
+}
+
 export const listTransactions = async (
   options: TransactionListOptions = {},
 ): Promise<ApiListResponse<TransactionDto>> => {
@@ -61,4 +66,40 @@ export const countTransactions = async (
     { query: options as LocalApiQueryParams },
   );
   return response.count;
+};
+
+export const listTransactionDescriptionSuggestions = async (
+  limit = 100,
+): Promise<TransactionDescriptionSuggestion[]> => {
+  const response = await localApiGet<{
+    ok: true;
+    mode: "prototype";
+    readonly: true;
+    limit: number;
+    rows: TransactionDescriptionSuggestion[];
+  }>("/prototype/repositories/transactions/descriptions", {
+    query: { limit },
+  });
+  return response.rows;
+};
+
+export const getMostRecentTransactionByDescription = async (
+  description: string,
+): Promise<TransactionDto | undefined> => {
+  try {
+    const response = await localApiGet<{
+      ok: true;
+      mode: "prototype";
+      readonly: true;
+      transaction: TransactionDto;
+    }>("/prototype/repositories/transactions/most-recent-by-description", {
+      query: { description },
+    });
+    return response.transaction;
+  } catch (error) {
+    if (error instanceof Error && "status" in error && error.status === 404) {
+      return undefined;
+    }
+    throw error;
+  }
 };
