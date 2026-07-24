@@ -49,7 +49,7 @@ contracts and must not silently fall back to Dexie for an authoritative write.
 
 ## Deferred work
 
-- Automated backup scheduling and backup/restore UX remain deferred.
+- Verified SQLite backup backend, retention, and scheduler integration are in progress; the Settings UI remains deferred.
 - Budget model, direction, and sign semantics remain deferred unless separately approved.
 - Future Dexie retirement requires a separate plan, compatibility review, and rollback strategy.
 

@@ -18,6 +18,8 @@
     "compare:budget-history": "tsx src/compareBudgetHistory.ts",
     "compare:budget-snapshot-generation": "tsx src/compareBudgetSnapshotGeneration.ts",
     "backup:sqlite": "tsx src/backupSqlite.ts",
+    "backup:ops": "tsx src/backupOps.ts",
+    "test:scheduled-sqlite-backup": "tsx src/testScheduledSqliteBackup.ts",
     "restore:sqlite-rehearsal": "tsx src/restoreSqliteRehearsal.ts",
     "test:sqlite-backup-restore": "tsx src/testSqliteBackupRestore.ts",
     "prepare:sqlite-authority-cutover": "tsx src/prepareSqliteAuthorityCutover.ts",

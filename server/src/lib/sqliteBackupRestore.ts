@@ -240,7 +240,7 @@ export const createSqliteNativeBackup = async (options: {
       recoveryNotes: [
         "The manifest verifies logical content and is not a data backup by itself.",
         "Stop the API before replacing its configured disposable SQLite database.",
-        "Dexie remains authoritative in the default application mode.",
+        "The local SQLite API is authoritative for the current application runtime.",
       ],
     };
     mkdirSync(path.dirname(manifestPath), { recursive: true });
