@@ -9,6 +9,8 @@ export const TOKEN_HEADER_NAME = "x-personal-finance-token" as const;
 export const TOKEN_FILE_NAME = ".server-token" as const;
 export const TOKEN_FILE_PATH_ENV_VAR =
   "PERSONAL_FINANCE_TOKEN_FILE_PATH" as const;
+export const AUTHORITY_PROFILE_PATH_ENV_VAR =
+  "PERSONAL_FINANCE_AUTHORITY_PROFILE_PATH" as const;
 export const ADDITIONAL_ALLOWED_ORIGIN_ENV_VAR =
   "PERSONAL_FINANCE_ADDITIONAL_ALLOWED_ORIGIN" as const;
 export const SQLITE_PATH_ENV_VAR = "PERSONAL_FINANCE_SQLITE_PATH" as const;

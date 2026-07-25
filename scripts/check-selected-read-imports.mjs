@@ -11,6 +11,7 @@ const approvedFiles = new Set(
   [
     "src/api/localApiClient.ts",
     "src/api/localApiClient.test.ts",
+    "src/api/automaticBackupsApi.ts",
     "src/hooks/useAccountImageUrls.ts",
     "src/hooks/useAccountImageUrls.test.tsx",
     "src/pages/AccountsManagement.tsx",
@@ -22,6 +23,7 @@ const approvedFiles = new Set(
     "src/pages/LocalApiDiagnostics.tsx",
     "src/pages/RecipientsManagement.tsx",
     "src/pages/Reports.tsx",
+    "src/pages/SqliteAuthoritySettings.tsx",
     "src/pages/SmsImportTemplatesManagement.tsx",
     "src/pages/Transactions.tsx",
     "src/pages/TransactionDetails.tsx",
@@ -44,9 +46,7 @@ const approvedFiles = new Set(
   ].map((path) => path.replaceAll("/", sep)),
 );
 
-const approvedDirectoryPrefixes = [
-  `src${sep}repositories${sep}http${sep}`,
-];
+const approvedDirectoryPrefixes = [`src${sep}repositories${sep}http${sep}`];
 
 const forbiddenMarkers = [
   "selectedReadRepositories",

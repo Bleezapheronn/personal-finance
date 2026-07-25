@@ -11,6 +11,7 @@ import path from "node:path";
 import { runSqlitePrototypeVerification } from "../verifySqlitePrototype.js";
 import {
   ADDITIONAL_ALLOWED_ORIGIN_ENV_VAR,
+  AUTHORITY_PROFILE_PATH_ENV_VAR,
   SQLITE_AUTHORITY_ENABLED_ENV_VAR,
   SQLITE_CUTOVER_MANIFEST_PATH_ENV_VAR,
   SQLITE_PATH_ENV_VAR,
@@ -596,6 +597,7 @@ export interface AuthorityOpsStartPlan {
 
 export const buildAuthorityOpsStartPlan = (
   profile: AuthorityOpsProfile,
+  profilePath: string,
 ): AuthorityOpsStartPlan => {
   const token = readFileSync(profile.tokenFilePath, "utf8").trim();
   if (!token) throw new Error("authority_profile_token_file_empty");
@@ -606,6 +608,7 @@ export const buildAuthorityOpsStartPlan = (
   const apiEnvironment: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: String(profile.apiPort),
+    [AUTHORITY_PROFILE_PATH_ENV_VAR]: path.resolve(profilePath),
     [SQLITE_PATH_ENV_VAR]: profile.activeDatabasePath,
     [TOKEN_FILE_PATH_ENV_VAR]: profile.tokenFilePath,
     [ADDITIONAL_ALLOWED_ORIGIN_ENV_VAR]: apiOrigin,
@@ -679,6 +682,7 @@ export const buildAuthorityOpsStartPlan = (
     sanitizedEnvironment: {
       backend: sanitized({
         [SQLITE_PATH_ENV_VAR]: profile.activeDatabasePath,
+        [AUTHORITY_PROFILE_PATH_ENV_VAR]: path.resolve(profilePath),
         [TOKEN_FILE_PATH_ENV_VAR]: profile.tokenFilePath,
         [ADDITIONAL_ALLOWED_ORIGIN_ENV_VAR]: apiOrigin,
         [SQLITE_AUTHORITY_ENABLED_ENV_VAR]:
@@ -788,7 +792,7 @@ export const assertStartable = async (
   if (availability.some((available) => !available)) {
     throw new Error("authority_ops_start_port_occupied");
   }
-  return buildAuthorityOpsStartPlan(profile);
+  return buildAuthorityOpsStartPlan(profile, profilePath);
 };
 
 export const capabilityRegistrySummary = () =>

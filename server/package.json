@@ -19,6 +19,7 @@
     "compare:budget-snapshot-generation": "tsx src/compareBudgetSnapshotGeneration.ts",
     "backup:sqlite": "tsx src/backupSqlite.ts",
     "backup:ops": "tsx src/backupOps.ts",
+    "test:automatic-backups-api": "tsx src/testAutomaticBackupsApi.ts",
     "test:scheduled-sqlite-backup": "tsx src/testScheduledSqliteBackup.ts",
     "restore:sqlite-rehearsal": "tsx src/restoreSqliteRehearsal.ts",
     "test:sqlite-backup-restore": "tsx src/testSqliteBackupRestore.ts",

@@ -402,8 +402,9 @@ const main = async (): Promise<void> => {
     await check("start plan is sanitized and never modifies env files", () => {
       const envPath = path.join(repoRoot, ".env.local");
       const before = existsSync(envPath) ? hashFile(envPath) : null;
-      const plan = buildAuthorityOpsStartPlan(authorityProfile);
+      const plan = buildAuthorityOpsStartPlan(authorityProfile, authorityProfilePath);
       assert(plan.apiEnvironment.PERSONAL_FINANCE_SQLITE_AUTHORITY_ENABLED === "true");
+      assert(plan.apiEnvironment.PERSONAL_FINANCE_AUTHORITY_PROFILE_PATH === authorityProfilePath);
       assert(plan.viteEnvironment.VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_ENABLED === "true");
       assert(
         !JSON.stringify(plan.sanitizedEnvironment).includes(
@@ -436,7 +437,7 @@ const main = async (): Promise<void> => {
     });
 
     await check("child startup failure stops its sibling", async () => {
-      const plan = buildAuthorityOpsStartPlan(rehearsalProfile);
+      const plan = buildAuthorityOpsStartPlan(rehearsalProfile, rehearsalProfilePath);
       plan.apiCommand = {
         executable: process.execPath,
         args: ["-e", "process.exit(7)"],

@@ -4,6 +4,8 @@ The `backup:ops` command manages plain, verified SQLite backups from an existing
 
 Configuration is external to Git and SQLite, at `<personal-finance-data-root>\config\backup-settings.json` (by default derived from the profile location). Initialize it explicitly, which also creates and verifies write access to the destination and staging directories:
 
+The Settings page can browse and validate a destination and save the daily time. Saving while disabled only writes the external configuration; enabling separately installs and verifies the current-user scheduled task. Reading the Settings state does not create configuration.
+
 ```
 npm run backup:ops -- --profile <authority-profile.json> config init
 npm run backup:ops -- --profile <authority-profile.json> config set-destination --destination <outside-repo-directory> --initialize

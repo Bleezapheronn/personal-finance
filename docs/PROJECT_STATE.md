@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-07-25
+Updated: 2026-07-26
 
 ## Authority
 
@@ -49,7 +49,10 @@ contracts and must not silently fall back to Dexie for an authoritative write.
 
 ## Deferred work
 
-- Verified SQLite backup backend, retention, and scheduler integration are in progress; the Settings UI remains deferred.
+- Verified automatic SQLite backups are operational. Destination and daily time are configurable in Settings, and Windows Task Scheduler runs the standalone worker while the app is closed.
+- Retention keeps one verified daily backup for the latest 30 days and one verified monthly backup thereafter. Authority checkpoints remain separate and are never pruned.
+- Backups are plain SQLite and are not encrypted. OneDrive manages cloud synchronization; the app does not verify cloud sync.
+- Restore has been verified to a disposable database. Automatic live restore remains out of scope.
 - Budget model, direction, and sign semantics remain deferred unless separately approved.
 - Future Dexie retirement requires a separate plan, compatibility review, and rollback strategy.
 

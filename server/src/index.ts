@@ -1,6 +1,5 @@
-import Fastify, { type FastifyReply } from "fastify";
+import Fastify from "fastify";
 import {
-  ALLOWED_ORIGINS,
   API_VERSION,
   areAccountDeleteMergeWritesEnabled,
   areAccountWritesEnabled,
@@ -28,7 +27,6 @@ import {
   SERVER_HOST,
   SERVICE_MODE,
   SERVICE_NAME,
-  TOKEN_HEADER_NAME,
 } from "./config.js";
 import {
   isKnownTableName,
@@ -253,8 +251,10 @@ import {
   SmsTemplateWriteRequestError,
   validateSmsTemplateWritePayload,
 } from "./lib/smsTemplateWrite.js";
-import { readOrCreateToken } from "./tokenStore.js";
 import { buildWriteCapabilitiesResponse } from "./lib/writeCapabilities.js";
+import { registerAutomaticBackupsRoutes } from "./lib/automaticBackups.js";
+import { registerLocalApiAuthentication } from "./lib/localApiAuthentication.js";
+import { readOrCreateToken } from "./tokenStore.js";
 
 const server = Fastify({
   logger: {
@@ -263,15 +263,12 @@ const server = Fastify({
   disableRequestLogging: true,
 });
 
-const publicPaths = new Set(["/health"]);
 const DEFAULT_TABLE_READ_LIMIT = 50;
 const MAX_TABLE_READ_LIMIT = 200;
 const DEFAULT_LOOKUP_READ_LIMIT = 100;
 const MAX_LOOKUP_READ_LIMIT = 500;
 const DEFAULT_BUDGET_READ_LIMIT = 100;
 const MAX_BUDGET_READ_LIMIT = 500;
-const CORS_ALLOW_METHODS = "GET, POST, OPTIONS";
-const CORS_ALLOW_HEADERS = `${TOKEN_HEADER_NAME}, content-type`;
 
 const parsePaginationValue = (
   rawValue: unknown,
@@ -505,44 +502,7 @@ const openConfiguredWritableDatabase = ():
   return { ok: true, db: openWritableExistingDatabase(sqlitePath) };
 };
 
-const applyCorsHeaders = (reply: FastifyReply, origin: string): void => {
-  reply.header("Access-Control-Allow-Origin", origin);
-  reply.header("Vary", "Origin");
-  reply.header("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
-  reply.header("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
-};
-
-server.addHook("onRequest", async (request, reply) => {
-  const origin = request.headers.origin;
-  if (origin && !ALLOWED_ORIGINS.has(origin)) {
-    await reply.code(403).send({
-      error: "forbidden_origin",
-    });
-    return;
-  }
-
-  if (origin) {
-    applyCorsHeaders(reply, origin);
-  }
-
-  if (request.method === "OPTIONS") {
-    await reply.code(204).send();
-    return;
-  }
-
-  if (publicPaths.has(request.url)) {
-    return;
-  }
-
-  const configuredToken = await readOrCreateToken();
-  const requestToken = request.headers[TOKEN_HEADER_NAME];
-
-  if (requestToken !== configuredToken) {
-    return reply.code(401).send({
-      error: "unauthorized",
-    });
-  }
-});
+registerLocalApiAuthentication(server);
 
 server.get("/health", async () => {
   return {
@@ -570,6 +530,8 @@ server.addHook("preHandler", async (request, reply) => {
     });
   }
 });
+
+registerAutomaticBackupsRoutes(server);
 
 server.get("/metadata", async () => {
   return {
