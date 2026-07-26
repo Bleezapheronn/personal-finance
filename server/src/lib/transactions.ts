@@ -26,7 +26,24 @@ export interface TransactionListResult {
 export interface TransactionDescriptionSuggestion {
   text: string;
   count: number;
+  latest?: string;
 }
+
+export type TransactionDescriptionPrefill =
+  | {
+      transactionType: "expense" | "income";
+      recipientId: number;
+      categoryId: number;
+      accountId: number;
+    }
+  | {
+      transactionType: "transfer";
+      sourceRecipientId: number;
+      destinationRecipientId: number;
+      categoryId: number;
+      sourceAccountId: number;
+      destinationAccountId: number;
+    };
 
 const TRANSACTION_SELECT_SQL = `SELECT id, categoryId, paymentChannelId, accountId,
   recipientId, date, amount, originalAmount, originalCurrency, exchangeRate,
@@ -145,7 +162,7 @@ export const listTransactionDescriptionSuggestions = (
 ): TransactionDescriptionSuggestion[] =>
   db
     .prepare(
-      `SELECT description AS text, COUNT(*) AS count
+      `SELECT description AS text, COUNT(*) AS count, MAX(date) AS latest
        FROM transactions
        WHERE description IS NOT NULL AND TRIM(description) <> ''
        GROUP BY description
@@ -166,3 +183,79 @@ export const getMostRecentTransactionByDescription = (
        LIMIT 1`,
     )
     .get({ description }) as Record<string, unknown> | undefined;
+
+const isTransferRow = (row: Record<string, unknown>): boolean =>
+  row.isTransfer === true || row.isTransfer === 1;
+
+const integer = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isInteger(value) ? value : undefined;
+
+export const getTransactionDescriptionPrefill = (
+  db: Database.Database,
+  description: string,
+): TransactionDescriptionPrefill | undefined => {
+  const rows = db
+    .prepare(
+      `${TRANSACTION_SELECT_SQL}
+       WHERE description IS NOT NULL AND TRIM(description) = TRIM(@description)
+       ORDER BY date DESC, id DESC`,
+    )
+    .all({ description }) as Record<string, unknown>[];
+
+  for (const row of rows) {
+    const categoryId = integer(row.categoryId);
+    const recipientId = integer(row.recipientId);
+    const accountId = integer(row.accountId);
+    if (categoryId === undefined || recipientId === undefined || accountId === undefined) {
+      continue;
+    }
+
+    if (!isTransferRow(row)) {
+      const amount = typeof row.amount === "number" ? row.amount : Number(row.amount);
+      if (amount === 0 || !Number.isFinite(amount)) continue;
+      return {
+        transactionType: amount < 0 ? "expense" : "income",
+        recipientId,
+        categoryId,
+        accountId,
+      };
+    }
+
+    const id = integer(row.id);
+    const pairId = integer(row.transferPairId);
+    if (id === undefined || pairId === undefined || id === pairId) continue;
+    const pairRows = db
+      .prepare(`${TRANSACTION_SELECT_SQL} WHERE transferPairId = @pairId OR id = @pairId`)
+      .all({ pairId }) as Record<string, unknown>[];
+    if (pairRows.length !== 2) continue;
+    const paired = pairRows.find((candidate) => candidate.id === pairId);
+    if (!paired || !isTransferRow(paired) || integer(paired.transferPairId) !== id) continue;
+    const pairedAmount = typeof paired.amount === "number" ? paired.amount : Number(paired.amount);
+    const amount = typeof row.amount === "number" ? row.amount : Number(row.amount);
+    if (!Number.isFinite(amount) || !Number.isFinite(pairedAmount)) continue;
+    if (!((amount < 0 && pairedAmount > 0) || (amount > 0 && pairedAmount < 0))) continue;
+    if (Math.abs(amount) !== Math.abs(pairedAmount)) continue;
+
+    const outgoing = amount < 0 ? row : paired;
+    const incoming = amount < 0 ? paired : row;
+    const sourceAccountId = integer(outgoing.accountId);
+    const destinationAccountId = integer(incoming.accountId);
+    const sourceRecipientId = integer(outgoing.recipientId);
+    const destinationRecipientId = integer(incoming.recipientId);
+    const outgoingCategoryId = integer(outgoing.categoryId);
+    if (
+      sourceAccountId === undefined || destinationAccountId === undefined ||
+      sourceRecipientId === undefined || destinationRecipientId === undefined ||
+      outgoingCategoryId === undefined
+    ) continue;
+    return {
+      transactionType: "transfer",
+      sourceRecipientId,
+      destinationRecipientId,
+      categoryId: outgoingCategoryId,
+      sourceAccountId,
+      destinationAccountId,
+    };
+  }
+  return undefined;
+};

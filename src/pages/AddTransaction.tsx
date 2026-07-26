@@ -87,6 +87,11 @@ import type {
   TransactionDto,
 } from "../repositories/http/types";
 import {
+  rankDescriptionSuggestions,
+  visibleDescriptionSuggestions,
+  type DescriptionSuggestion,
+} from "../utils/descriptionAutocomplete";
+import {
   createRecipientInDisposableSqlite,
   isRecipientsWriteExperimentEnabled,
   recipientWriteErrorCode,
@@ -415,7 +420,7 @@ const AddTransaction: React.FC = () => {
 
   // Description autocomplete state
   const [descriptionSuggestions, setDescriptionSuggestions] = useState<
-    Array<{ text: string; count: number }>
+    DescriptionSuggestion[]
   >([]);
   const [showDescriptionSuggestions, setShowDescriptionSuggestions] =
     useState(false);
@@ -424,6 +429,7 @@ const AddTransaction: React.FC = () => {
 
   // SMS Import state
   const [showSmsImportModal, setShowSmsImportModal] = useState(false);
+  const [viewEntry, setViewEntry] = useState(0);
 
   // derive list of currencies available from accounts
   const currencies = Array.from(
@@ -434,11 +440,40 @@ const AddTransaction: React.FC = () => {
     ),
   );
 
-  // Clear messages and reset form when entering the page
-  useIonViewWillEnter(() => {
+  const resetAddForm = () => {
+    setTransactionDateTime("");
+    setTransactionType("expense");
+    setAmount("");
+    setTransactionCost("");
+    setTransactionReference("");
+    setOriginalAmount("");
+    setOriginalCurrency("");
+    setExchangeRate("");
+    setExchangeRateOverride(false);
+    setCategoryId(undefined);
+    setAccountId(undefined);
+    setRecipientId(undefined);
+    setTransferRecipientId(undefined);
+    setTransferToAccountId(undefined);
+    setDescription("");
+    setBudgetSnapshotId(undefined);
+    setEditingTransaction(null);
+    setEditingTransferEligible(false);
     setErrorMsg("");
     setSuccessMsg("");
+    setShowSuccessToast(false);
+    setSuccessToastMessage("");
     setFieldErrors({});
+    setShowRecipientModal(false);
+    setShowCategoryModal(false);
+    setShowSmsImportModal(false);
+    setDescriptionSuggestions([]);
+    setShowDescriptionSuggestions(false);
+    setSelectedSuggestionIndex(-1);
+  };
+
+  useIonViewWillEnter(() => {
+    setViewEntry((entry) => entry + 1);
   });
 
   // Auto-calculate exchange rate when amount and original amount change
@@ -738,7 +773,7 @@ const AddTransaction: React.FC = () => {
       loadTransaction();
     } else if (duplicatePrefill) {
       // ADD MODE + DUPLICATE PREFILL
-      setTransactionDateTime("");
+      resetAddForm();
       setTransactionType(duplicatePrefill.transactionType);
       setAmount(duplicatePrefill.amount);
       setTransactionCost(duplicatePrefill.transactionCost);
@@ -754,35 +789,22 @@ const AddTransaction: React.FC = () => {
       setTransferToAccountId(duplicatePrefill.transferToAccountId);
       setDescription(duplicatePrefill.description);
       setBudgetSnapshotId(undefined);
-      setEditingTransaction(null);
-      setEditingTransferEligible(false);
+      history.replace({
+        pathname: location.pathname,
+        search: location.search,
+        hash: location.hash,
+        state: undefined,
+      });
     } else {
       // ADD MODE: Clear form
-      setTransactionDateTime("");
-      setTransactionType("expense");
-      setAmount("");
-      setTransactionCost("");
-      setTransactionReference("");
-      setOriginalAmount("");
-      setOriginalCurrency("");
-      setExchangeRate("");
-      setExchangeRateOverride(false);
-      setCategoryId(undefined);
-      setAccountId(undefined);
-      setRecipientId(undefined);
-      setTransferRecipientId(undefined);
-      setTransferToAccountId(undefined);
-      setDescription("");
-      setBudgetSnapshotId(undefined);
-      setEditingTransaction(null);
-      setEditingTransferEligible(false);
+      resetAddForm();
     }
   }, [
-    duplicatePrefill,
     id,
     isEditMode,
     transactionsCostBudgetWriteExperimentActive,
     transactionsHttpBackendSelected,
+    viewEntry,
   ]);
 
   // Load descriptions sorted by frequency when component mounts
@@ -810,10 +832,10 @@ const AddTransaction: React.FC = () => {
 
       const sortedDescriptions = Array.from(descriptionCounts.entries())
         .map(([text, count]) => ({ text, count }))
-        .sort((a, b) => b.count - a.count);
+        .sort((a, b) => b.count - a.count || a.text.localeCompare(b.text));
 
       if (isMounted) {
-        setDescriptionSuggestions(sortedDescriptions);
+        setDescriptionSuggestions(rankDescriptionSuggestions(sortedDescriptions));
       }
     };
     loadDescriptions();
@@ -821,7 +843,7 @@ const AddTransaction: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [selectedBackend, transactionsHttpBackendSelected]);
+  }, [selectedBackend, transactionsHttpBackendSelected, viewEntry]);
 
   // Close suggestions when clicking outside
   useEffect(() => {
@@ -851,31 +873,9 @@ const AddTransaction: React.FC = () => {
   }, [showDescriptionSuggestions]);
 
   // Fuzzy match function - matches if all characters from query appear in order in the target
-  const fuzzyMatch = (query: string, target: string): boolean => {
-    const queryLower = query.toLowerCase();
-    const targetLower = target.toLowerCase();
-
-    let queryIndex = 0;
-    for (
-      let i = 0;
-      i < targetLower.length && queryIndex < queryLower.length;
-      i++
-    ) {
-      if (targetLower[i] === queryLower[queryIndex]) {
-        queryIndex++;
-      }
-    }
-
-    return queryIndex === queryLower.length;
-  };
-
   // Filter suggestions based on input with fuzzy matching
-  const MAX_SUGGESTIONS = 5;
   const filteredDescriptions = React.useMemo(
-    () =>
-      descriptionSuggestions
-        .filter((item) => fuzzyMatch(description, item.text))
-        .slice(0, MAX_SUGGESTIONS),
+    () => visibleDescriptionSuggestions(description, descriptionSuggestions),
     [descriptionSuggestions, description],
   );
 
@@ -1092,15 +1092,35 @@ const AddTransaction: React.FC = () => {
             destinationId,
             destination,
           );
+          if (isEditMode) {
+            const outgoing = source.amount < 0 ? source : destination;
+            const incoming = source.amount < 0 ? destination : source;
+            setEditingTransaction(
+              Number(id) === source.id ? source : destination,
+            );
+            setTransactionType("transfer");
+            setAccountId(outgoing.accountId);
+            setTransferToAccountId(incoming.accountId);
+            setRecipientId(outgoing.recipientId);
+            setTransferRecipientId(incoming.recipientId);
+            setCategoryId(outgoing.categoryId);
+            setDescription(outgoing.description ?? "");
+            setAmount(Math.abs(outgoing.amount).toString());
+            setTransactionCost(
+              outgoing.transactionCost == null
+                ? ""
+                : Math.abs(outgoing.transactionCost).toString(),
+            );
+          }
           setSuccessToastMessage(
             isEditMode
-              ? "Disposable SQLite transfer pair updated."
-              : "Disposable SQLite transfer pair created.",
+              ? "Transfer updated."
+              : "Transfer created.",
           );
           setShowSuccessToast(true);
-          setTimeout(() => {
-            history.push("/transactions");
-          }, 500);
+          if (!isEditMode) {
+            setTimeout(() => history.push("/transactions"), 500);
+          }
           return;
         }
         if (
@@ -1206,16 +1226,31 @@ const AddTransaction: React.FC = () => {
         if (!refreshed) {
           throw new Error("transaction_write_refresh_failed");
         }
+        if (isEditMode) {
+          const confirmed = normalizeSelectedTransaction(refreshed);
+          setEditingTransaction(confirmed);
+          setTransactionType(confirmed.amount < 0 ? "expense" : "income");
+          setAmount(Math.abs(confirmed.amount).toString());
+          setTransactionCost(
+            confirmed.transactionCost == null
+              ? ""
+              : Math.abs(confirmed.transactionCost).toString(),
+          );
+          setCategoryId(confirmed.categoryId);
+          setAccountId(confirmed.accountId);
+          setRecipientId(confirmed.recipientId);
+          setDescription(confirmed.description ?? "");
+        }
 
         setSuccessToastMessage(
           isEditMode
-            ? "Disposable SQLite transaction updated."
-            : "Disposable SQLite transaction created.",
+            ? "Transaction updated."
+            : "Transaction created.",
         );
         setShowSuccessToast(true);
-        setTimeout(() => {
-          history.push("/transactions");
-        }, 500);
+        if (!isEditMode) {
+          setTimeout(() => history.push("/transactions"), 500);
+        }
         return;
       }
 
@@ -1312,7 +1347,7 @@ const AddTransaction: React.FC = () => {
             );
           });
 
-          setSuccessToastMessage("Transfer transaction updated successfully!");
+          setSuccessToastMessage("Transfer updated.");
           setShowSuccessToast(true);
         } else {
           await db.transaction("rw", db.transactions, async () => {
@@ -1352,7 +1387,7 @@ const AddTransaction: React.FC = () => {
             );
           });
 
-          setSuccessToastMessage("Transfer transaction added successfully!");
+          setSuccessToastMessage("Transfer created.");
           setShowSuccessToast(true);
         }
       } else {
@@ -1387,11 +1422,11 @@ const AddTransaction: React.FC = () => {
 
         if (isEditMode && id) {
           await db.transactions.update(Number(id), tx);
-          setSuccessToastMessage("Transaction updated successfully!");
+          setSuccessToastMessage("Transaction updated.");
           setShowSuccessToast(true);
         } else {
           await db.transactions.add(tx);
-          setSuccessToastMessage("Transaction added successfully!");
+          setSuccessToastMessage("Transaction created.");
           setShowSuccessToast(true);
         }
       }
@@ -1444,25 +1479,37 @@ const AddTransaction: React.FC = () => {
   const populateFromLastTransaction = async (description: string) => {
     if (!description || !description.trim()) return;
     try {
-      const selected = await getSelectedReadRepositories(
+      const prefill = await getSelectedReadRepositories(
         selectedBackend,
-      ).transactions.getMostRecentByDescription(description.trim());
-      if (!selected) return;
-      const latest = normalizeSelectedTransaction(selected);
+      ).transactions.getDescriptionPrefill(description.trim());
+      if (!prefill) return;
 
-      // only populate if the destination fields are currently empty
-      if (recipientId == null && latest.recipientId != null) {
-        setRecipientId(latest.recipientId);
+      if (prefill.transactionType !== "transfer") {
+        setRecipientId((current) => current ?? prefill.recipientId);
+        setCategoryId((current) => current ?? prefill.categoryId);
+        setAccountId((current) => current ?? prefill.accountId);
         setFieldErrors((prev) => ({ ...prev, recipient: false }));
+        return;
       }
-      if (categoryId == null && latest.categoryId != null) {
-        setCategoryId(latest.categoryId);
-        setFieldErrors((prev) => ({ ...prev, category: false }));
-      }
-      if (accountId == null && latest.accountId != null) {
-        setAccountId(latest.accountId); // CHANGED from paymentMethodId
-        setFieldErrors((prev) => ({ ...prev, account: false }));
-      }
+      if (prefill.transactionType !== "transfer") return;
+      if (transactionType !== "transfer") setTransactionType("transfer");
+      setRecipientId((current) => current ?? prefill.sourceRecipientId);
+      setTransferRecipientId(
+        (current) => current ?? prefill.destinationRecipientId,
+      );
+      setCategoryId((current) => current ?? prefill.categoryId);
+      setAccountId((current) => current ?? prefill.sourceAccountId);
+      setTransferToAccountId(
+        (current) => current ?? prefill.destinationAccountId,
+      );
+      setFieldErrors((prev) => ({
+        ...prev,
+        recipient: false,
+        transferRecipient: false,
+        category: false,
+        account: false,
+        transferToAccount: false,
+      }));
     } catch (err) {
       console.error("Failed to load last transaction for description:", err);
     }
@@ -1829,7 +1876,13 @@ const AddTransaction: React.FC = () => {
 
             <IonRow>
               <IonCol size="11">
-                <div className="form-input-wrapper">
+                <div
+                  className={`form-input-wrapper${
+                    showDescriptionSuggestions && filteredDescriptions.length > 0
+                      ? " autocomplete-open"
+                      : ""
+                  }`}
+                >
                   <label className="form-label">Description</label>
                   <IonInput
                     ref={descriptionInputRef}
@@ -1854,6 +1907,7 @@ const AddTransaction: React.FC = () => {
                     filteredDescriptions.length > 0 &&
                     description && (
                       <div
+                        className="description-suggestion-list"
                         id="description-suggestions"
                         style={{
                           position: "absolute",

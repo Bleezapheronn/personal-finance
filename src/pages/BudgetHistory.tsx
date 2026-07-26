@@ -79,6 +79,10 @@ import {
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
 import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import {
+  visibleDescriptionSuggestions,
+  type DescriptionSuggestion,
+} from "../utils/descriptionAutocomplete";
+import {
   dryRunBudgetSnapshotOccurrence,
   writeBudgetSnapshotOccurrence,
 } from "../repositories/http/budgetSnapshotOccurrenceWrite";
@@ -549,6 +553,10 @@ const BudgetHistory: React.FC = () => {
   const [selectedDateFrom, setSelectedDateFrom] = useState<string>("");
   const [selectedDateTo, setSelectedDateTo] = useState<string>("");
   const [selectedDescription, setSelectedDescription] = useState<string>("");
+  const [descriptionSuggestions, setDescriptionSuggestions] = useState<DescriptionSuggestion[]>([]);
+  const [showDescriptionSuggestions, setShowDescriptionSuggestions] = useState(false);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
+  const descriptionInputRef = React.useRef<HTMLIonInputElement>(null);
   const [selectedFrequency, setSelectedFrequency] = useState<
     Budget["frequency"] | undefined
   >(undefined);
@@ -598,6 +606,64 @@ const BudgetHistory: React.FC = () => {
     useState(false);
   const [selectedReadLoadMeta, setSelectedReadLoadMeta] =
     useState<SelectedReadBudgetHistoryLoadMeta | null>(null);
+
+  const filteredDescriptionSuggestions = useMemo(
+    () => visibleDescriptionSuggestions(selectedDescription, descriptionSuggestions),
+    [selectedDescription, descriptionSuggestions],
+  );
+
+  useEffect(() => {
+    let active = true;
+    void getSelectedReadRepositories(repositoryBackend).transactions
+      .listDescriptionSuggestions(100)
+      .then((suggestions) => {
+        if (active) setDescriptionSuggestions(suggestions);
+      })
+      .catch(() => {
+        if (active) setDescriptionSuggestions([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [repositoryBackend]);
+
+  useEffect(() => {
+    if (!showDescriptionSuggestions) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        descriptionInputRef.current &&
+        !descriptionInputRef.current.contains(target) &&
+        !(target as HTMLElement).closest(".description-suggestion-list")
+      ) {
+        setShowDescriptionSuggestions(false);
+        setSelectedSuggestionIndex(-1);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showDescriptionSuggestions]);
+
+  const handleDescriptionKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSelectedSuggestionIndex((index) =>
+        Math.min(index + 1, filteredDescriptionSuggestions.length - 1),
+      );
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setSelectedSuggestionIndex((index) => Math.max(index - 1, -1));
+    } else if (event.key === "Enter" && selectedSuggestionIndex >= 0) {
+      event.preventDefault();
+      setSelectedDescription(filteredDescriptionSuggestions[selectedSuggestionIndex].text);
+      setShowDescriptionSuggestions(false);
+      setSelectedSuggestionIndex(-1);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setShowDescriptionSuggestions(false);
+      setSelectedSuggestionIndex(-1);
+    }
+  };
 
   const snapshotBudgetIdBySnapshotId = useMemo(() => {
     const bySnapshotId = new Map<number, number>();
@@ -2048,7 +2114,14 @@ const BudgetHistory: React.FC = () => {
                 <IonGrid>
                   <IonRow>
                     <IonCol size="12">
-                      <div className="form-input-wrapper">
+                      <div
+                        className={`form-input-wrapper${
+                          showDescriptionSuggestions &&
+                          filteredDescriptionSuggestions.length > 0
+                            ? " autocomplete-open"
+                            : ""
+                        }`}
+                      >
                         <label className="form-label">Description</label>
                         <div
                           style={{
@@ -2058,6 +2131,7 @@ const BudgetHistory: React.FC = () => {
                           }}
                         >
                           <IonInput
+                            ref={descriptionInputRef}
                             className="form-input"
                             type="text"
                             placeholder="Search Description..."
@@ -2066,7 +2140,11 @@ const BudgetHistory: React.FC = () => {
                               setSelectedDescription(
                                 (e.detail.value as string) || "",
                               );
+                              setShowDescriptionSuggestions(true);
+                              setSelectedSuggestionIndex(-1);
                             }}
+                            onIonFocus={() => setShowDescriptionSuggestions(true)}
+                            onKeyDown={handleDescriptionKeyDown}
                             style={{
                               width: "100%",
                               paddingRight: selectedDescription
@@ -2074,6 +2152,28 @@ const BudgetHistory: React.FC = () => {
                                 : "12px",
                             }}
                           />
+                          {showDescriptionSuggestions &&
+                            filteredDescriptionSuggestions.length > 0 &&
+                            selectedDescription.trim() && (
+                              <div className="description-suggestion-list">
+                                {filteredDescriptionSuggestions.map((item, index) => (
+                                  <button
+                                    type="button"
+                                    key={`${item.text}-${index}`}
+                                    className={`description-suggestion-item${index === selectedSuggestionIndex ? " selected" : ""}`}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => {
+                                      setSelectedDescription(item.text);
+                                      setShowDescriptionSuggestions(false);
+                                      setSelectedSuggestionIndex(-1);
+                                    }}
+                                  >
+                                    <span>{item.text}</span>
+                                    <span>{item.count}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           {selectedDescription && (
                             <button
                               onClick={(e: React.MouseEvent) => {

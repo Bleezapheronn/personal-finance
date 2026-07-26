@@ -40,6 +40,14 @@ focused tests, safety checks, and accepted browser workflows are all verified
 against disposable fixtures or the explicitly approved live checkpoint process.
 SQLite authority does not authorize unreviewed new mutation paths.
 
+Transaction entry uses authoritative success terminology and refreshes edits
+from confirmed SQLite data while preserving the edit route. Cached Ionic
+Add/Edit lifecycle handling explicitly resets transient form and autocomplete
+state. Description-history prefill uses ordinary descriptions and verified
+reciprocal transfer pairs only; fuzzy, frequency-ranked description
+autocomplete is operational across transaction and budget entry, filter, and
+budget-history workflows.
+
 ## Known legacy remnants
 
 Dexie imports, compatibility repository paths, legacy schema fields, and

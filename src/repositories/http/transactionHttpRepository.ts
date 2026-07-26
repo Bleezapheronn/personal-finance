@@ -28,7 +28,12 @@ export type TransactionCountOptions = Omit<
 export interface TransactionDescriptionSuggestion {
   text: string;
   count: number;
+  latest?: number | string;
 }
+
+export type TransactionDescriptionPrefill =
+  | { transactionType: "expense" | "income"; recipientId: number; categoryId: number; accountId: number }
+  | { transactionType: "transfer"; sourceRecipientId: number; destinationRecipientId: number; categoryId: number; sourceAccountId: number; destinationAccountId: number };
 
 export const listTransactions = async (
   options: TransactionListOptions = {},
@@ -100,6 +105,25 @@ export const getMostRecentTransactionByDescription = async (
     if (error instanceof Error && "status" in error && error.status === 404) {
       return undefined;
     }
+    throw error;
+  }
+};
+
+export const getTransactionDescriptionPrefill = async (
+  description: string,
+): Promise<TransactionDescriptionPrefill | undefined> => {
+  try {
+    const response = await localApiGet<{
+      ok: true;
+      mode: "prototype";
+      readonly: true;
+      prefill: TransactionDescriptionPrefill;
+    }>("/prototype/repositories/transactions/description-prefill", {
+      query: { description },
+    });
+    return response.prefill;
+  } catch (error) {
+    if (error instanceof Error && "status" in error && error.status === 404) return undefined;
     throw error;
   }
 };

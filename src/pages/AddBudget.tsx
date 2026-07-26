@@ -68,6 +68,11 @@ import {
   shouldShowBudgetLifecycleActiveControl,
 } from "./budgetLifecycleForm";
 import { createBudgetFromTransactionInSqlite } from "../repositories/http/budgetFromTransactionWrite";
+import {
+  rankDescriptionSuggestions,
+  visibleDescriptionSuggestions,
+  type DescriptionSuggestion,
+} from "../utils/descriptionAutocomplete";
 
 type BudgetType = "expense" | "income";
 
@@ -197,7 +202,7 @@ const AddBudget: React.FC = () => {
 
   // Description autocomplete state
   const [descriptionSuggestions, setDescriptionSuggestions] = useState<
-    Array<{ text: string; count: number }>
+    DescriptionSuggestion[]
   >([]);
   const [showDescriptionSuggestions, setShowDescriptionSuggestions] =
     useState(false);
@@ -269,8 +274,9 @@ const AddBudget: React.FC = () => {
         budgets = selectedRows(
           budgetRows as unknown as Budget[] | { rows: Budget[] },
         ).map(normalizeSelectedBudget);
-        // Transaction-derived autocomplete is intentionally not loaded by the
-        // definition-only HTTP write experiment.
+        setDescriptionSuggestions(
+          await repositories.transactions.listDescriptionSuggestions(100),
+        );
         transactions = [];
       } else {
         [b, c, a, r, budgets, transactions] = await Promise.all([
@@ -339,20 +345,19 @@ const AddBudget: React.FC = () => {
       // REMOVED: account count logic for payment methods
 
       // Count occurrences of each description from transactions
-      const descriptionCounts = new Map<string, number>();
-      transactions.forEach((txn) => {
-        if (txn.description) {
-          const count = descriptionCounts.get(txn.description) || 0;
-          descriptionCounts.set(txn.description, count + 1);
-        }
-      });
-
-      // Convert to array and sort by count (descending)
-      const sortedDescriptions = Array.from(descriptionCounts.entries())
-        .map(([text, count]) => ({ text, count }))
-        .sort((a, b) => b.count - a.count);
-
-      setDescriptionSuggestions(sortedDescriptions);
+      if (!budgetDefinitionHttpMode) {
+        const descriptionCounts = new Map<string, number>();
+        transactions.forEach((txn) => {
+          if (txn.description?.trim()) {
+            const count = descriptionCounts.get(txn.description) || 0;
+            descriptionCounts.set(txn.description, count + 1);
+          }
+        });
+        const sortedDescriptions = Array.from(descriptionCounts.entries())
+          .map(([text, count]) => ({ text, count }))
+          .sort((a, b) => b.count - a.count || a.text.localeCompare(b.text));
+        setDescriptionSuggestions(rankDescriptionSuggestions(sortedDescriptions));
+      }
     } catch (err) {
       console.error("Failed to load lookup data:", err);
     }
@@ -385,32 +390,9 @@ const AddBudget: React.FC = () => {
     };
   }, [showDescriptionSuggestions]);
 
-  // Fuzzy match function
-  const fuzzyMatch = (query: string, target: string): boolean => {
-    const queryLower = query.toLowerCase();
-    const targetLower = target.toLowerCase();
-
-    let queryIndex = 0;
-    for (
-      let i = 0;
-      i < targetLower.length && queryIndex < queryLower.length;
-      i++
-    ) {
-      if (targetLower[i] === queryLower[queryIndex]) {
-        queryIndex++;
-      }
-    }
-
-    return queryIndex === queryLower.length;
-  };
-
   // Filter suggestions based on input with fuzzy matching
-  const MAX_SUGGESTIONS = 5;
   const filteredDescriptions = React.useMemo(
-    () =>
-      descriptionSuggestions
-        .filter((item) => fuzzyMatch(description, item.text))
-        .slice(0, MAX_SUGGESTIONS),
+    () => visibleDescriptionSuggestions(description, descriptionSuggestions),
     [descriptionSuggestions, description],
   );
 
@@ -1218,7 +1200,13 @@ const AddBudget: React.FC = () => {
             {/* Description - WITH AUTOCOMPLETE */}
             <IonRow>
               <IonCol size="11">
-                <div className="form-input-wrapper">
+                <div
+                  className={`form-input-wrapper${
+                    showDescriptionSuggestions && filteredDescriptions.length > 0
+                      ? " autocomplete-open"
+                      : ""
+                  }`}
+                >
                   <label className="form-label">Description</label>
                   <IonInput
                     ref={descriptionInputRef}
@@ -1243,6 +1231,7 @@ const AddBudget: React.FC = () => {
                     filteredDescriptions.length > 0 &&
                     description && (
                       <div
+                        className="description-suggestion-list"
                         id="description-suggestions"
                         style={{
                           position: "absolute",

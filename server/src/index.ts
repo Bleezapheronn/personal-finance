@@ -199,6 +199,7 @@ import {
 import {
   countTransactions,
   getMostRecentTransactionByDescription,
+  getTransactionDescriptionPrefill,
   getTransactionById,
   listTransactionDescriptionSuggestions,
   listTransactions,
@@ -884,6 +885,32 @@ server.get<{ Querystring: { limit?: string } }>(
         ok: false,
         code: "transaction_description_list_failed",
       });
+    } finally {
+      opened.db.close();
+    }
+  },
+);
+
+server.get<{ Querystring: { description?: string } }>(
+  "/prototype/repositories/transactions/description-prefill",
+  async (request, reply) => {
+    const description = request.query.description?.trim();
+    if (!description || description.length > 500) {
+      return reply.code(400).send({ ok: false, code: "transaction_description_invalid" });
+    }
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try {
+      opened = openConfiguredReadOnlyDatabase();
+    } catch {
+      return reply.code(503).send({ ok: false, code: "sqlite_unavailable" });
+    }
+    if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+    try {
+      const prefill = getTransactionDescriptionPrefill(opened.db, description);
+      if (!prefill) return reply.code(404).send({ ok: false, code: "transaction_description_not_found" });
+      return { ok: true, mode: SERVICE_MODE, readonly: READONLY_MODE, prefill };
+    } catch {
+      return reply.code(500).send({ ok: false, code: "transaction_description_read_failed" });
     } finally {
       opened.db.close();
     }

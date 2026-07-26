@@ -100,6 +100,10 @@ import {
   transactionActionKeys,
 } from "../utils/transactionDuplicate";
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
+import {
+  visibleDescriptionSuggestions,
+  type DescriptionSuggestion,
+} from "../utils/descriptionAutocomplete";
 import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
@@ -479,6 +483,10 @@ const Transactions: React.FC = () => {
   const [selectedDateTo, setSelectedDateTo] = useState<string>("");
   // REMOVED: selectedPaymentMethodId
   const [selectedDescription, setSelectedDescription] = useState<string>("");
+  const [descriptionSuggestions, setDescriptionSuggestions] = useState<DescriptionSuggestion[]>([]);
+  const [showDescriptionSuggestions, setShowDescriptionSuggestions] = useState(false);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
+  const descriptionInputRef = React.useRef<HTMLIonInputElement>(null);
 
   const history = useHistory();
   const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
@@ -518,6 +526,64 @@ const Transactions: React.FC = () => {
       (rehearsalSelected &&
         rehearsal.ready &&
         rehearsal.transactionDeleteWritesAvailable));
+
+  const filteredDescriptionSuggestions = useMemo(
+    () => visibleDescriptionSuggestions(selectedDescription, descriptionSuggestions),
+    [selectedDescription, descriptionSuggestions],
+  );
+
+  useEffect(() => {
+    let active = true;
+    void getSelectedReadRepositories(selectedBackend).transactions
+      .listDescriptionSuggestions(100)
+      .then((suggestions) => {
+        if (active) setDescriptionSuggestions(suggestions);
+      })
+      .catch(() => {
+        if (active) setDescriptionSuggestions([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedBackend]);
+
+  useEffect(() => {
+    if (!showDescriptionSuggestions) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        descriptionInputRef.current &&
+        !descriptionInputRef.current.contains(target) &&
+        !(target as HTMLElement).closest(".description-suggestion-list")
+      ) {
+        setShowDescriptionSuggestions(false);
+        setSelectedSuggestionIndex(-1);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showDescriptionSuggestions]);
+
+  const handleDescriptionKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSelectedSuggestionIndex((index) =>
+        Math.min(index + 1, filteredDescriptionSuggestions.length - 1),
+      );
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setSelectedSuggestionIndex((index) => Math.max(index - 1, -1));
+    } else if (event.key === "Enter" && selectedSuggestionIndex >= 0) {
+      event.preventDefault();
+      setSelectedDescription(filteredDescriptionSuggestions[selectedSuggestionIndex].text);
+      setShowDescriptionSuggestions(false);
+      setSelectedSuggestionIndex(-1);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setShowDescriptionSuggestions(false);
+      setSelectedSuggestionIndex(-1);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -1892,7 +1958,14 @@ const Transactions: React.FC = () => {
                 <IonGrid>
                   <IonRow>
                     <IonCol size="12">
-                      <div className="form-input-wrapper">
+                      <div
+                        className={`form-input-wrapper${
+                          showDescriptionSuggestions &&
+                          filteredDescriptionSuggestions.length > 0
+                            ? " autocomplete-open"
+                            : ""
+                        }`}
+                      >
                         <label className="form-label">Description</label>
                         <div
                           style={{
@@ -1902,6 +1975,7 @@ const Transactions: React.FC = () => {
                           }}
                         >
                           <IonInput
+                            ref={descriptionInputRef}
                             className="form-input"
                             type="text"
                             placeholder="Search Description..."
@@ -1910,7 +1984,11 @@ const Transactions: React.FC = () => {
                               setSelectedDescription(
                                 (e.detail.value as string) || "",
                               );
+                              setShowDescriptionSuggestions(true);
+                              setSelectedSuggestionIndex(-1);
                             }}
+                            onIonFocus={() => setShowDescriptionSuggestions(true)}
+                            onKeyDown={handleDescriptionKeyDown}
                             style={{
                               width: "100%",
                               paddingRight: selectedDescription
@@ -1918,6 +1996,28 @@ const Transactions: React.FC = () => {
                                 : "12px",
                             }}
                           />
+                          {showDescriptionSuggestions &&
+                            filteredDescriptionSuggestions.length > 0 &&
+                            selectedDescription.trim() && (
+                              <div className="description-suggestion-list">
+                                {filteredDescriptionSuggestions.map((item, index) => (
+                                  <button
+                                    type="button"
+                                    key={`${item.text}-${index}`}
+                                    className={`description-suggestion-item${index === selectedSuggestionIndex ? " selected" : ""}`}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => {
+                                      setSelectedDescription(item.text);
+                                      setShowDescriptionSuggestions(false);
+                                      setSelectedSuggestionIndex(-1);
+                                    }}
+                                  >
+                                    <span>{item.text}</span>
+                                    <span>{item.count}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           {selectedDescription && (
                             <button
                               onClick={(e: React.MouseEvent) => {

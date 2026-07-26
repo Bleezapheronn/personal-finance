@@ -210,6 +210,53 @@ const applyTransactionFiltersAndPage = async (
   return sortedRows.slice(offset, offset + options.limit);
 };
 
+const getDescriptionPrefillFromDexie = async (
+  description: string,
+): Promise<transactionHttpRepository.TransactionDescriptionPrefill | undefined> => {
+  const normalized = description.trim();
+  const rows = (await db.transactions.toArray())
+    .filter((row) => row.description?.trim() === normalized)
+    .sort((left, right) =>
+      transactionTime(right.date) - transactionTime(left.date) ||
+      (right.id ?? 0) - (left.id ?? 0),
+    );
+  for (const row of rows) {
+    if (row.isTransfer !== true) {
+      if (row.amount === 0 || row.accountId == null || row.categoryId == null || row.recipientId == null) continue;
+      return {
+        transactionType: row.amount < 0 ? "expense" : "income",
+        recipientId: row.recipientId,
+        categoryId: row.categoryId,
+        accountId: row.accountId,
+      };
+    }
+    if (row.id == null || row.transferPairId == null || row.id === row.transferPairId) continue;
+    const pairRows = (await db.transactions.toArray()).filter(
+      (candidate) => candidate.id === row.id || candidate.id === row.transferPairId,
+    );
+    if (pairRows.length !== 2) continue;
+    const pair = pairRows.find((candidate) => candidate.id === row.transferPairId);
+    if (!pair || pair.isTransfer !== true || pair.transferPairId !== row.id) continue;
+    if (!((row.amount < 0 && pair.amount > 0) || (row.amount > 0 && pair.amount < 0))) continue;
+    if (Math.abs(row.amount) !== Math.abs(pair.amount)) continue;
+    const outgoing = row.amount < 0 ? row : pair;
+    const incoming = row.amount < 0 ? pair : row;
+    if (
+      outgoing.accountId == null || incoming.accountId == null ||
+      outgoing.recipientId == null || incoming.recipientId == null
+    ) continue;
+    return {
+      transactionType: "transfer",
+      sourceRecipientId: outgoing.recipientId,
+      destinationRecipientId: incoming.recipientId,
+      categoryId: outgoing.categoryId,
+      sourceAccountId: outgoing.accountId,
+      destinationAccountId: incoming.accountId,
+    };
+  }
+  return undefined;
+};
+
 const countSelectedReadTransactions = async (
   options: transactionHttpRepository.TransactionCountOptions | undefined,
 ): Promise<number> => {
@@ -387,6 +434,9 @@ export interface SelectedReadRepositories {
     getMostRecentByDescription: (
       description: string,
     ) => ReadOne<Transaction, TransactionDto>;
+    getDescriptionPrefill: (
+      description: string,
+    ) => Promise<transactionHttpRepository.TransactionDescriptionPrefill | undefined>;
   };
   accounts: {
     list: (
@@ -466,7 +516,7 @@ const dexieReadRepositories: SelectedReadRepositories = {
             compareText(left.text, right.text),
         )
         .slice(0, limit)
-        .map(({ text, count }) => ({ text, count }));
+        .map(({ text, count, latest }) => ({ text, count, latest }));
     },
     getMostRecentByDescription: async (description) => {
       const rows = await db.transactions
@@ -479,6 +529,7 @@ const dexieReadRepositories: SelectedReadRepositories = {
           (right.id ?? 0) - (left.id ?? 0),
       )[0];
     },
+    getDescriptionPrefill: getDescriptionPrefillFromDexie,
   },
   accounts: {
     list: (options) =>
@@ -531,6 +582,8 @@ const httpReadonlyReadRepositories: SelectedReadRepositories = {
       transactionHttpRepository.getMostRecentTransactionByDescription(
         description,
       ),
+    getDescriptionPrefill: (description) =>
+      transactionHttpRepository.getTransactionDescriptionPrefill(description),
   },
   accounts: {
     list: (options) => lookupHttpRepositories.listAccounts(options),
