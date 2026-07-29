@@ -25,6 +25,7 @@ import {
   validateCapabilitySelection,
   type AuthorityOpsCapabilityName,
 } from "./authorityOpsCapabilities.js";
+import { assertNoCheckpointAcceptanceJournal } from "./authorityCheckpointAcceptance.js";
 
 export const AUTHORITY_OPS_PROFILE_SCHEMA_VERSION = 1 as const;
 export type AuthorityOpsMode = "rehearsal" | "authoritative";
@@ -282,6 +283,16 @@ export const readAuthorityOpsProfile = (
   options: { allowRepoPathsForTests?: boolean } = {},
 ): AuthorityOpsProfile => {
   const resolved = path.resolve(profilePath);
+  assertNoCheckpointAcceptanceJournal(resolved);
+  if (existsSync(`${resolved}.acceptance-failed`)) throw new Error("checkpoint_profile_restore_failed");
+  return readAuthorityOpsProfileForRecovery(resolved, options);
+};
+
+export const readAuthorityOpsProfileForRecovery = (
+  profilePath: string,
+  options: { allowRepoPathsForTests?: boolean } = {},
+): AuthorityOpsProfile => {
+  const resolved = path.resolve(profilePath);
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(resolved, "utf8")) as unknown;
@@ -306,7 +317,7 @@ const reserveUniquePath = (basePath: string): string => {
 export const writeAuthorityOpsProfileAtomic = (
   profilePath: string,
   profile: AuthorityOpsProfile,
-  options: { replace?: boolean; allowRepoPathsForTests?: boolean } = {},
+  options: { replace?: boolean; allowRepoPathsForTests?: boolean; afterPreviousProfileBackup?: () => void } = {},
 ): { profilePath: string; previousProfilePath?: string } => {
   const resolved = path.resolve(profilePath);
   const validated = validateAuthorityOpsProfile(profile, resolved, options);
@@ -326,6 +337,7 @@ export const writeAuthorityOpsProfileAtomic = (
       previousProfilePath = reserveUniquePath(resolved);
       copyFileSync(resolved, previousProfilePath, constants.COPYFILE_EXCL);
     }
+    options.afterPreviousProfileBackup?.();
     renameSync(temporaryPath, resolved);
     return { profilePath: resolved, ...(previousProfilePath ? { previousProfilePath } : {}) };
   } catch (error) {

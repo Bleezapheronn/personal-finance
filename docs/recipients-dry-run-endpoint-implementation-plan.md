@@ -1,5 +1,7 @@
 # Recipients Dry-Run Endpoint Implementation Plan
 
+> Historical implementation plan; current authority is SQLite through the local API. See `docs/PROJECT_STATE.md`.
+
 This started as a documentation-only implementation plan for the first
 Recipients dry-run endpoint slice. The create-recipient, update-recipient,
 activate-recipient, and deactivate-recipient dry-run endpoints have now been

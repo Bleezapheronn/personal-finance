@@ -1,5 +1,7 @@
 # Recipients Active-State Real-Write Implementation Review
 
+> Historical implementation review; current authority is SQLite through the local API. See `docs/PROJECT_STATE.md`.
+
 This is a documentation-only review of the completed Recipients active-state
 real-write pair.
 

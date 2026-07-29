@@ -1,5 +1,7 @@
 # Comparison Report Design
 
+> Historical comparison-design record. Current authority is SQLite through the local API; see `docs/PROJECT_STATE.md`.
+
 This document designs future comparison reports for a disposable SQLite prototype imported from a full JSON backup. It is documentation only. It does not implement comparison scripts, add SQLite runtime code, create database files, or expose financial API endpoints.
 
 Dexie / IndexedDB and validated full JSON backups remain the source of truth.

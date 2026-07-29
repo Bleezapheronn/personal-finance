@@ -1,5 +1,7 @@
 # Repository Adoption Audit
 
+> Historical repository-migration audit. Current authority is SQLite through the local API; see `docs/PROJECT_STATE.md`.
+
 This audit captures remaining direct Dexie usage after the first repository milestones. It is planning documentation only. It does not approve schema changes, backend work, data migrations, or behavior changes.
 
 Searches run:

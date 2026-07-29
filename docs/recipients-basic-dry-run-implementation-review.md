@@ -1,5 +1,7 @@
 # Recipients Basic Dry-Run Implementation Review
 
+> Historical implementation review; current authority is SQLite through the local API. See `docs/PROJECT_STATE.md`.
+
 This is a documentation-only review of the implemented Recipients dry-run
 endpoints against the approved first-slice design. It does not add endpoints,
 write adapters, UI wiring, Dexie writes, SQLite writes, dual-write, selected

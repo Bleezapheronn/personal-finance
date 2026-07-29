@@ -16,11 +16,12 @@ import {
   type AuthorityOpsProfile,
 } from "./lib/authorityOpsProfile.js";
 import type { AuthorityOpsCapabilityName } from "./lib/authorityOpsCapabilities.js";
+import { runAuthorityOpsSupervisor, stopAuthorityOpsRun } from "./lib/authorityOpsRun.js";
 
 export const AUTHORITY_PROFILE_PATH_ENV_VAR =
   "PERSONAL_FINANCE_AUTHORITY_PROFILE_PATH" as const;
 
-type Command = "init" | "status" | "verify" | "start" | "checkpoint" | "rollback";
+type Command = "init" | "status" | "verify" | "start" | "checkpoint" | "rollback" | "run" | "stop";
 
 interface AuthorityOpsArgs {
   command?: Command;
@@ -43,7 +44,6 @@ interface AuthorityOpsArgs {
   label?: string;
   toManifest?: string;
   confirmRollback: boolean;
-  allowRepoPathsForTests: boolean;
   help: boolean;
 }
 
@@ -52,6 +52,8 @@ export const authorityOpsUsage = `Usage:
   npm run authority:ops -- --profile <absolute-profile.json> status
   npm run authority:ops -- --profile <absolute-profile.json> verify
   npm run authority:ops -- --profile <absolute-profile.json> start [--api-only|--vite-only] [--dry-run]
+  npm run authority:ops -- --profile <absolute-profile.json> run
+  npm run authority:ops -- --profile <absolute-profile.json> stop
   npm run authority:ops -- --profile <absolute-profile.json> checkpoint [--label <safe-label>]
   npm run authority:ops -- --profile <absolute-profile.json> rollback --to-manifest <checkpoint.manifest.json> --confirm-rollback
 
@@ -79,7 +81,6 @@ export const parseAuthorityOpsArgs = (argv: string[]): AuthorityOpsArgs => {
     // npm consumes --dry-run as its own option and forwards this safe state.
     dryRun: process.env.npm_config_dry_run === "true",
     confirmRollback: false,
-    allowRepoPathsForTests: false,
     help: false,
   };
   const commands = new Set<Command>([
@@ -89,6 +90,8 @@ export const parseAuthorityOpsArgs = (argv: string[]): AuthorityOpsArgs => {
     "start",
     "checkpoint",
     "rollback",
+    "run",
+    "stop",
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -107,9 +110,7 @@ export const parseAuthorityOpsArgs = (argv: string[]): AuthorityOpsArgs => {
     else if (argument === "--vite-only") args.viteOnly = true;
     else if (argument === "--dry-run") args.dryRun = true;
     else if (argument === "--confirm-rollback") args.confirmRollback = true;
-    else if (argument === "--allow-repo-paths-for-tests") {
-      args.allowRepoPathsForTests = true;
-    } else if (
+    else if (
       [
         "--profile",
         "--mode",
@@ -277,9 +278,19 @@ export const runAuthorityOps = async (argv: string[]): Promise<void> => {
     throw new Error("authority_ops_command_required");
   }
   const profilePath = resolvedProfilePath(args);
-  const testOptions = {
-    allowRepoPathsForTests: args.allowRepoPathsForTests,
-  };
+  const testOptions = {};
+
+  if (args.command === "stop") {
+    await stopAuthorityOpsRun(profilePath);
+    console.log("SQLite authority operations supervisor stop signal: PASS");
+    return;
+  }
+
+  if (args.command === "run") {
+    await runAuthorityOpsSupervisor(profilePath, testOptions);
+    console.log("Personal Finance closed safely.");
+    return;
+  }
 
   if (args.command === "init") {
     const release = acquireAuthorityOpsLock(profilePath, "init");

@@ -5,8 +5,10 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import net from "node:net";
@@ -35,10 +37,13 @@ import {
 import {
   AUTHORITY_OPS_PROFILE_SCHEMA_VERSION,
   readAuthorityOpsProfile,
+  readAuthorityOpsProfileForRecovery,
   validateAuthorityOpsProfile,
   writeAuthorityOpsProfileAtomic,
   type AuthorityOpsProfile,
 } from "./lib/authorityOpsProfile.js";
+import { checkpointAcceptanceJournalPath } from "./lib/authorityCheckpointAcceptance.js";
+import { readCanonicalAuthorityLogicalFingerprintAtPath } from "./lib/sqliteLogicalVerification.js";
 import { prepareSqliteAuthorityCutover } from "./lib/sqliteAuthorityCutover.js";
 import { repoRoot, serverRoot } from "./lib/paths.js";
 import { parseAuthorityOpsArgs } from "./authorityOps.js";
@@ -349,6 +354,18 @@ const main = async (): Promise<void> => {
       assert(replaced.previousProfilePath && existsSync(replaced.previousProfilePath));
       assert(hashFile(replaced.previousProfilePath) === before);
       const afterReplacement = hashFile(rehearsalProfilePath);
+      const previousProfilesBeforeFault = readdirSync(path.dirname(rehearsalProfilePath)).filter((name) => name.startsWith(`${path.basename(rehearsalProfilePath)}.`) && name.endsWith(".bak")).length;
+      await expectFailure(
+        () => writeAuthorityOpsProfileAtomic(
+          rehearsalProfilePath,
+          { ...rehearsalProfile, viteHost: "127.0.0.1" },
+          { replace: true, afterPreviousProfileBackup: () => { throw new Error("authority_profile_rotation_failed"); } },
+        ),
+        "authority_profile_rotation_failed",
+      );
+      assert(hashFile(rehearsalProfilePath) === afterReplacement);
+      assert(readdirSync(path.dirname(rehearsalProfilePath)).filter((name) => name.startsWith(`${path.basename(rehearsalProfilePath)}.`) && name.endsWith(".bak")).length === previousProfilesBeforeFault + 1);
+      assert(!readdirSync(path.dirname(rehearsalProfilePath)).some((name) => name.startsWith(`${path.basename(rehearsalProfilePath)}.tmp-`)));
       await expectFailure(() =>
         writeAuthorityOpsProfileAtomic(
           rehearsalProfilePath,
@@ -574,6 +591,177 @@ const main = async (): Promise<void> => {
       );
       assert(existsSync(lockPath));
       rmSync(lockPath);
+    });
+
+    await check("post-replacement verification failure restores the prior profile", async () => {
+      const current = readAuthorityOpsProfile(authorityProfilePath);
+      addRecipient(current.activeDatabasePath);
+      const changedFingerprint =
+        readCanonicalAuthorityLogicalFingerprintAtPath(
+          current.activeDatabasePath,
+        );
+      const originalProfile = readFileSync(authorityProfilePath, "utf8");
+      const originalManifest = current.authorityManifestPath;
+      let replacementInstalled = false;
+      await expectFailure(
+        () => checkpointAuthorityOpsProfile(authorityProfilePath, {
+          dependencies: {
+            afterProfileReplacement: () => {
+              const temporary = readAuthorityOpsProfileForRecovery(authorityProfilePath);
+              replacementInstalled =
+                temporary.authorityManifestPath !== originalManifest &&
+                temporary.sourceBackupPath === null;
+              throw new Error("test_post_replacement_verification_failure");
+            },
+          },
+        }),
+        "checkpoint_final_verification_failed",
+      );
+      assert(replacementInstalled);
+      assert(readFileSync(authorityProfilePath, "utf8") === originalProfile);
+      assert(readAuthorityOpsProfile(authorityProfilePath).authorityManifestPath === originalManifest);
+      assert(readAuthorityOpsProfile(authorityProfilePath).sourceBackupPath === current.sourceBackupPath);
+      assert(!existsSync(checkpointAcceptanceJournalPath(authorityProfilePath)));
+      assert(
+        readCanonicalAuthorityLogicalFingerprintAtPath(
+          current.activeDatabasePath,
+        ) === changedFingerprint,
+      );
+      assert(
+        !readdirSync(backupDirectory)
+          .filter((name) => name.endsWith(".sqlite"))
+          .some(
+            (name) =>
+              existsSync(path.join(backupDirectory, `${name}-wal`)) ||
+              existsSync(path.join(backupDirectory, `${name}-shm`)),
+          ),
+      );
+      assert(
+        !readdirSync(path.dirname(authorityProfilePath)).some(
+          (name) =>
+            name.startsWith(`${path.basename(authorityProfilePath)}.tmp-`) ||
+            name.startsWith(`${path.basename(authorityProfilePath)}.restore-`),
+        ),
+      );
+      await expectFailure(
+        () => verifyAuthorityOpsProfile(authorityProfilePath),
+        "authority_checkpoint_required",
+      );
+    });
+
+    await check("journal creation failure preserves the prior profile", async () => {
+      const before = readFileSync(authorityProfilePath, "utf8");
+      const beforeProfile = readAuthorityOpsProfile(authorityProfilePath);
+      await expectFailure(
+        () => checkpointAuthorityOpsProfile(authorityProfilePath, {
+          dependencies: {
+            beforeAcceptanceJournalCreate: () => {
+              throw new Error("test_journal_create_failure");
+            },
+          },
+        }),
+        "checkpoint_acceptance_journal_create_failed",
+      );
+      assert(readFileSync(authorityProfilePath, "utf8") === before);
+      assert(
+        readAuthorityOpsProfile(authorityProfilePath).authorityManifestPath ===
+          beforeProfile.authorityManifestPath,
+      );
+      assert(
+        readAuthorityOpsProfile(authorityProfilePath).sourceBackupPath ===
+          beforeProfile.sourceBackupPath,
+      );
+      assert(!existsSync(checkpointAcceptanceJournalPath(authorityProfilePath)));
+    });
+
+    await check("verified replacement with cleanup failure remains blocked", async () => {
+      await expectFailure(
+        () => checkpointAuthorityOpsProfile(authorityProfilePath, {
+          dependencies: {
+            beforeAcceptanceJournalCleanup: () => {
+              throw new Error("test_journal_cleanup_failure");
+            },
+          },
+        }),
+        "checkpoint_acceptance_journal_cleanup_failed",
+      );
+      assert(existsSync(checkpointAcceptanceJournalPath(authorityProfilePath)));
+      await expectFailure(
+        () => readAuthorityOpsProfile(authorityProfilePath),
+        "checkpoint_profile_restore_failed",
+      );
+      unlinkSync(checkpointAcceptanceJournalPath(authorityProfilePath));
+      assert(readAuthorityOpsProfile(authorityProfilePath).sourceBackupPath === null);
+    });
+
+    await check("corrupt acceptance journal blocks profile trust", async () => {
+      const journalPath = checkpointAcceptanceJournalPath(authorityProfilePath);
+      writeFileSync(journalPath, "{not-json", { encoding: "utf8", flag: "wx" });
+      await expectFailure(
+        () => readAuthorityOpsProfile(authorityProfilePath),
+        "checkpoint_acceptance_journal_invalid",
+      );
+      await expectFailure(
+        () => verifyAuthorityOpsProfile(authorityProfilePath),
+        "checkpoint_acceptance_journal_invalid",
+      );
+      unlinkSync(journalPath);
+    });
+
+    await check("profile restoration failure leaves recovery evidence and fails closed", async () => {
+      const recoveryArtifactsBefore = readdirSync(backupDirectory).length;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      await expectFailure(
+        () => checkpointAuthorityOpsProfile(authorityProfilePath, {
+          dependencies: {
+            afterProfileReplacement: () => {
+              throw new Error("test_post_replacement_verification_failure");
+            },
+            beforeProfileRestore: () => {
+              throw new Error("test_profile_restore_failure");
+            },
+            afterProfileRestoreFailure: () => {
+              throw new Error("test_secondary_marker_failure");
+            },
+          },
+        }),
+        "checkpoint_profile_restore_failed",
+      );
+      assert(existsSync(checkpointAcceptanceJournalPath(authorityProfilePath)));
+      assert(readdirSync(backupDirectory).length > recoveryArtifactsBefore);
+      assert(
+        readdirSync(backupDirectory).some((name) =>
+          name.startsWith("authority-safety-before-checkpoint-"),
+        ),
+      );
+      assert(
+        readdirSync(backupDirectory).some((name) =>
+          name.startsWith("authority-checkpoint-"),
+        ),
+      );
+      assert(
+        readdirSync(path.dirname(authorityProfilePath)).some(
+          (name) =>
+            name.startsWith(`${path.basename(authorityProfilePath)}.`) &&
+            name.endsWith(".bak"),
+        ),
+      );
+      await expectFailure(
+        () => readAuthorityOpsProfile(authorityProfilePath),
+        "checkpoint_profile_restore_failed",
+      );
+      await expectFailure(
+        () => inspectAuthorityOpsProfile(authorityProfilePath),
+        "checkpoint_profile_restore_failed",
+      );
+      await expectFailure(
+        () => verifyAuthorityOpsProfile(authorityProfilePath),
+        "checkpoint_profile_restore_failed",
+      );
+      await expectFailure(
+        () => assertStartable(authorityProfilePath),
+        "checkpoint_profile_restore_failed",
+      );
     });
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

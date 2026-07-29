@@ -1,5 +1,8 @@
 # High-Risk Selected-Read Parity Plan
 
+> Historical selected-read experiment plan. It does not describe the current
+> authority model; SQLite authority is defined in `docs/PROJECT_STATE.md`.
+
 This plan covers future `http-readonly` experiments for workflow-critical
 areas: Transactions, Reports, Budget, and Budget History. It is documentation
 only. It does not authorize code changes, screen switches, write endpoints, or

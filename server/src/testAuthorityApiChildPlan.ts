@@ -1,0 +1,25 @@
+import { createAuthorityApiChildPlan } from "./lib/authorityApiChildPlan.js";
+import { AUTHORITY_SUPERVISED_CHILD_ENV } from "./lib/authoritySupervisedChildSignal.js";
+import type { AuthoritySessionContext } from "./lib/authorityOpsSession.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+let assertions = 0;
+const check = (value: unknown, code: string) => { assertions += 1; if (!value) throw new Error(code); };
+const startPlan = { apiCommand: { executable: process.execPath, args: ["fixed-api.js"], cwd: "C:\\fixture" }, apiEnvironment: { PATH: "fixture", PORT: "1234" } };
+const context: AuthoritySessionContext = { version: 1, sessionId: "session", profileIdentity: "profile", receiptPath: "C:\\fixture\\receipt", startingCheckpointId: "checkpoint", startingCheckpointSequence: 2, startingDatabaseFingerprint: "database", startingLogicalFingerprint: "logical", startedAt: "2026-07-27T00:00:00.000Z" };
+const plan = createAuthorityApiChildPlan({ startPlan, sessionContext: context, sessionSecret: "secret" });
+check(plan.childSpec.executable === process.execPath && plan.childSpec.args[0] === "fixed-api.js", "api_child_command_changed");
+check(!plan.childSpec.args.includes("--import") && !(AUTHORITY_SUPERVISED_CHILD_ENV in plan.environment), "plain_api_child_signal_isolation_leaked");
+check(plan.environment.PATH === "fixture" && plan.environment.PORT === "1234", "base_environment_lost");
+check(plan.environment.PERSONAL_FINANCE_AUTHORITY_SESSION_ID === "session", "session_id_missing");
+check(plan.environment.PERSONAL_FINANCE_AUTHORITY_SESSION_SECRET === "secret", "session_secret_missing");
+check(JSON.parse(plan.environment.PERSONAL_FINANCE_AUTHORITY_SESSION_CONTEXT ?? "null").startingCheckpointSequence === 2, "session_context_missing");
+check(!("PERSONAL_FINANCE_AUTHORITY_SESSION_ID" in startPlan.apiEnvironment), "start_plan_mutated");
+const changed = createAuthorityApiChildPlan({ startPlan, sessionContext: { ...context, sessionId: "other" }, sessionSecret: "secret" });
+check(changed.environment.PERSONAL_FINANCE_AUTHORITY_SESSION_ID === "other" && changed.environment.PORT === plan.environment.PORT, "input_change_not_isolated");
+const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "lib", "authorityApiChildPlan.ts"), "utf8");
+check(!/node:(?:fs|child_process|net)|randomBytes|Date\.now|process\.env/.test(source), "api_child_plan_import_has_side_effect_dependency");
+check(!/test-support|--scenario|process\.exit/.test(source), "api_child_plan_import_has_test_or_cli_dependency");
+console.log(`Authority API child plan tests: ${assertions} passed, 0 failed`);

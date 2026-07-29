@@ -1,5 +1,7 @@
 # Selected-Read Migration Readiness Audit
 
+> Historical selected-read migration audit. Current authority is SQLite through the local API; see `docs/PROJECT_STATE.md`.
+
 Status: prototype-ready with diagnostics and narrow, off-by-default read-path
 experiments for Recipients, Buckets/Categories, Accounts, SMS Import Templates,
 Transactions, Reports, Budget, and Budget History. No real workflow screen is

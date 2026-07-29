@@ -20,7 +20,7 @@ export interface AuthorityOpsLockStatus {
   startedAt?: string;
 }
 
-const lockPathForProfile = (profilePath: string): string =>
+export const lockPathForProfile = (profilePath: string): string =>
   `${path.resolve(profilePath)}.lock`;
 
 const processIsLive = (processId: number): boolean | null => {
@@ -101,7 +101,8 @@ export const acquireAuthorityOpsLock = (
   let released = false;
   return () => {
     if (released) return;
-    released = true;
     if (existsSync(lockPath)) unlinkSync(lockPath);
+    if (existsSync(lockPath)) throw new Error("authority_lock_still_present");
+    released = true;
   };
 };

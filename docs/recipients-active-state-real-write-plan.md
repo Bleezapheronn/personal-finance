@@ -1,5 +1,7 @@
 # Recipients Active-State Real-Write Plan
 
+> Historical implementation plan; current authority is SQLite through the local API. See `docs/PROJECT_STATE.md`.
+
 This is the operation-specific plan and status note for the first Recipients
 real-write experiment. The first approved implementation slice added recipient
 activate, and the second approved implementation slice added recipient

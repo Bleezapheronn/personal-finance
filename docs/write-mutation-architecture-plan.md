@@ -1,5 +1,8 @@
 # Write / Mutation Architecture Plan
 
+> Historical mutation-architecture plan. It is superseded for current
+> operational authority by `docs/PROJECT_STATE.md`.
+
 Current operational status, recovery steps, completed experiment capabilities,
 and authority-migration blockers are consolidated in
 [sqlite-write-experiment-operational-readiness.md](sqlite-write-experiment-operational-readiness.md).

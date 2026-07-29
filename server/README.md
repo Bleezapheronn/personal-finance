@@ -1,6 +1,8 @@
-# Local API Prototype Server
+# Local API Server
 
-This is a prototype-only local API skeleton. It currently exposes only:
+This local API is the trusted write boundary for the current unified runtime. SQLite and its authoritative profile are operational authority; Dexie/IndexedDB is retained only for legacy compatibility, migration reference, and historical prototype context. Production activation remains gated until controlled live acceptance passes.
+
+The following route list includes the supported local API surface:
 
 - `GET /health`
 - `GET /metadata`
@@ -60,12 +62,46 @@ This is a prototype-only local API skeleton. It currently exposes only:
 - `POST /prototype/repositories/categories/write/create` (experimental, disabled by default)
 - `POST /prototype/repositories/categories/write/update` (experimental, disabled by default)
 
-The backend normally opens configured disposable SQLite read-only for prototype
-diagnostics. Explicit writes are narrow, domain-specific, and disabled by
-default. The browser IndexedDB database remains authoritative. Snapshot
-generation is manual and insert-only; no pruning, repair, rewrite, relinking,
-or automatic scheduling exists. There is no broad write repository,
-dual-write, or SQLite authority migration.
+The unified runtime uses SQLite as its authoritative store. Authenticated,
+capability-gated writes cross the local API boundary; Dexie/IndexedDB is never
+an authoritative write target. SQLite authority state is not disposable.
+Disposable SQLite copies are limited to tests, rehearsals, and comparisons.
+Snapshot generation remains deliberate and does not authorize pruning, repair,
+rewrite, relinking, or automatic scheduling.
+
+## Writable-route inventory
+
+Authenticated committed production writes are tracked in
+`src/lib/authorityWritableRouteInventory.ts`. The verified inventory has 41
+authenticated committed writable routes Covered, 0 Planned, 0 Unknown, and 1
+explicit payment-method compatibility exclusion. Covered means the route is
+exercised through authenticated production HTTP under the real disposable
+authority-supervisor test harness. Strict bidirectional
+production-route-to-scenario validation passes. The exclusion remains because
+there is no authenticated production payment-method write route.
+
+Recipient active-state and SMS import-template committed writes are exercised
+through authenticated real-supervisor processes, including SMS account-reference
+reassignment, mutation-chain accounting, checkpointing, and restart recovery.
+
+Transfer creation and update are also exercised through the real supervisor.
+Their reciprocal transaction pairs are checked for atomicity, integrity,
+mutation-chain accounting, checkpointing, and restart persistence.
+
+Budget-definition, budget-occurrence, budget-snapshot, and
+budget-from-transaction writes are exercised through the real supervisor.
+
+## Operational runtime and recovery
+
+Use the unified runtime run/stop workflow for normal application use. Closing
+a browser tab alone does not stop the backend runtime; use the authenticated
+stop workflow. A clean trusted session that changed SQLite may create one
+automatic checkpoint on graceful shutdown, while an unchanged session does not
+create another checkpoint. Abnormal or contaminated sessions fail closed and
+do not automatically checkpoint. Authority checkpoints and backups are
+separate mechanisms: automatic backups are not substitutes for checkpoints.
+Production shortcuts and activation remain unchanged until review and
+controlled live acceptance pass.
 
 ## Safety
 
@@ -117,9 +153,10 @@ npm run start
 
 The server binds to `127.0.0.1` only. The default port is `3147`.
 
-## Schema Draft
+## Historical schema and import material
 
-The future disposable SQLite prototype schema is documented, but no SQLite runtime code or database files exist yet:
+The following material is retained for historical prototype and migration
+reference. It does not describe the current authoritative runtime:
 
 - [schema/prototype-schema.sql](schema/prototype-schema.sql)
 - [docs/sqlite-schema-notes.md](docs/sqlite-schema-notes.md)
@@ -131,9 +168,9 @@ Backup import and comparison tooling are documented here. The importer and row-c
 - [docs/backup-import-design.md](docs/backup-import-design.md)
 - [docs/comparison-report-design.md](docs/comparison-report-design.md)
 
-## Disposable Backup Importer
+## Disposable Backup Importer (legacy/migration tooling)
 
-The prototype importer creates a disposable SQLite database from a full JSON backup. Dexie / IndexedDB remains authoritative, and no API routes expose imported financial data.
+The importer creates a disposable SQLite database from a legacy full JSON backup for migration and comparison work. It does not replace or alter current SQLite authority.
 
 Use only backup input and SQLite output paths outside the repository. The generated `<output>.import-summary.json` should also be treated as sensitive and kept outside the repository.
 
@@ -251,7 +288,7 @@ npm run compare:budget-history -- -- --backup C:\dev\personal-finance-data\expor
 
 ## Full SQLite Prototype Verification
 
-The run-all verification CLI executes the existing comparison checks in order: row counts, structural integrity, financial aggregates, report totals, transaction samples, and Budget History parity. It is verification tooling only, not migration approval. Dexie / IndexedDB remains authoritative, and the SQLite database remains disposable.
+The run-all verification CLI executes comparison checks for migration material. It is verification tooling only, not migration approval; its SQLite outputs are disposable and do not replace the authoritative SQLite state.
 
 Generated reports may contain aggregate financial data, transaction IDs, and other local verification details. Keep the output directory outside Git. A recommended location is:
 
@@ -307,9 +344,9 @@ requires the schema fingerprint and `user_version` to match exactly. Journal
 mode is also recorded but is not treated as logical content.
 
 After restore, point a separately started API process at the restored database
-and run normal `smoke:api`. Run `verify:sqlite` with the matching Dexie full
-backup when one is available. A restored database is still disposable and
-does not make SQLite authoritative. Run the focused no-data test suite with:
+and run normal `smoke:api`. Run `verify:sqlite` with the matching legacy Dexie
+full backup when one is available. A rehearsal restore is disposable and does
+not replace the authoritative SQLite state. Run the focused no-data test suite with:
 
 ```powershell
 npm run test:sqlite-backup-restore
@@ -454,6 +491,79 @@ operations; all files remain operator-managed outside Git.
 
 ### Authority Operations Phase 3
 
+### Supervised authority runtime v1
+
+`authority:ops run` is the daily-use supervisor. It conditionally builds from
+an external content-hash receipt, verifies the accepted authority state, starts
+the API and Vite, and creates one verified checkpoint at graceful shutdown only
+when confirmed authenticated API writes changed SQLite. `authority:ops stop`
+authenticates to the profile-specific supervisor, closes the API mutation gate,
+drains accepted requests, closes the Fastify listener and SQLite handles,
+fingerprints the stopped database, writes the signed clean receipt, and requires
+the exact API child to exit successfully before the receipt can be trusted.
+Only then does the supervisor stop its exact owned Vite child and consider a
+checkpoint. On Windows, an expected owned Vite stop may be reported as a signal
+or a platform exit code; the supervisor proves the observed exit belongs to the
+spawned child rather than assuming POSIX signal representation. The stop command
+does not search for or terminate unrelated Node, Vite, or browser processes. The repository
+`Start-PersonalFinance.ps1` and prepared `Stop-PersonalFinance.ps1` helpers use
+these commands, but installed Desktop shortcuts remain an operator action.
+
+An unexpected Vite exit is abnormal. The supervisor requests API abort shutdown
+to close the write gate, drain requests, and close Fastify/SQLite without
+creating a clean receipt; it never checkpoints that session. API/supervisor
+crashes, drain or child-exit timeouts, force kills, power loss, missing or
+unsealed session receipts, stale SQLite sidecars, or any fingerprint
+disagreement likewise fail closed. The changed database is preserved without
+automatic rollback, the accepted profile remains unchanged, and the next `run`
+refuses the mismatch pending explicit `status`, `verify`, reviewed `checkpoint`,
+or `rollback` action. Closing a browser tab does not stop the runtime.
+In the foreground unified runtime, Ctrl+C is owned by the supervisor. It
+coalesces repeated console interrupts and performs the same authenticated
+shutdown path as `authority:ops stop`; supervisor-owned API and Vite children
+ignore inherited console interrupts while that proof completes. This behavior
+is intentionally not claimed by a native Windows console harness: controlled
+manual acceptance completed successfully on 2026-07-29. Standalone API and
+Vite processes are outside this Ctrl+C contract.
+
+Mutation counts and route classification are diagnostic only; they are not
+authority proof. Before startup the supervisor and API independently calculate
+the same canonical logical fingerprint. Every authenticated live API write is
+serialized through the authoritative mutation executor, which acquires
+`BEGIN IMMEDIATE`, compares the protected pre-state with the prior trusted
+post-state, executes the complete helper operation, fingerprints the protected
+post-state, commits, and only then advances the signed mutation chain. Existing
+helper transactions run as nested savepoints, so reciprocal transfers and
+other multi-table operations remain one atomic chain step.
+
+A direct SQLite write changes the protected pre-state and irreversibly
+contaminates that session. Later writes are rejected, clean sealing is
+ineligible, no automatic checkpoint is created, and the changed database is
+preserved for explicit checkpoint or rollback review. Shutdown, the stopped
+active database, the safety backup, and the checkpoint candidate must all match
+the signed receipt's final logical fingerprint while the existing physical
+fingerprint, quiescence, and checkpoint-chain checks remain required. New live
+API mutation routes must use the authoritative mutation executor; the
+write-boundary safety guard rejects new direct writer acquisition.
+
+Checkpoint acceptance keeps the authority-operation lock and acquires
+`BEGIN IMMEDIATE` writer fences in active-database, safety-backup, then
+checkpoint-candidate order. Logical, physical, integrity, and chain checks are
+repeated while those locks are held. The profile is replaced, reread, and its
+selected chain fully verified before fences are released in reverse order. A
+post-replacement failure atomically restores the original profile; a restoration
+failure leaves a fail-closed recovery marker and preserves recovery artifacts.
+
+Vite remains checkpoint-eligible only when the supervisor records termination
+for its exact owned child immediately before sending that termination request.
+An exit before shutdown, or while the API seal/drain/receipt transition is still
+completing, is an unexpected runtime failure and preserves the prior profile and
+changed database without checkpointing. API or Vite spawn failures are likewise
+bounded fail-closed startup failures; Vite spawn failure asks an already-started
+API to abort and close resources rather than authorizing a seal. Only the
+supervisor-requested Vite termination path may proceed to quiescence and
+checkpointing.
+
 The root `authority:ops` command manages an explicit versioned profile for
 local rehearsal or authoritative operation:
 
@@ -509,7 +619,7 @@ If you want the smoke test to send an allowed browser-style origin for protected
 npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token --origin http://localhost:5173
 ```
 
-The smoke test checks public, protected, rejected-origin, invalid-table, and invalid-pagination behavior. It does not print tokens, table rows, transaction data, account names, or SQLite paths. The table-read endpoint itself returns sensitive personal finance rows, so keep using it only for local prototype diagnostics. SQLite remains disposable and Dexie / IndexedDB remains authoritative.
+The smoke test checks public, protected, rejected-origin, invalid-table, and invalid-pagination behavior. It does not print tokens, table rows, transaction data, account names, or SQLite paths. The table-read endpoint itself returns sensitive personal finance rows, so keep using it only for local diagnostics. Disposable smoke fixtures do not replace authoritative SQLite; Dexie/IndexedDB is legacy compatibility only.
 
 Normal smoke also verifies the protected, read-only write-capability endpoint.
 It checks token/origin protection, redaction, default-off capability values, and
@@ -1167,7 +1277,7 @@ Bucket/Category create-update flag and Bucket lifecycle flag enabled. A
 successful run creates, merges, and deletes synthetic fixtures and dirties the
 database; re-import before clean parity checks.
 
-SQLite remains disposable and Dexie / IndexedDB remains authoritative. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
+The authoritative SQLite state is not disposable; only explicitly designated test and rehearsal fixtures are. Dexie/IndexedDB is legacy compatibility only. Do not commit SQLite databases, backups, exports, logs, tokens, import summaries, verification reports, or comparison reports.
 
 ## Experimental Paired Transfer Writes
 
@@ -1370,7 +1480,7 @@ flags enabled. The Phase 2 mode selects an existing snapshot, creates one
 cost-bearing linked transaction, verifies exact financial and Budget History
 membership deltas, then updates and unlinks that transaction. The database is
 dirty afterward; re-import a separate SQLite database from a fresh matching
-backup before clean parity checks. Dexie remains authoritative.
+backup before clean parity checks. Dexie is legacy compatibility only.
 
 ## Experimental SMS Import Template Writes
 
@@ -1463,8 +1573,8 @@ npm run smoke:api -- -- --token-file C:\dev\personal-finance-data\.server-token 
 Run it only against an outside-repo disposable SQLite database with the
 backend flag enabled, preferably on a unique port. It creates and updates a
 synthetic definition and leaves SQLite dirty. Re-import a separate database
-from the matching fresh backup before parity verification. Dexie remains
-authoritative.
+from the matching fresh backup before parity verification. Dexie is legacy
+compatibility only.
 
 ## Experimental Budget Snapshot Generation
 
@@ -1651,8 +1761,67 @@ For profile-driven daily operation, the repository provides:
 .\scripts\Checkpoint-PersonalFinance.ps1 -ProfilePath "C:\outside-repo\authoritative-profile.json"
 ```
 
-The start helper refuses checkpoint-required state, waits for API and Vite
-readiness, and opens the app. The checkpoint helper refuses while either
+The start helper refuses checkpoint-required state and runs the supervised
+runtime; it does not launch a browser or accept browser-path parameters. The checkpoint helper refuses while either
 service is running, creates a routine checkpoint only when required, and
 verifies it before reporting that restart is safe. Profile-specific wrappers
 and Desktop shortcuts must remain outside the repository.
+
+The conditional root-build receipt hashes all repository-controlled Vite inputs:
+`index.html`, `src/**`, optional `shared/**`, `public/**`, package and lock
+files, root TypeScript and Vite configuration, and committed Capacitor/Ionic
+metadata. It excludes runtime data, authority profiles, databases, backups,
+dependencies, and build output. Process fixtures use bounded readiness, marker,
+and child-exit waits with stage-only timeout diagnostics. Their success output
+is intentionally `PASS`; fixed assertion totals are not used. Mutation-domain
+counters remain diagnostic only, but are calculated from the actual changed
+tables of each committed operation, so a budget lifecycle or deletion that
+changes snapshots records both `budgets` and `budgetSnapshots`. The registry
+covers `transactions`, `budgets`, `budgetSnapshots`, `buckets`, `categories`,
+`accounts`, legacy `paymentMethods`, `recipients`, and `smsImportTemplates`.
+Route declarations remain operation metadata and cannot hide a second table
+changed inside the same transaction.
+
+### Conditional build and disposable-fixture path policy
+
+The conditional-build receipt follows supported in-repository symbolic links
+and Windows junctions only within declared Vite input roots. It fingerprints
+the logical link path, resolved target identity, and consumed target content,
+so link creation, removal, retargeting, and target-content changes all require
+a rebuild. External, dangling, cyclic, ambiguous, or unsupported reparse
+inputs fail closed before an authority session can start; the prior receipt is
+retained and no profile or checkpoint is changed.
+
+Test-support paths are accepted only when their real filesystem identity is
+under the operating-system temporary root through ordinary, non-reparse
+components. Lexical temporary-path containment alone is not sufficient.
+Junctions and symbolic links cannot redirect a fixture toward repository or
+authority assets. Newly created fixture directories are validated before
+creation and revalidated afterward.
+
+TypeScript is authoritative under `server/test-support`; generated JavaScript,
+source maps, and declaration companions are not committed there. Authority
+process waits must be deadline-bounded, use exact-child ownership, and clean up
+listeners and timers. Numeric assertion totals are derived from registered
+checks; suites without a meaningful count report `PASS` without a fabricated
+total.
+
+Checkpoint acceptance installs a durable, versioned recovery journal beside
+the validated profile after candidate verification and writer fencing, but
+before profile replacement. Every authority command refuses an unresolved or
+invalid journal. The journal is removed only after the new profile and chain
+verify, or after the prior profile and selected chain are conclusively
+restored. A restoration or journal-cleanup failure remains fail-closed and
+requires manual recovery; it never silently promotes the candidate.
+
+Committed frontend compatibility-target configuration, including
+`.browserslistrc`, is part of the conditional root-build receipt; changing,
+removing, or recreating it requires root validation and build. Fault-runner
+synchronization files are validated immediately before use. Real-process
+fixtures cover an ordinary temporary runtime, a protected junction rejection,
+and a controlled post-validation runtime redirection; they assert no gate,
+receipt, marker, SQLite sidecar, or child is left behind. The executable-path
+matrix derives all twelve cells (valid ordinary temporary path and protected
+reparse rejection for the fault runner, crash API child, lifecycle API child,
+never-ready Vite child, checkpoint fence holder, and external writer) from
+registered cases.

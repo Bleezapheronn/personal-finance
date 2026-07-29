@@ -1,5 +1,7 @@
 # Repository Abstraction Design
 
+> Historical repository-abstraction design. Current authority is SQLite through the local API; see `docs/PROJECT_STATE.md`.
+
 This document sketches a repository/data-access layer for the personal finance app. It is planning documentation only. It does not approve a database migration, schema change, backend implementation, or rewrite of budget snapshot behavior.
 
 ## Purpose

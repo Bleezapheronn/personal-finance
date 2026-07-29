@@ -1,4 +1,8 @@
-# Backup and Restore
+# Backup and Restore (Legacy Browser Storage)
+
+> Historical/legacy browser-storage guidance. The current operational authority
+> is the local SQLite API and its authoritative profile; use
+> `docs/PROJECT_STATE.md` for current backup and checkpoint workflow.
 
 This app stores the active finance database in browser IndexedDB. A full JSON backup is the main disaster-recovery format for moving or protecting the complete local database.
 

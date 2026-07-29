@@ -1,5 +1,8 @@
 # Local API + SQLite Prototype Plan
 
+> Historical prototype plan. The prototype state described below is superseded:
+> SQLite through the local API is current authority; see `docs/PROJECT_STATE.md`.
+
 This document plans a future desktop prototype only. It does not approve a production migration, add dependencies, create backend files, create SQLite files, or replace Dexie / IndexedDB.
 
 Dexie remains the authoritative source of truth until a separate migration plan is approved, implemented, compared, and backed up.

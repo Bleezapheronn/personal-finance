@@ -4,7 +4,10 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
+  renameSync,
   statSync,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -26,10 +29,17 @@ import {
 import { readAuthorityOpsLockStatus } from "./authorityOpsLock.js";
 import {
   readAuthorityOpsProfile,
+  readAuthorityOpsProfileForRecovery,
   validateAuthorityOpsProfile,
   writeAuthorityOpsProfileAtomic,
   type AuthorityOpsProfile,
 } from "./authorityOpsProfile.js";
+import {
+  acquireCheckpointAcceptanceFences,
+  installCheckpointAcceptanceJournal,
+  removeCheckpointAcceptanceJournal,
+} from "./authorityCheckpointAcceptance.js";
+export { acquireCheckpointAcceptanceFences } from "./authorityCheckpointAcceptance.js";
 import {
   describeSqliteAuthorityManifest,
   evaluateSqliteAuthorityReadiness,
@@ -44,9 +54,13 @@ import {
   verifySqliteAuthorityCheckpoint,
   verifySqliteAuthorityCheckpointChain,
 } from "./sqliteAuthorityCheckpoint.js";
-import { createSqliteNativeBackup } from "./sqliteBackupRestore.js";
+import {
+  createSqliteNativeBackup,
+  readSqliteBackupManifest,
+} from "./sqliteBackupRestore.js";
 import {
   logicalVerificationsMatch,
+  readCanonicalAuthorityLogicalFingerprintAtPath,
   readSqliteLogicalVerificationAtPath,
 } from "./sqliteLogicalVerification.js";
 import { assertSqliteAuthoritySchemaContract } from "./sqliteAuthorityCutover.js";
@@ -196,16 +210,26 @@ export const resolveAuthorityManifestChain = (
       descriptor.authorityLineageId === finalDescriptor.authorityLineageId &&
       descriptor.checkpointSequence <= finalDescriptor.checkpointSequence,
   );
-  const chain: string[] = [];
-  for (let sequence = 0; sequence <= finalDescriptor.checkpointSequence; sequence += 1) {
-    const matches = members.filter(
-      ({ descriptor }) => descriptor.checkpointSequence === sequence,
+  const reversedChain: string[] = [];
+  let expected = finalDescriptor;
+  for (
+    let sequence = finalDescriptor.checkpointSequence;
+    sequence >= 0;
+    sequence -= 1
+  ) {
+    const matches = members.filter(({ descriptor }) =>
+      sequence === finalDescriptor.checkpointSequence
+        ? descriptor.checkpointId === finalDescriptor.checkpointId
+        : descriptor.checkpointId === expected.predecessorCheckpointId &&
+          descriptor.checkpointSequence === sequence,
     );
     if (matches.length !== 1) {
       throw new Error("authority_ops_checkpoint_chain_ambiguous");
     }
-    chain.push(matches[0].path);
+    reversedChain.push(matches[0].path);
+    expected = matches[0].descriptor;
   }
+  const chain = reversedChain.reverse();
   const last = readSqliteAuthorityManifestDescriptor(chain[chain.length - 1]);
   if (last.checkpointId !== finalDescriptor.checkpointId) {
     throw new Error("authority_ops_checkpoint_chain_target_mismatch");
@@ -418,9 +442,41 @@ export const initializeAuthorityOpsProfile = async (
 const artifactStamp = (): string =>
   new Date().toISOString().replace(/[-:.TZ]/g, "");
 
+export interface AuthorityCheckpointDependencies {
+  afterSafetyBackup?: () => void;
+  afterCandidateVerification?: () => void;
+  afterPreviousProfileBackup?: () => void;
+  afterAcceptanceFences?: (paths: {
+    active: string;
+    safety: string;
+    candidate: string;
+  }) => void | Promise<void>;
+  afterProfileReplacement?: () => void;
+  beforeProfileRestore?: () => void;
+  beforeAcceptanceJournalCreate?: () => void;
+  beforeAcceptanceJournalCleanup?: () => void;
+  restoreProfileBytes?: (profilePath: string, original: string) => void;
+  afterProfileRestoreFailure?: () => void;
+}
+
+const restoreAuthorityProfileBytes = (profilePath: string, original: string) => {
+  const temporary = `${profilePath}.restore-${process.pid}-${Date.now()}`;
+  try { writeFileSync(temporary, original, { encoding: "utf8", flag: "wx" }); renameSync(temporary, profilePath); }
+  catch { if (existsSync(temporary)) unlinkSync(temporary); throw new Error("checkpoint_profile_restore_failed"); }
+};
+
+const profileHash = (profile: AuthorityOpsProfile): string =>
+  createHash("sha256").update(JSON.stringify(profile)).digest("hex");
+
 export const checkpointAuthorityOpsProfile = async (
   profilePath: string,
-  options: { label?: string; allowRepoPathsForTests?: boolean } = {},
+  options: {
+    label?: string;
+    allowRepoPathsForTests?: boolean;
+    expectedDatabaseFingerprint?: string;
+    expectedLogicalFingerprint?: string;
+    dependencies?: AuthorityCheckpointDependencies;
+  } = {},
 ) => {
   const profile = readAuthorityOpsProfile(profilePath, options);
   if (profile.mode !== "authoritative" || !profile.authorityManifestPath) {
@@ -433,6 +489,17 @@ export const checkpointAuthorityOpsProfile = async (
   if (!apiAvailable || !viteAvailable) {
     throw new Error("authority_ops_services_must_be_stopped");
   }
+  const assertExpectedLogicalFingerprint = (databasePath: string): void => {
+    if (
+      options.expectedLogicalFingerprint &&
+      readCanonicalAuthorityLogicalFingerprintAtPath(databasePath) !==
+        options.expectedLogicalFingerprint
+    ) throw new Error("checkpoint_logical_fingerprint_mismatch");
+  };
+  const predecessor = readSqliteAuthorityManifestDescriptor(
+    profile.authorityManifestPath,
+  );
+  assertExpectedLogicalFingerprint(profile.activeDatabasePath);
   const stamp = artifactStamp();
   const safetyBackupPath = path.join(
     profile.backupDirectory,
@@ -445,6 +512,11 @@ export const checkpointAuthorityOpsProfile = async (
     manifestPath: safetyManifestPath,
     allowRepoOutputForTests: options.allowRepoPathsForTests,
   });
+  assertExpectedLogicalFingerprint(profile.activeDatabasePath);
+  assertExpectedLogicalFingerprint(safetyBackupPath);
+  options.dependencies?.afterSafetyBackup?.();
+  assertExpectedLogicalFingerprint(profile.activeDatabasePath);
+  assertExpectedLogicalFingerprint(safetyBackupPath);
   const checkpointBackupPath = path.join(
     profile.backupDirectory,
     `authority-checkpoint-${stamp}.sqlite`,
@@ -466,24 +538,184 @@ export const checkpointAuthorityOpsProfile = async (
     sqlitePath: profile.activeDatabasePath,
     allowRepoPathsForTests: options.allowRepoPathsForTests,
   });
-  const nextProfile: AuthorityOpsProfile = {
-    ...profile,
-    authorityManifestPath: checkpointManifestPath,
-  };
-  resolveAuthorityManifestChain(nextProfile, checkpointManifestPath);
-  const updated = writeAuthorityOpsProfileAtomic(profilePath, nextProfile, {
-    replace: true,
-    allowRepoPathsForTests: options.allowRepoPathsForTests,
-  });
-  return {
-    status: "ready" as const,
+  assertExpectedLogicalFingerprint(profile.activeDatabasePath);
+  assertExpectedLogicalFingerprint(checkpointBackupPath);
+  options.dependencies?.afterCandidateVerification?.();
+  const originalProfileBytes = readFileSync(profilePath, "utf8");
+  const releaseAcceptanceFences = acquireCheckpointAcceptanceFences([
+    profile.activeDatabasePath,
     safetyBackupPath,
-    safetyManifestPath,
     checkpointBackupPath,
-    checkpointManifestPath,
-    checkpointSequence: checkpoint.checkpointSequence,
-    previousProfilePath: updated.previousProfilePath!,
-  };
+  ]);
+  let profileReplaced = false;
+  let journalInstalled = false;
+  let newProfileVerified = false;
+  try {
+    assertExpectedLogicalFingerprint(profile.activeDatabasePath);
+    assertExpectedLogicalFingerprint(safetyBackupPath);
+    assertExpectedLogicalFingerprint(checkpointBackupPath);
+    if (
+      options.expectedDatabaseFingerprint &&
+      readSqliteLogicalVerificationAtPath(profile.activeDatabasePath)
+        .databaseIdentityFingerprint !== options.expectedDatabaseFingerprint
+    ) {
+      throw new Error("checkpoint_database_fingerprint_mismatch");
+    }
+    const safetyManifest = readSqliteBackupManifest(safetyManifestPath);
+    const safetyVerification = readSqliteLogicalVerificationAtPath(
+      safetyBackupPath,
+      strictSqliteAuthorityLocalDay(safetyManifest.normalizedAsOf),
+    );
+    if (
+      !logicalVerificationsMatch(
+        safetyVerification,
+        safetyManifest.backupVerification,
+      ) ||
+      safetyVerification.schemaVersion !==
+        safetyManifest.backupVerification.schemaVersion
+    ) {
+      throw new Error("checkpoint_safety_backup_mismatch");
+    }
+    verifySqliteAuthorityCheckpoint({
+      manifestPath: checkpointManifestPath,
+      sqlitePath: profile.activeDatabasePath,
+      allowRepoPathsForTests: options.allowRepoPathsForTests,
+    });
+    const candidate = readSqliteAuthorityManifestDescriptor(
+      checkpointManifestPath,
+    );
+    if (
+      candidate.checkpointSequence !== predecessor.checkpointSequence + 1 ||
+      candidate.predecessorCheckpointId !== predecessor.checkpointId ||
+      candidate.authorityLineageId !== predecessor.authorityLineageId
+    ) {
+      throw new Error("checkpoint_sequence_invalid");
+    }
+    await options.dependencies?.afterAcceptanceFences?.({
+      active: profile.activeDatabasePath,
+      safety: safetyBackupPath,
+      candidate: checkpointBackupPath,
+    });
+    const nextProfile: AuthorityOpsProfile = {
+      ...profile,
+      authorityManifestPath: checkpointManifestPath,
+      // The source backup proves the initial cutover only. Once a verified
+      // authoritative mutation is checkpointed, the accepted lineage is the
+      // checkpoint chain rather than the immutable pre-mutation source.
+      sourceBackupPath: null,
+    };
+    resolveAuthorityManifestChain(nextProfile, checkpointManifestPath);
+    try {
+      options.dependencies?.beforeAcceptanceJournalCreate?.();
+      installCheckpointAcceptanceJournal(profilePath, {
+        priorProfileHash: profileHash(profile),
+        proposedProfileHash: profileHash(nextProfile),
+        priorCheckpointId: predecessor.checkpointId,
+        priorCheckpointSequence: predecessor.checkpointSequence,
+        proposedCheckpointId: candidate.checkpointId,
+        proposedCheckpointSequence: candidate.checkpointSequence,
+      });
+    } catch {
+      throw new Error("checkpoint_acceptance_journal_create_failed");
+    }
+    journalInstalled = true;
+    const updated = writeAuthorityOpsProfileAtomic(profilePath, nextProfile, {
+      replace: true,
+      allowRepoPathsForTests: options.allowRepoPathsForTests,
+      afterPreviousProfileBackup:
+        options.dependencies?.afterPreviousProfileBackup,
+    });
+    profileReplaced = true;
+    options.dependencies?.afterProfileReplacement?.();
+    const accepted = readAuthorityOpsProfileForRecovery(profilePath, options);
+    const acceptedState = inspectAuthoritativeState(accepted);
+    if (
+      accepted.authorityManifestPath !== checkpointManifestPath ||
+      accepted.sourceBackupPath !== null ||
+      !acceptedState.databaseMatchesManifest ||
+      !acceptedState.readiness.ready ||
+      acceptedState.descriptor.checkpointId !== candidate.checkpointId ||
+      acceptedState.descriptor.checkpointSequence !== candidate.checkpointSequence
+    ) {
+      throw new Error("checkpoint_final_verification_failed");
+    }
+    newProfileVerified = true;
+    options.dependencies?.beforeAcceptanceJournalCleanup?.();
+    removeCheckpointAcceptanceJournal(profilePath);
+    journalInstalled = false;
+    return {
+      status: "ready" as const,
+      safetyBackupPath,
+      safetyManifestPath,
+      checkpointBackupPath,
+      checkpointManifestPath,
+      checkpointSequence: checkpoint.checkpointSequence,
+      previousProfilePath: updated.previousProfilePath!,
+    };
+  } catch (error) {
+    if (newProfileVerified) {
+      throw error instanceof Error &&
+          error.message === "checkpoint_acceptance_journal_cleanup_failed"
+        ? error
+        : new Error("checkpoint_acceptance_journal_cleanup_failed");
+    }
+    if (profileReplaced) {
+      try {
+        options.dependencies?.beforeProfileRestore?.();
+        (options.dependencies?.restoreProfileBytes ?? restoreAuthorityProfileBytes)(
+          profilePath,
+          originalProfileBytes,
+        );
+        const restored = readAuthorityOpsProfileForRecovery(profilePath, options);
+        const restoredDescriptor = readSqliteAuthorityManifestDescriptor(
+          restored.authorityManifestPath!,
+        );
+        resolveAuthorityManifestChain(restored);
+        if (
+          restored.authorityManifestPath !== profile.authorityManifestPath ||
+          restored.sourceBackupPath !== profile.sourceBackupPath ||
+          restoredDescriptor.checkpointSequence !== predecessor.checkpointSequence ||
+          restoredDescriptor.checkpointId !== predecessor.checkpointId
+        ) {
+          throw new Error("checkpoint_profile_restore_failed");
+        }
+        options.dependencies?.beforeAcceptanceJournalCleanup?.();
+        removeCheckpointAcceptanceJournal(profilePath);
+        journalInstalled = false;
+      } catch {
+        try { options.dependencies?.afterProfileRestoreFailure?.(); } catch { /* journal is already durable */ }
+        throw new Error("checkpoint_profile_restore_failed");
+      }
+    } else if (journalInstalled) {
+      try {
+        const prior = readAuthorityOpsProfileForRecovery(profilePath, options);
+        resolveAuthorityManifestChain(prior);
+        if (
+          profileHash(prior) !== profileHash(profile)
+        ) throw new Error("checkpoint_profile_restore_failed");
+        options.dependencies?.beforeAcceptanceJournalCleanup?.();
+        removeCheckpointAcceptanceJournal(profilePath);
+        journalInstalled = false;
+      } catch {
+        throw new Error("checkpoint_profile_restore_failed");
+      }
+    }
+    if (
+      error instanceof Error &&
+      [
+        "checkpoint_profile_restore_failed",
+        "checkpoint_acceptance_fence_failed",
+        "checkpoint_acceptance_journal_create_failed",
+        "checkpoint_acceptance_journal_invalid",
+        "checkpoint_acceptance_journal_cleanup_failed",
+      ].includes(error.message)
+    ) {
+      throw error;
+    }
+    throw new Error("checkpoint_final_verification_failed");
+  } finally {
+    releaseAcceptanceFences();
+  }
 };
 
 const sha256File = (filePath: string): string =>
@@ -605,8 +837,12 @@ export const buildAuthorityOpsStartPlan = (
     profile.enabledWriteCapabilities,
   );
   const apiOrigin = `http://${profile.viteHost}:${profile.vitePort}`;
+  const inheritedChildEnvironment = (): NodeJS.ProcessEnv => {
+    const names = ["PATH", "Path", "SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOME", "HOMEDRIVE", "HOMEPATH", "LANG", "LC_ALL", "TERM", "WT_SESSION"];
+    return Object.fromEntries(names.flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]]])) as NodeJS.ProcessEnv;
+  };
   const apiEnvironment: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...inheritedChildEnvironment(),
     PORT: String(profile.apiPort),
     [AUTHORITY_PROFILE_PATH_ENV_VAR]: path.resolve(profilePath),
     [SQLITE_PATH_ENV_VAR]: profile.activeDatabasePath,
@@ -623,7 +859,7 @@ export const buildAuthorityOpsStartPlan = (
       ? "http-sqlite-authoritative"
       : "http-sqlite-rehearsal";
   const viteEnvironment: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...inheritedChildEnvironment(),
     VITE_PERSONAL_FINANCE_LOCAL_API_URL: `http://${profile.apiHost}:${profile.apiPort}`,
     VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN: token,
     VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND: frontendMode,

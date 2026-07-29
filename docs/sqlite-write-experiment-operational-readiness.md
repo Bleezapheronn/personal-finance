@@ -1,5 +1,9 @@
 # SQLite Write Experiment Operational Readiness
 
+> Historical write-experiment readiness record. It is not the living
+> operational authority document; use `docs/PROJECT_STATE.md` for current
+> SQLite authority, activation, checkpoint, and backup status.
+
 Status at `budget-snapshot-generation-phase1-complete-baseline`:
 the current local SQLite write experiments are implemented, verified, and
 safe to leave committed but disabled. Dexie / IndexedDB remains authoritative.

@@ -72,9 +72,7 @@ describe("SQLite main-app workflow parity cleanup", () => {
 
   it("opens a browser only when the launcher is explicitly asked", () => {
     const launcher = source("scripts/Start-PersonalFinance.ps1");
-    expect(launcher).toContain("[switch]$OpenBrowser");
-    expect(launcher).toContain("[string]$BrowserPath");
-    expect(launcher).toContain("if ($OpenBrowser) {");
-    expect(launcher).toContain("Start-Process -FilePath $BrowserPath -ArgumentList $viteUrl");
+    expect(launcher).not.toContain("OpenBrowser");
+    expect(launcher).not.toContain("BrowserPath");
   });
 });

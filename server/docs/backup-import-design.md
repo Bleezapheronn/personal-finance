@@ -1,5 +1,7 @@
 # Backup Import Design
 
+> Historical import-design record. Current authority is SQLite through the local API; see `docs/PROJECT_STATE.md`.
+
 This document designs a future full JSON backup to disposable SQLite import flow. It is documentation only. It does not implement an importer, add SQLite runtime code, create a database file, or make SQLite authoritative.
 
 Dexie / IndexedDB remains the source of truth.

@@ -1,5 +1,7 @@
 # SQLite Schema Notes
 
+> Historical schema notes. Current authority is SQLite through the local API; see `docs/PROJECT_STATE.md`.
+
 This note describes `server/schema/prototype-schema.sql`. It is a prototype draft only. It is not production migration approval, and it does not replace the Dexie / IndexedDB database.
 
 Dexie remains authoritative until a separate migration is approved, implemented, compared, backed up, and verified.

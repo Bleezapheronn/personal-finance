@@ -1,5 +1,7 @@
 # Recipients Real-Write Implementation Summary
 
+> Historical implementation summary; current authority is SQLite through the local API. See `docs/PROJECT_STATE.md`.
+
 This is a concise status summary for the completed Recipients write endpoint
 layer at baseline tag `recipients-create-update-real-write-baseline`.
 

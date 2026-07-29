@@ -1,5 +1,7 @@
 # Recipient Activate Real-Write Implementation Review
 
+> Historical implementation review; current authority is SQLite through the local API. See `docs/PROJECT_STATE.md`.
+
 This is a documentation-only review of the implemented recipient activate
 real-write endpoint. Recipient deactivate was implemented later as a separate
 approved slice; this review remains activate-specific.

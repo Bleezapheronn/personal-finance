@@ -1,5 +1,7 @@
 # Recipients Write Dry-Run Design Review
 
+> Historical design review; current authority is SQLite through the local API. See `docs/PROJECT_STATE.md`.
+
 This is a documentation-only review of
 [recipients-write-dry-run-design.md](recipients-write-dry-run-design.md)
 against the current Dexie-backed Recipients behavior. It does not implement

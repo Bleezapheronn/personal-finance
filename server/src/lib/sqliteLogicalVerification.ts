@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { AUTHORITY_MUTATION_DOMAIN_DEFINITIONS } from "./authorityMutationDomains.js";
 import { createHash } from "node:crypto";
 import {
   readSqliteFinancialAggregateSummary,
@@ -71,6 +72,128 @@ export const stableJson = (value: unknown): string =>
 
 export const fingerprintLogicalValue = (value: unknown): string =>
   sha256(stableJson(value));
+
+const quoteIdentifier = (value: string): string =>
+  `"${value.replaceAll('"', '""')}"`;
+
+/**
+ * Canonical in-session authority fingerprint. Unlike the broader operational
+ * verification below, this value has no date-dependent report inputs. It is
+ * safe to compare before and after one SQLite writer transaction.
+ */
+export const readCanonicalAuthorityLogicalFingerprint = (
+  db: Database.Database,
+): string => {
+  assertRequiredTablesExist(db);
+  const schemaObjects = db.prepare(
+    `SELECT type, name, tbl_name AS tableName, sql
+     FROM sqlite_master
+     WHERE name NOT LIKE 'sqlite_%'
+     ORDER BY type ASC, name ASC`,
+  ).all();
+  const tables = (
+    db.prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+       ORDER BY name ASC`,
+    ).all() as Array<{ name: string }>
+  ).map(({ name }) => name);
+  const hash = createHash("sha256");
+  hash.update(stableJson({
+    mutationLogicalFingerprintVersion: 1,
+    pragmas: {
+      applicationId: Number(db.pragma("application_id", { simple: true })),
+      autoVacuum: Number(db.pragma("auto_vacuum", { simple: true })),
+      encoding: String(db.pragma("encoding", { simple: true })),
+      foreignKeys: Number(db.pragma("foreign_keys", { simple: true })),
+      recursiveTriggers: Number(db.pragma("recursive_triggers", { simple: true })),
+      userVersion: Number(db.pragma("user_version", { simple: true })),
+    },
+    schemaObjects,
+    tables,
+  }));
+  hash.update("\n");
+  for (const table of tables) {
+    const columns = (
+      db.pragma(`table_info(${quoteIdentifier(table)})`) as Array<{
+        cid: number;
+        name: string;
+        pk: number;
+      }>
+    ).sort((left, right) => left.cid - right.cid);
+    if (columns.length === 0) throw new Error("mutation_fingerprint_failed");
+    const columnNames = columns.map(({ name }) => name);
+    const primaryKey = columns
+      .filter(({ pk }) => pk > 0)
+      .sort((left, right) => left.pk - right.pk)
+      .map(({ name }) => name);
+    const selected = columnNames.map(quoteIdentifier).join(", ");
+    const order = (primaryKey.length > 0 ? primaryKey : columnNames)
+      .map(quoteIdentifier).join(", ");
+    const rows = db.prepare(
+      `SELECT ${selected} FROM ${quoteIdentifier(table)} ORDER BY ${order}`,
+    ).all() as Record<string, unknown>[];
+    hash.update(stableJson({
+      table,
+      columns: columns.map(({ cid, name, pk }) => ({ cid, name, pk })),
+    }));
+    hash.update("\n");
+    for (const row of rows) {
+      hash.update(stableJson(columnNames.map((field) => [field, canonicalize(row[field])])));
+      hash.update("\n");
+    }
+  }
+  const sequenceRows = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
+  ).get()
+    ? db.prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name ASC").all()
+    : [];
+  hash.update(stableJson({ sqliteSequence: sequenceRows }));
+  return hash.digest("hex");
+};
+
+export const readCanonicalAuthorityLogicalFingerprintAtPath = (
+  databasePath: string,
+): string => {
+  const db = openReadOnlyDatabase(databasePath);
+  try {
+    return readCanonicalAuthorityLogicalFingerprint(db);
+  } finally {
+    db.close();
+  }
+};
+
+/** Diagnostic-only table proofs for every registered authoritative domain. */
+export const readAuthorityMutationDomainFingerprints = (
+  db: Database.Database,
+): Record<string, string> => {
+  const result: Record<string, string> = {};
+  for (const { domain, tables, representation } of AUTHORITY_MUTATION_DOMAIN_DEFINITIONS) {
+    const tableProofs = tables.map((table) => {
+    const columns = (db.pragma(`table_info(${quoteIdentifier(table)})`) as Array<{
+      cid: number;
+      name: string;
+      pk: number;
+    }>).sort((left, right) => left.cid - right.cid);
+    if (columns.length === 0) throw new Error("mutation_fingerprint_failed");
+    const names = columns.map(({ name }) => name);
+    const primaryKey = columns.filter(({ pk }) => pk > 0)
+      .sort((left, right) => left.pk - right.pk).map(({ name }) => name);
+    const rows = db.prepare(
+      `SELECT ${names.map(quoteIdentifier).join(", ")} FROM ${quoteIdentifier(table)}
+       ORDER BY ${(primaryKey.length > 0 ? primaryKey : names).map(quoteIdentifier).join(", ")}`,
+    ).all() as Record<string, unknown>[];
+    return {
+      table,
+      representation,
+      columns: columns.map(({ cid, name, pk }) => ({ cid, name, pk })),
+      rows: rows.map((row) => names.map((name) => [name, canonicalize(row[name])])),
+    };
+    });
+    result[domain] = fingerprintLogicalValue({ domain, tables: tableProofs });
+  }
+  return result;
+};
 
 const normalizeField = (
   table: FullBackupTableName,

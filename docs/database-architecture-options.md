@@ -1,5 +1,8 @@
 # Database Architecture Options
 
+> Historical architecture-options record. Its proposed/future-state language
+> is superseded for current operations by `docs/PROJECT_STATE.md`.
+
 This note compares realistic future paths for the app's data layer. It is planning documentation only; it is not an implementation decision, migration plan approval, or schema rewrite.
 
 ## Current State

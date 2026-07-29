@@ -1,5 +1,7 @@
 # Recipients Real-Write Readiness Gate
 
+> Historical readiness gate; current authority is SQLite through the local API. See `docs/PROJECT_STATE.md`.
+
 This is a documentation-only gate for any future Recipients real-write
 endpoint. It does not implement write endpoints, repository write adapters,
 server mutation handlers, UI wiring, Dexie writes, SQLite writes, dual-write,

@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-07-26
+Updated: 2026-07-29
 
 ## Authority
 
@@ -18,8 +18,19 @@ Use the documented profile-specific launcher outside Git. Before starting an
 authoritative runtime, verify its profile and checkpoint lineage with the
 authority operations `status`, `verify`, and `start --dry-run` commands.
 
-Stop the runtime cleanly before checkpointing. Confirm the authority lock and
-SQLite WAL/SHM files are absent before backup, restore, or rotation operations.
+Use `authority:ops stop` for a clean runtime stop; closing a browser tab does
+not stop the API or supervisor. In the foreground unified runtime, Ctrl+C is
+owned by the supervisor and enters this same authenticated shutdown path;
+supervisor-owned API and Vite children ignore inherited console interrupts.
+The authenticated stop closes the authoritative write gate, drains accepted
+requests, closes Fastify and SQLite, writes the clean receipt from the stopped
+database, and requires the exact API child to exit successfully before
+automatic checkpointing is eligible. An unexpected Vite exit takes the abort
+path, never checkpoints automatically, preserves the changed database and
+prior profile, and requires explicit review. Confirm the authority lock and
+SQLite WAL/SHM files are absent before backup, restore, or rotation
+operations. Controlled manual Ctrl+C acceptance completed successfully on
+2026-07-29; standalone API and Vite processes are outside this contract.
 Create a fresh verified checkpoint before operational changes. Use disposable
 copies for acceptance tests and never open a checkpoint backup as a writable
 runtime.
@@ -27,6 +38,14 @@ runtime.
 ## Current safety model
 
 - Mutations are authenticated, capability-gated, dry-run-first, explicitly confirmed, and exact-targeted.
+- Live authoritative mutations are serialized under `BEGIN IMMEDIATE` and a
+  trusted canonical logical-state chain. Mutation counts alone are not trust
+  evidence. Direct SQLite changes irreversibly contaminate the session, prevent
+  automatic checkpointing, preserve the changed database for review, and leave
+  the prior profile authoritative.
+- Clean receipts, stopped active state, safety backups, and checkpoint
+  candidates must agree on the final logical fingerprint in addition to the
+  existing physical fingerprint, quiescence, and lineage checks.
 - Atomic operations must preserve transaction, transfer, budget, and snapshot invariants.
 - Budget snapshot generation, pruning, repair, and direction/sign changes remain deliberate lifecycle operations.
 - Focused tests are preferred; unrelated refactors and broad data audits are out of scope for ordinary changes.

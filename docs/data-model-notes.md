@@ -1,5 +1,8 @@
 # Data Model Notes
 
+> Historical Dexie data-model notes. Current operational authority is SQLite
+> through the local API; see `docs/PROJECT_STATE.md`.
+
 These notes document important invariants for future maintainers and AI coding agents. The active database is browser IndexedDB through Dexie, with table definitions and interfaces in `src/db.ts`.
 
 ## Core Tables

@@ -1,5 +1,9 @@
 # Budget Repository Read Design
 
+> Historical design record for the Dexie-read migration stage. It is superseded
+> for current operations by the SQLite authority described in
+> `docs/PROJECT_STATE.md`.
+
 This is a planning note for a future read-only `BudgetRepository` slice. It does not approve a schema change, backend migration, budget model rewrite, or any change to budget snapshot lifecycle behavior.
 
 The current source of truth remains Dexie / IndexedDB. Budget snapshots are sensitive because they preserve occurrence-specific history and are used as the canonical transaction-to-budget linkage when `transaction.budgetSnapshotId` is present.

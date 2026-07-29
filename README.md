@@ -1,6 +1,6 @@
 # Personal Finance
 
-An offline-first personal finance tracker built from a spreadsheet-based accounting and budget workflow. The app is local-first and private by default: the browser IndexedDB database is currently the source of truth, and no cloud sync is required for normal use.
+An offline-first personal finance tracker built from a spreadsheet-based accounting and budget workflow. The app is local-first and private by default: the local SQLite API and its authoritative profile are the current source of truth, and no cloud sync is required for normal use.
 
 This project tracks transactions, budgets, budget snapshots, accounts, recipients, categories, SMS import templates, reports, and safety/debug tooling in one Ionic React app.
 
@@ -11,7 +11,8 @@ This project tracks transactions, budgets, budget snapshots, accounts, recipient
 - React Router 5
 - Vite 5
 - TypeScript
-- Dexie / IndexedDB
+- SQLite local API (authoritative runtime)
+- Dexie / IndexedDB (legacy compatibility)
 - Capacitor
 - Recharts
 - Vitest and Cypress
@@ -29,11 +30,13 @@ This project tracks transactions, budgets, budget snapshots, accounts, recipient
 
 ## Data Safety
 
-The app stores financial data locally in browser IndexedDB through Dexie. That keeps the app private by default, but it also means the browser profile is the active database location.
+The current runtime stores authoritative financial data in SQLite behind the authenticated, capability-gated local API. Dexie/IndexedDB remains only for legacy compatibility and migration context; it is not an authoritative write target.
+
+The normal application workflow is the unified supervised runtime. Operators must use its authenticated stop workflow: closing a browser tab alone does not stop the backend. A clean trusted session that changed SQLite can create an automatic authority checkpoint; an unchanged session does not create another checkpoint. Checkpoints and automatic backups are separate mechanisms, and automatic backups do not substitute for authority checkpoints. Production activation remains gated pending controlled live acceptance.
 
 Backups are essential:
 
-- Full JSON backup captures every current Dexie table, including `transactions`, `budgets`, `budgetSnapshots`, `accounts`, `categories`, `recipients`, and SMS import templates.
+- Full JSON backup remains legacy/migration tooling; operational backups and authority checkpoints are managed separately from the authoritative SQLite runtime.
 - Full restore always runs dry-run validation first.
 - Restore is destructive and requires the explicit confirmation phrase `RESTORE MY FINANCE DATABASE`.
 - The database health check can be run after restore to verify references, transfer pairs, row counts, and known integrity issues.
@@ -43,8 +46,8 @@ See [Backup and Restore](docs/backup-restore.md) for the recommended safety work
 
 ## Architecture Notes
 
-- Browser IndexedDB is currently the source of truth.
-- Dexie table definitions and data interfaces live in [src/db.ts](src/db.ts).
+- The local SQLite API and its authoritative profile are the current source of truth.
+- Dexie table definitions and data interfaces in [src/db.ts](src/db.ts) are legacy compatibility and migration context.
 - Application code enforces relationships and integrity rules; IndexedDB does not enforce foreign keys.
 - Expenses are stored as negative amounts. Income is stored as positive amounts.
 - Transfers are stored as two transaction rows linked reciprocally by `transferPairId`.
@@ -113,17 +116,17 @@ Important utility areas:
 
 ## Current Constraints
 
-- The active database is browser-specific. Moving to a browser-agnostic local database or backend is under consideration.
-- Full JSON backups should be taken before destructive actions, browser changes, or major code changes.
+- SQLite authority state is an operational asset, not disposable. Use verified checkpoints and supported backup/restore workflows; do not delete or recreate it casually.
+- Use disposable SQLite copies for tests and rehearsals, never as a replacement for authority checkpoints.
 - Budget snapshots preserve occurrence details and should not be casually rewritten.
 - The budget model is functional but due for a future model-v2 review.
 - Transfer exchange-rate and transaction-cost handling has known complexity and should be changed carefully.
 
 ## Privacy
 
-- Local-first storage in the browser via IndexedDB.
+- Local-first authoritative storage in SQLite through the local API; Dexie/IndexedDB is legacy compatibility only.
 - No required cloud account.
-- No server-side database in the current architecture.
+- The local API is the trusted write boundary and is not exposed as a network service.
 - Backup files can contain complete financial history and should be stored carefully.
 
 ## License

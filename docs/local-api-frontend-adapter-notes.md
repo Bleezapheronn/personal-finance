@@ -1,5 +1,7 @@
 # Local API Frontend Adapter Notes
 
+> Historical adapter experiment notes. They do not describe the current authority model; see `docs/PROJECT_STATE.md`.
+
 SQLite Authority Cutover Phase 1 adds the explicit
 `http-sqlite-authoritative` backend. It remains disabled by default and needs
 `VITE_PERSONAL_FINANCE_SQLITE_AUTHORITY_ENABLED=true` plus a server that reports

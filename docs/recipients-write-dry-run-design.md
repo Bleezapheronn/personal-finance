@@ -1,5 +1,7 @@
 # Recipients Write Dry-Run Design
 
+> Historical design record; current authority is SQLite through the local API. See `docs/PROJECT_STATE.md`.
+
 This is a documentation-only design for a future Recipients write dry-run
 phase. It is not implementation. It does not add endpoints, mutation handlers,
 repository write adapters, UI wiring, Dexie writes, SQLite writes, dual-write,
