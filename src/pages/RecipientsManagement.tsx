@@ -43,7 +43,6 @@ import {
   AddRecipientModal,
   type RecipientFormValues,
 } from "../components/AddRecipientModal";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import { findAllDuplicatePairs } from "../utils/recipientMerge";
 import { MergeRecipientsModal } from "../components/MergeRecipientsModal";
 import { recipientRepository, transactionRepository } from "../repositories";
@@ -401,7 +400,7 @@ const RecipientsManagement: React.FC = () => {
    */
   const handleRecipientSaved = async () => {
     if (recipientsHttpReadonlyWithoutWrites) {
-      setToastMessage("Writes are disabled in the recipients read experiment");
+      setToastMessage("Recipient writes are currently blocked in this backend mode.");
       setShowToast(true);
       return;
     }
@@ -423,7 +422,7 @@ const RecipientsManagement: React.FC = () => {
    */
   const handleEditRecipient = (recipient: Recipient) => {
     if (recipientsHttpReadonlyWithoutWrites) {
-      setToastMessage("Switch back to Dexie to edit recipients");
+      setToastMessage("Recipient editing is unavailable in the current backend mode.");
       setShowToast(true);
       return;
     }
@@ -455,7 +454,7 @@ const RecipientsManagement: React.FC = () => {
     }
 
     if (recipientsHttpReadonlyWithoutWrites) {
-      setToastMessage("Switch back to Dexie to edit recipients");
+      setToastMessage("Recipient active-state changes are unavailable in the current backend mode.");
       setShowToast(true);
       setDeleteState({ type: "none" });
       return;
@@ -522,7 +521,7 @@ const RecipientsManagement: React.FC = () => {
     }
 
     if (recipientsHttpSelectedReadActive) {
-      setToastMessage("Delete is not available in the recipients SQLite write experiment");
+      setToastMessage("Recipient delete is unavailable in the current backend mode.");
       setShowToast(true);
       setDeleteState({ type: "none" });
       return;
@@ -575,7 +574,7 @@ const RecipientsManagement: React.FC = () => {
     }
 
     if (recipientsHttpReadonlyWithoutWrites) {
-      setToastMessage("Switch back to Dexie to edit recipients");
+      setToastMessage("Recipient active-state changes are unavailable in the current backend mode.");
       setShowToast(true);
       return;
     }
@@ -817,7 +816,7 @@ const RecipientsManagement: React.FC = () => {
     }
 
     if (recipientsHttpSelectedReadActive) {
-      setToastMessage("Delete is not available in the recipients SQLite write experiment");
+      setToastMessage("Recipient delete is unavailable in the current backend mode.");
       setShowToast(true);
       return;
     }
@@ -917,7 +916,6 @@ const RecipientsManagement: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Recipients</IonTitle>
-          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 
@@ -930,7 +928,7 @@ const RecipientsManagement: React.FC = () => {
             onLoad={() => void loadSelectedReadPreview()}
             description={
               recipientsSqliteWriteExperimentActive
-                ? "This preview uses the selected read facade only when manually loaded. The active write experiment is separate and still does not enable delete or merge."
+                ? "This preview uses the selected read facade only when manually loaded. It does not change current delete or merge availability."
                 : "This preview uses the selected read facade only when manually loaded. It does not replace this management screen or change create, edit, delete, search, or merge actions."
             }
           >
@@ -1039,12 +1037,12 @@ const RecipientsManagement: React.FC = () => {
                     {recipientsSqliteWriteExperimentActive
                       ? rehearsal.authoritativeMode
                         ? recipientDeleteMergeWriteExperimentActive
-                          ? "SQLite authoritative mode is active. Recipient delete and merge use dry-run-first exact-reference lifecycle writes."
-                          : "SQLite authoritative mode is active. Recipient create/update/active-state writes remain available; delete and merge require their separate capability and frontend flag."
-                        : "Recipients SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
+                          ? "Recipient management uses verified SQLite. Create, update, activate/deactivate, delete, and merge remain dry-run-first and capability-gated."
+                          : "Recipient management uses verified SQLite. Create, update, and active-state writes are available; delete and merge are unavailable until their capability is enabled."
+                        : "Recipient writes are available in SQLite rehearsal mode with the current write capabilities."
                       : recipientsHttpReadonlyWithoutWrites
-                        ? "Recipients read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie or enable the dev write experiment to edit."
-                        : "Recipients experiment flag is active with the Dexie backend. Existing Dexie write behavior remains available."}
+                        ? "Recipients are currently read-only in the selected backend mode. Write actions are blocked until write capabilities are available."
+                        : "Recipients are using the default local repository mode."}
                   </p>
                   <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
                     Backend: {selectedBackend}
@@ -1055,7 +1053,7 @@ const RecipientsManagement: React.FC = () => {
                     {recipientsSqliteWriteExperimentActive &&
                       (recipientDeleteMergeWriteExperimentActive
                         ? " Delete is unused-only; merge moves exact stored IDs and preserves the target."
-                        : " Delete and merge remain unavailable.")}
+                        : " Delete and merge are unavailable.")}
                   </p>
                 </div>
               </div>

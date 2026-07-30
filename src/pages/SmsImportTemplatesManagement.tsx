@@ -72,7 +72,6 @@ import {
   stringValue,
 } from "../utils/devPreview";
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 
 type LocalAccount = Account;
 
@@ -221,7 +220,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
   const showReadExperimentActionDisabledToast = () => {
     setToastMessage(
-      "Enable the SMS template write experiment or switch back to Dexie",
+      "SMS template write actions are unavailable in the current backend mode.",
     );
     setShowToast(true);
   };
@@ -610,7 +609,6 @@ const SmsImportTemplatesManagement: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>SMS Import Templates</IonTitle>
-          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 
@@ -718,11 +716,11 @@ const SmsImportTemplatesManagement: React.FC = () => {
                   <IonIcon icon={warningOutline} />{" "}
                   {smsTemplatesSqliteWriteExperimentActive
                     ? rehearsal.authoritativeMode
-                      ? "SQLite authoritative mode is active. Supported SMS Template writes use the verified local SQLite database. Saving templates does not import or modify transactions."
-                      : "SMS Import Templates SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Saving templates does not import or modify transactions."
+                      ? "SMS template management uses verified SQLite. Create, update, activate/deactivate, and delete are available with dry-run-first safety checks."
+                      : "SMS template writes are available in SQLite rehearsal mode with the current write capabilities."
                     : smsTemplatesReadExperimentHttpReadonly
-                    ? "SMS Templates read experiment is active. List is loaded through selected-read `http-readonly`; writes, imports, and test-parse actions are disabled. Switch back to Dexie to edit."
-                    : "SMS Templates read experiment flag is active with the Dexie backend. Existing Dexie write, import, and test-parse behavior remains available."}
+                    ? "SMS templates are currently read-only in the selected backend mode. Write, import, and test-parse actions are blocked."
+                    : "SMS templates are using the default local repository mode."}
                 </p>
                 {smsTemplatesSqliteWriteExperimentActive && (
                   <p>
@@ -734,9 +732,8 @@ const SmsImportTemplatesManagement: React.FC = () => {
                 )}
                 {smsTemplatesHttpReadonlyWithoutWrites && (
                   <p>
-                    This is a list-only experiment. Regex and pattern values are
-                    not shown unless you switch back to Dexie and open the edit
-                    workflow.
+                    This is a list-only read mode. Regex and pattern values are
+                    not shown in this view.
                   </p>
                 )}
                 {smsTemplatesReadExperimentHttpReadonly &&
@@ -761,7 +758,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
             {templates.length === 0 ? (
               <p>
                 {smsTemplatesReadExperimentHttpReadonly
-                  ? "No SMS import templates were loaded by the read experiment."
+                  ? "No SMS import templates were loaded in the current read-only mode."
                   : "No SMS import templates yet. Tap the + button to add one."}
               </p>
             ) : (

@@ -62,7 +62,6 @@ import {
   AddAccountModal,
   type AccountFormValues,
 } from "../components/AddAccountModal";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import { accountRepository, transactionRepository } from "../repositories";
 import {
   getRepositoryBackend,
@@ -263,7 +262,7 @@ const AccountsManagement: React.FC = () => {
   };
 
   const showReadExperimentWriteDisabledToast = () => {
-    setToastMessage("Switch back to Dexie to edit accounts");
+    setToastMessage("Account editing is unavailable in the current backend mode.");
     setShowToast(true);
   };
 
@@ -687,7 +686,6 @@ const AccountsManagement: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Accounts</IonTitle>
-          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 
@@ -782,12 +780,12 @@ const AccountsManagement: React.FC = () => {
                   {accountsSqliteWriteExperimentActive
                     ? rehearsal.authoritativeMode
                       ? accountDeleteMergeWriteExperimentActive
-                        ? "SQLite authoritative mode is active. Account delete and merge use dry-run-first exact-reference lifecycle writes."
-                        : "SQLite authoritative mode is active. Supported Account create/update writes use the verified local SQLite database; delete and merge require their separate capability and frontend flag."
-                      : "Accounts SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
+                        ? "Account management uses verified SQLite. Create, update, delete, and merge remain dry-run-first and capability-gated."
+                        : "Account management uses verified SQLite. Create and update are available; delete and merge are unavailable until their capability is enabled."
+                      : "Account writes are available in SQLite rehearsal mode with the current write capabilities."
                     : accountsReadExperimentHttpReadonly
-                      ? "Accounts read experiment is active. List is loaded through selected-read `http-readonly`; writes are disabled. Switch back to Dexie to edit."
-                    : "Accounts read experiment flag is active with the Dexie backend. Existing Dexie write behavior remains available."}
+                      ? "Accounts are currently read-only in the selected backend mode. Write actions are blocked until write capabilities are available."
+                    : "Accounts are using the default local repository mode."}
                 </p>
                 {accountsReadExperimentHttpReadonly && (
                   <p>
@@ -797,7 +795,7 @@ const AccountsManagement: React.FC = () => {
                     state, or images. Active-state actions remain unavailable.
                     {accountDeleteMergeWriteExperimentActive
                       ? " Delete is unused-only; merge requires matching currency and credit classification and refuses unsafe transfers."
-                      : " Delete and merge remain unavailable."}
+                      : " Delete and merge are unavailable."}
                   </p>
                 )}
                 {accountsReadExperimentHttpReadonly &&
@@ -821,7 +819,7 @@ const AccountsManagement: React.FC = () => {
             {accounts.length === 0 ? (
               <p>
                 {accountsReadExperimentHttpReadonly
-                  ? "No accounts were loaded by the read experiment."
+                  ? "No accounts were loaded in the current read-only mode."
                   : "No accounts yet. Tap the + button to add one."}
               </p>
             ) : (

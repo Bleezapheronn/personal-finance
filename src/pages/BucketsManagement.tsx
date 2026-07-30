@@ -52,7 +52,6 @@ import {
   AddCategoryModal,
   type CategoryFormValues,
 } from "../components/AddCategoryModal";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import {
   getRepositoryBackend,
   isSqliteAuthorityControlledBackend,
@@ -319,7 +318,7 @@ const BucketsManagement: React.FC = () => {
 
   const showReadExperimentWriteDisabledToast = () => {
     setToastMessage(
-      "Enable the Buckets/Categories write experiment or switch back to Dexie",
+      "Bucket and category writes are unavailable in the current backend mode.",
     );
     setShowToast(true);
   };
@@ -1282,7 +1281,6 @@ const BucketsManagement: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Manage Buckets</IonTitle>
-          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 
@@ -1425,14 +1423,14 @@ const BucketsManagement: React.FC = () => {
                     {bucketsCategoriesSqliteWriteExperimentActive
                       ? rehearsal.authoritativeMode
                         ? bucketDeleteMergeWriteExperimentActive
-                          ? "SQLite authoritative mode is active. Bucket delete/merge is dry-run-first and exact-ID only; reordering remains disabled. Rotate the checkpoint after lifecycle writes."
+                          ? "Bucket and category management uses verified SQLite. Bucket delete/merge is dry-run-first and exact-ID only; reordering remains unavailable."
                           : categoryDeleteMergeWriteExperimentActive
-                            ? "SQLite authoritative mode is active. Category delete/merge is dry-run-first and exact-ID only; Bucket delete and reorder remain disabled. Rotate the checkpoint after lifecycle writes."
-                          : "SQLite authoritative mode is active. Supported Bucket and Category create/update writes use the verified local SQLite database; delete, merge, and reorder remain disabled."
-                        : "Buckets and Categories SQLite write experiment is active. Writes go to disposable local SQLite only. Dexie remains authoritative. Re-import SQLite from backup before clean parity checks."
+                            ? "Bucket and category management uses verified SQLite. Category delete/merge is dry-run-first and exact-ID only; bucket delete and reorder remain unavailable."
+                          : "Bucket and category management uses verified SQLite. Create and update are available; delete, merge, and reorder remain unavailable until lifecycle capabilities are enabled."
+                        : "Bucket and category writes are available in SQLite rehearsal mode with the current write capabilities."
                       : bucketsCategoriesReadExperimentHttpReadonly
-                        ? "Buckets/Categories read experiment is active. List is loaded through selected-read `http-readonly`; writes and reorder actions are disabled. Switch back to Dexie to edit."
-                      : "Buckets/Categories experiment flag is active with the Dexie backend. Existing Dexie write and reorder behavior remains available."}
+                        ? "Buckets and categories are currently read-only in the selected backend mode. Write and reorder actions are blocked."
+                      : "Buckets and categories are using the default local repository mode."}
                   </p>
                   <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
                     Backend: {selectedBackend}
