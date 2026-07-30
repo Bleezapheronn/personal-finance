@@ -70,6 +70,28 @@ const friendlyError = (error: unknown): string => {
 const dateText = (value?: string): string =>
   value ? new Date(value).toLocaleString() : "Not available";
 
+const backupResultText = (code?: string): string => {
+  if (!code) return "Not available";
+  if (code === "pass") return "Pass";
+  if (code === "running") return "Running";
+  if (
+    code.includes("compiled against a different Node.js version") ||
+    code.includes("NODE_MODULE_VERSION")
+  ) {
+    return "Failed: Native SQLite module is incompatible with the scheduler Node runtime.";
+  }
+  const summary = code.trim();
+  if (!summary) return "Failed";
+  return `Failed: ${summary.slice(0, 140)}${summary.length > 140 ? "..." : ""}`;
+};
+
+const backupResultColor = (code?: string): "success" | "warning" | "danger" | "medium" => {
+  if (!code) return "medium";
+  if (code === "pass") return "success";
+  if (code === "running") return "warning";
+  return "danger";
+};
+
 const styledRowEnd: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -530,6 +552,12 @@ const SqliteAuthoritySettings: React.FC = () => {
                     <IonNote slot="end">
                       {dateText(state.status.lastAttemptedAt)}
                     </IonNote>
+                  </IonItem>
+                  <IonItem>
+                    <IonLabel>Last run result</IonLabel>
+                    <IonText color={backupResultColor(state.status.lastResultCode)} slot="end">
+                      {backupResultText(state.status.lastResultCode)}
+                    </IonText>
                   </IonItem>
                   <IonItem>
                     <IonLabel>Last successful backup</IonLabel>

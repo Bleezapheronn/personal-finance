@@ -574,4 +574,28 @@ describe("SqliteAuthoritySettings automatic backups", () => {
     expect(screen.queryByText(/x-personal-finance-token/i)).toBeNull();
     expect(screen.queryByText(/Error:\s*\{/i)).toBeNull();
   });
+
+  test("last run result surfaces native module mismatch safely", async () => {
+    mockedApi.read.mockResolvedValueOnce({
+      ...baseState,
+      status: {
+        ...baseState.status,
+        lastResultCode:
+          "The module '\\\\?\\C:\\dev\\personal-finance\\server\\node_modules\\better-sqlite3\\build\\Release\\better_sqlite3.node' was compiled against a different Node.js version using NODE_MODULE_VERSION 127.",
+      },
+    });
+
+    render(<SqliteAuthoritySettings />);
+    await waitForBackupsReady();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Failed: Native SQLite module is incompatible with the scheduler Node runtime.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/better_sqlite3\.node/i)).toBeNull();
+  });
 });
