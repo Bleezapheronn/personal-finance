@@ -1,8 +1,9 @@
-# SQLite Write Experiment Operational Readiness
+# Historical SQLite Write-Experiment Operational Readiness
 
 > Historical write-experiment readiness record. It is not the living
-> operational authority document; use `docs/PROJECT_STATE.md` for current
-> SQLite authority, activation, checkpoint, and backup status.
+> Historical migration record. Use `docs/PROJECT_STATE.md` for current SQLite
+> authority, management-page behavior, activation, checkpoint, and backup
+> status.
 
 Status at `budget-snapshot-generation-phase1-complete-baseline`:
 the current local SQLite write experiments are implemented, verified, and
@@ -463,7 +464,7 @@ names, never token contents or finance rows.
 
 `sourceBackupPath` is optional. When present, `verify` also runs the complete
 six-part backup-to-SQLite comparison. Authoritative profiles require a
-matching cutover or checkpoint manifest and all ten authority-baseline
+matching cutover or checkpoint manifest and all current authority-required
 capabilities. Optional later capabilities remain disabled unless named.
 Recipient active-state and create/update capabilities are selected as a pair
 because they share one frontend gate. Unknown, duplicate, retired, incomplete,

@@ -29,11 +29,6 @@ import {
   IonReorderGroup,
   IonCard,
   IonCardContent,
-  IonText,
-  IonBadge,
-  IonSpinner,
-  IonSelect,
-  IonSelectOption,
   ItemReorderEventDetail,
 } from "@ionic/react";
 import {
@@ -44,39 +39,27 @@ import {
   closeCircleOutline,
   close,
   reorderThree,
-  warningOutline,
-  gitMergeOutline,
 } from "ionicons/icons";
-import { db, Bucket, Category } from "../db";
+import { Bucket, Category } from "../db";
 import {
   AddCategoryModal,
   type CategoryFormValues,
 } from "../components/AddCategoryModal";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityControlledBackend,
-  type RepositoryBackend,
 } from "../repositories/adapterSelection";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
-import { categoryRepository, transactionRepository } from "../repositories";
-import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
 import {
   booleanValue,
   type DevPreviewListResult,
-  isSelectedReadPreviewsEnabled,
   numberValue,
-  previewCount,
   previewRows,
-  safePreviewErrorCode,
-  sampledIds,
   stringValue,
 } from "../utils/devPreview";
 import {
   bucketCategoryWriteErrorCode,
   createBucketInDisposableSqlite,
   createCategoryInDisposableSqlite,
-  isBucketsCategoriesWriteExperimentEnabled,
   type BucketWriteInput,
   updateBucketInDisposableSqlite,
   updateCategoryInDisposableSqlite,
@@ -84,19 +67,14 @@ import {
 import {
   categoryLifecycleErrorCode,
   dryRunCategoryDelete,
-  dryRunCategoryMerge,
-  isCategoryDeleteMergeWriteExperimentEnabled,
   writeCategoryDelete,
-  writeCategoryMerge,
 } from "../repositories/http/categoryDeleteMergeWriteExperiment";
 import {
   bucketLifecycleErrorCode,
   dryRunBucketDelete,
-  dryRunBucketMerge,
-  isBucketDeleteMergeWriteExperimentEnabled,
   writeBucketDelete,
-  writeBucketMerge,
 } from "../repositories/http/bucketDeleteMergeWriteExperiment";
+import { reorderBuckets, writeLookupActiveState } from "../repositories/http/lookupActiveStateWrite";
 
 /**
  * BucketsManagement
@@ -130,48 +108,7 @@ type DeleteCategoryState =
       planFingerprint?: string;
     };
 
-interface SelectedReadPreviewRow {
-  id?: number;
-}
-
-interface SelectedReadCategoryPreviewRow extends SelectedReadPreviewRow {
-  bucketId?: number;
-  isActive?: boolean | null;
-}
-
-interface SelectedReadBucketPreviewRow extends SelectedReadPreviewRow {
-  displayOrder?: number;
-  isActive?: boolean | null;
-}
-
-interface SelectedReadCategoriesPreview {
-  status: "pass" | "fail";
-  backend: RepositoryBackend;
-  source: string;
-  categories: {
-    count?: number;
-    loadedRowCount?: number;
-    sampledIds?: number[];
-    rows: SelectedReadCategoryPreviewRow[];
-  };
-  buckets: {
-    count?: number;
-    loadedRowCount?: number;
-    sampledIds?: number[];
-    rows: SelectedReadBucketPreviewRow[];
-  };
-  errorCode?: string;
-}
-
-const SELECTED_READ_PREVIEW_LIMIT = 20;
-const BUCKETS_CATEGORIES_READ_EXPERIMENT_FLAG =
-  "VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_READ_EXPERIMENT";
-const BUCKETS_CATEGORIES_READ_EXPERIMENT_LIMIT = 500;
-
-const isBucketsCategoriesReadExperimentEnabled = (): boolean => {
-  const env = import.meta.env as Record<string, string | undefined>;
-  return env[BUCKETS_CATEGORIES_READ_EXPERIMENT_FLAG]?.trim() === "true";
-};
+const LOOKUP_LIST_LIMIT = 500;
 
 const dateValue = (value: unknown): Date => {
   if (value instanceof Date) {
@@ -252,25 +189,6 @@ const BucketsManagement: React.FC = () => {
   const [showToast, setShowToast] = useState(false);
   const [alertMessage] = useState("");
   const [showAlert, setShowAlert] = useState(false);
-  const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
-  const [selectedReadPreview, setSelectedReadPreview] =
-    useState<SelectedReadCategoriesPreview | null>(null);
-  const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
-    useState(false);
-  const [bucketsReadExperimentCount, setBucketsReadExperimentCount] =
-    useState<number | undefined>(undefined);
-  const [categoriesReadExperimentCount, setCategoriesReadExperimentCount] =
-    useState<number | undefined>(undefined);
-  const [mergeSourceCategory, setMergeSourceCategory] =
-    useState<Category | null>(null);
-  const [mergeTargetCategoryId, setMergeTargetCategoryId] =
-    useState<number | undefined>(undefined);
-  const [categoryLifecycleBusy, setCategoryLifecycleBusy] = useState(false);
-  const [mergeSourceBucket, setMergeSourceBucket] = useState<Bucket | null>(null);
-  const [mergeTargetBucketId, setMergeTargetBucketId] = useState<
-    number | undefined
-  >(undefined);
-  const [bucketLifecycleBusy, setBucketLifecycleBusy] = useState(false);
 
   // modal states
   const [showBucketModal, setShowBucketModal] = useState(false);
@@ -283,89 +201,20 @@ const BucketsManagement: React.FC = () => {
   );
 
   const selectedBackend = getRepositoryBackend();
-  const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
-  const bucketsCategoriesReadExperimentEnabled =
-    isBucketsCategoriesReadExperimentEnabled();
-  const bucketsCategoriesWriteExperimentEnabled =
-    isBucketsCategoriesWriteExperimentEnabled();
-  const categoryDeleteMergeWriteExperimentEnabled =
-    isCategoryDeleteMergeWriteExperimentEnabled();
-  const bucketDeleteMergeWriteExperimentEnabled =
-    isBucketDeleteMergeWriteExperimentEnabled();
-  const bucketsCategoriesSqliteWriteExperimentActive =
-    (bucketsCategoriesWriteExperimentEnabled &&
-      selectedBackend === "http-readonly") ||
-    (rehearsalSelected && rehearsal.ready);
-  const bucketsCategoriesReadExperimentHttpReadonly =
-    rehearsalSelected ||
-    ((bucketsCategoriesReadExperimentEnabled ||
-      bucketsCategoriesWriteExperimentEnabled) &&
-      selectedBackend === "http-readonly");
-  const bucketsCategoriesHttpReadonlyWithoutWrites =
-    bucketsCategoriesReadExperimentHttpReadonly &&
-    !bucketsCategoriesSqliteWriteExperimentActive;
-  const categoryDeleteMergeWriteExperimentActive =
-    rehearsalSelected &&
-    rehearsal.ready &&
-    rehearsal.categoryDeleteMergeWritesAvailable &&
-    categoryDeleteMergeWriteExperimentEnabled;
-  const bucketDeleteMergeWriteExperimentActive =
-    rehearsalSelected &&
-    rehearsal.ready &&
-    rehearsal.bucketDeleteMergeWritesAvailable &&
-    bucketDeleteMergeWriteExperimentEnabled;
-
-  const showReadExperimentWriteDisabledToast = () => {
-    setToastMessage(
-      "Bucket and category writes are unavailable in the current backend mode.",
-    );
-    setShowToast(true);
-  };
 
   const safeBucketCategoryWriteMessage = (error: unknown): string => {
-    const code = bucketCategoryWriteErrorCode(error);
-    if (code === "bucket_category_writes_disabled") {
-      return "Server Buckets/Categories write flag is off.";
-    }
-    if (
-      code === "local_api_base_url_missing" ||
-      code === "local_api_token_missing" ||
-      code === "local_api_request_failed"
-    ) {
-      return "Local API is unavailable or not configured.";
-    }
-    return `Bucket/category write failed: ${code}`;
+    void bucketCategoryWriteErrorCode(error);
+    return "Couldn't save that change. Try again.";
   };
 
   const safeCategoryLifecycleMessage = (error: unknown): string => {
-    const code = categoryLifecycleErrorCode(error);
-    if (code === "category_delete_merge_writes_disabled") {
-      return "Server Category delete/merge flag is off.";
-    }
-    if (
-      code === "local_api_base_url_missing" ||
-      code === "local_api_token_missing" ||
-      code === "local_api_request_failed"
-    ) {
-      return "Local API is unavailable or not configured.";
-    }
-    return `Category lifecycle failed: ${code}`;
+    void categoryLifecycleErrorCode(error);
+    return "Couldn't complete that category action. Try again.";
   };
 
   const safeBucketLifecycleMessage = (error: unknown): string => {
-    const code = bucketLifecycleErrorCode(error);
-    if (code === "bucket_delete_merge_writes_disabled") {
-      return "Server Bucket delete/merge flag is off.";
-    }
-    if (
-      code === "local_api_base_url_missing" ||
-      code === "local_api_token_missing" ||
-      code === "local_api_request_failed"
-    ) {
-      return "Local API is unavailable or not configured.";
-    }
-    return `Bucket lifecycle failed: ${code}`;
+    void bucketLifecycleErrorCode(error);
+    return "Couldn't complete that bucket action. Try again.";
   };
 
   useEffect(() => {
@@ -376,27 +225,11 @@ const BucketsManagement: React.FC = () => {
   const fetchBuckets = async () => {
     try {
       let all: Bucket[];
-      let selectedReadCount: number | undefined;
-
-      if (bucketsCategoriesReadExperimentHttpReadonly) {
-        const repositories = getSelectedReadRepositories(selectedBackend);
-        const result = await repositories.buckets.list({
-          limit: BUCKETS_CATEGORIES_READ_EXPERIMENT_LIMIT,
-          offset: 0,
-        });
-        const rows = previewRows(result as DevPreviewListResult);
-
-        if (!rows) {
-          throw new Error("invalid_buckets_read_experiment_response");
-        }
-
-        all = rows.map(selectedReadRowToBucket);
-        selectedReadCount = previewCount(result as DevPreviewListResult);
-      } else {
-        all = await categoryRepository.listBuckets();
-      }
-
-      setBucketsReadExperimentCount(selectedReadCount);
+      const repositories = getSelectedReadRepositories(selectedBackend);
+      const result = await repositories.buckets.list({ limit: LOOKUP_LIST_LIMIT, offset: 0 });
+      const rows = previewRows(result as DevPreviewListResult);
+      if (!rows) throw new Error("authoritative_buckets_read_unavailable");
+      all = rows.map(selectedReadRowToBucket);
       // Sort by displayOrder
       all.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
       setBuckets(all);
@@ -410,33 +243,13 @@ const BucketsManagement: React.FC = () => {
   const fetchCategories = async () => {
     try {
       let all: Category[];
-      let selectedReadCount: number | undefined;
-
-      if (bucketsCategoriesReadExperimentHttpReadonly) {
-        const repositories = getSelectedReadRepositories(selectedBackend);
-        const result = await repositories.categories.list({
-          limit: BUCKETS_CATEGORIES_READ_EXPERIMENT_LIMIT,
-          offset: 0,
-        });
-        const rows = previewRows(result as DevPreviewListResult);
-
-        if (!rows) {
-          throw new Error("invalid_categories_read_experiment_response");
-        }
-
-        all = rows
-          .map(selectedReadRowToCategory)
-          .sort(
-            (left, right) =>
-              (left.id ?? Number.MAX_SAFE_INTEGER) -
-              (right.id ?? Number.MAX_SAFE_INTEGER),
-          );
-        selectedReadCount = previewCount(result as DevPreviewListResult);
-      } else {
-        all = await categoryRepository.listCategories();
-      }
-
-      setCategoriesReadExperimentCount(selectedReadCount);
+      const repositories = getSelectedReadRepositories(selectedBackend);
+      const result = await repositories.categories.list({ limit: LOOKUP_LIST_LIMIT, offset: 0 });
+      const rows = previewRows(result as DevPreviewListResult);
+      if (!rows) throw new Error("authoritative_categories_read_unavailable");
+      all = rows.map(selectedReadRowToCategory).sort(
+        (left, right) => (left.id ?? Number.MAX_SAFE_INTEGER) - (right.id ?? Number.MAX_SAFE_INTEGER),
+      );
       setCategories(all);
     } catch (err) {
       console.error(err);
@@ -465,11 +278,6 @@ const BucketsManagement: React.FC = () => {
     v === undefined || (v >= 0 && v <= 100);
 
   const saveBucket = async () => {
-    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-
     if (!name.trim()) {
       setToastMessage("Bucket name is required");
       setShowToast(true);
@@ -490,58 +298,19 @@ const BucketsManagement: React.FC = () => {
       return;
     }
 
-    const now = new Date();
     const isEditMode = bucketId !== null; // Capture this BEFORE resetting
 
     try {
-      if (bucketsCategoriesSqliteWriteExperimentActive) {
-        const input: BucketWriteInput = {
-          name: name.trim(),
-          description: description.trim() || undefined,
-          minPercentage: minPercentage ?? 0,
-          maxPercentage: maxPercentage ?? 100,
-          minFixedAmount,
-          excludeFromReports,
-        };
-        if (isEditMode) {
-          await updateBucketInDisposableSqlite(bucketId!, input);
-          setToastMessage(rehearsal.authoritativeMode ? "Bucket updated in authoritative SQLite" : "Bucket updated in disposable SQLite");
-        } else {
-          await createBucketInDisposableSqlite(input);
-          setToastMessage(rehearsal.authoritativeMode ? "Bucket created in authoritative SQLite" : "Bucket created in disposable SQLite");
-        }
-      } else if (isEditMode) {
-        // UPDATE MODE: Keep existing displayOrder
-        await db.buckets.update(bucketId!, {
-          name: name.trim(),
-          description: description.trim() || undefined,
-          minPercentage: minPercentage ?? 0,
-          maxPercentage: maxPercentage ?? 100,
-          minFixedAmount: minFixedAmount ?? undefined,
-          isActive,
-          // displayOrder stays the same (not editable)
-          excludeFromReports,
-          updatedAt: now,
-        } as Partial<Bucket>);
+      const input: BucketWriteInput = {
+        name: name.trim(), description: description.trim() || undefined,
+        minPercentage: minPercentage ?? 0, maxPercentage: maxPercentage ?? 100,
+        minFixedAmount, excludeFromReports,
+      };
+      if (isEditMode) {
+        await updateBucketInDisposableSqlite(bucketId!, input);
         setToastMessage("Bucket updated");
       } else {
-        // ADD MODE: Auto-calculate displayOrder based on bucket count
-        const allBuckets = await db.buckets.toArray();
-        const newDisplayOrder = allBuckets.length;
-
-        const newBucket: Omit<Bucket, "id"> = {
-          name: name.trim(),
-          description: description.trim() || undefined,
-          minPercentage: minPercentage ?? 0,
-          maxPercentage: maxPercentage ?? 100,
-          minFixedAmount: minFixedAmount ?? undefined,
-          isActive,
-          displayOrder: newDisplayOrder,
-          excludeFromReports,
-          createdAt: now,
-          updatedAt: now,
-        };
-        await db.buckets.add(newBucket);
+        await createBucketInDisposableSqlite(input);
         setToastMessage("Bucket created");
       }
 
@@ -558,20 +327,13 @@ const BucketsManagement: React.FC = () => {
     } catch (err) {
       console.error(err);
       setToastMessage(
-        bucketsCategoriesSqliteWriteExperimentActive
-          ? safeBucketCategoryWriteMessage(err)
-          : "Failed to save bucket",
+        safeBucketCategoryWriteMessage(err),
       );
       setShowToast(true);
     }
   };
 
   const editBucket = (b: Bucket) => {
-    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-
     setBucketId(b.id ?? null);
     setName(b.name ?? "");
     setDescription(b.description ?? "");
@@ -583,18 +345,9 @@ const BucketsManagement: React.FC = () => {
   };
 
   const toggleBucketActive = async (b: Bucket) => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-
     if (b.id == null) return;
     try {
-      const now = new Date();
-      await db.buckets.update(b.id, {
-        isActive: !b.isActive,
-        updatedAt: now,
-      } as Partial<Bucket>);
+      await writeLookupActiveState("bucket", b.id, b.isActive ? "deactivate" : "activate");
       await fetchBuckets();
       setToastMessage(`Bucket ${b.isActive ? "deactivated" : "activated"}`);
       setShowToast(true);
@@ -609,18 +362,9 @@ const BucketsManagement: React.FC = () => {
    * toggleCategoryActive - Toggles category active/inactive status
    */
   const toggleCategoryActive = async (c: Category) => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-
     if (c.id == null) return;
     try {
-      const now = new Date();
-      await db.categories.update(c.id, {
-        isActive: !c.isActive,
-        updatedAt: now,
-      } as Partial<Category>);
+      await writeLookupActiveState("category", c.id, c.isActive ? "deactivate" : "activate");
       await fetchCategories();
       setToastMessage(`Category ${c.isActive ? "deactivated" : "activated"}`);
       setShowToast(true);
@@ -632,11 +376,6 @@ const BucketsManagement: React.FC = () => {
   };
 
   const handleCategoryAdded = async (isEdit: boolean = false) => {
-    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-
     setEditingCategory(undefined);
     setSelectedCategoryBucket(undefined);
     setToastMessage(
@@ -653,10 +392,10 @@ const BucketsManagement: React.FC = () => {
     try {
       if (currentCategory?.id) {
         await updateCategoryInDisposableSqlite(currentCategory.id, input);
-        setToastMessage(rehearsal.authoritativeMode ? "Category updated in authoritative SQLite" : "Category updated in disposable SQLite");
+        setToastMessage("Category updated successfully!");
       } else {
         await createCategoryInDisposableSqlite(input);
-        setToastMessage(rehearsal.authoritativeMode ? "Category created in authoritative SQLite" : "Category created in disposable SQLite");
+        setToastMessage("Category added successfully!");
       }
       await fetchCategories();
       setShowToast(true);
@@ -675,119 +414,44 @@ const BucketsManagement: React.FC = () => {
   };
 
   const deleteBucket = async (id?: number, planFingerprint?: string) => {
-    if (
-      bucketsCategoriesReadExperimentHttpReadonly &&
-      !bucketDeleteMergeWriteExperimentActive
-    ) {
-      showReadExperimentWriteDisabledToast();
-      setDeleteBucketState({ type: "none" });
-      return;
-    }
-
     if (!id) return;
     try {
-      if (bucketDeleteMergeWriteExperimentActive) {
-        if (!planFingerprint) throw new Error("bucket_delete_plan_missing");
-        await writeBucketDelete(id, planFingerprint);
-        try {
-          await refreshBucketLifecycleReads();
-          setToastMessage(
-            rehearsal.authoritativeMode
-              ? "Empty Bucket deleted in authoritative SQLite. Rotate the checkpoint before restart."
-              : "Empty Bucket deleted in disposable SQLite.",
-          );
-        } catch {
-          setToastMessage(
-            "Bucket was written to SQLite, but refresh failed. SQLite may already have changed.",
-          );
-        }
-      } else {
-        await db.transaction("rw", db.categories, db.buckets, async () => {
-          await db.categories.where("bucketId").equals(id).delete();
-          await db.buckets.delete(id);
-        });
-        await fetchBuckets();
-        await fetchCategories();
-        setToastMessage("Bucket and its categories deleted");
-      }
+      if (!planFingerprint) throw new Error("bucket_delete_plan_missing");
+      await writeBucketDelete(id, planFingerprint);
+      await refreshBucketLifecycleReads();
+      setToastMessage("Bucket deleted successfully!");
       setShowToast(true);
       setDeleteBucketState({ type: "none" });
     } catch (err) {
       console.error(err);
-      setToastMessage(
-        bucketDeleteMergeWriteExperimentActive
-          ? safeBucketLifecycleMessage(err)
-          : "Failed to delete bucket",
-      );
+      setToastMessage(safeBucketLifecycleMessage(err));
       setShowToast(true);
     }
   };
 
   const refreshCategoryLifecycleReads = async (): Promise<void> => {
-    const repositories = getSelectedReadRepositories(selectedBackend);
-    await Promise.all([
-      fetchCategories(),
-      repositories.transactions.list({ limit: 1, offset: 0 }),
-      repositories.budgets.list({ limit: 1, offset: 0 }),
-      repositories.budgetSnapshots.list({ limit: 1, offset: 0 }),
-    ]);
+    await fetchCategories();
   };
 
   const refreshBucketLifecycleReads = async (): Promise<void> => {
-    const repositories = getSelectedReadRepositories(selectedBackend);
-    await Promise.all([
-      fetchBuckets(),
-      fetchCategories(),
-      repositories.transactions.list({ limit: 1, offset: 0 }),
-      repositories.budgets.list({ limit: 1, offset: 0 }),
-      repositories.budgetSnapshots.list({ limit: 1, offset: 0 }),
-    ]);
+    await Promise.all([fetchBuckets(), fetchCategories()]);
   };
 
   const deleteCategory = async (
     id?: number,
     planFingerprint?: string,
   ) => {
-    if (
-      bucketsCategoriesReadExperimentHttpReadonly &&
-      !categoryDeleteMergeWriteExperimentActive
-    ) {
-      showReadExperimentWriteDisabledToast();
-      setDeleteCategoryState({ type: "none" });
-      return;
-    }
-
     if (!id) return;
     try {
-      if (categoryDeleteMergeWriteExperimentActive) {
-        if (!planFingerprint) throw new Error("category_delete_plan_missing");
-        await writeCategoryDelete(id, planFingerprint);
-        try {
-          await refreshCategoryLifecycleReads();
-          setToastMessage(
-            rehearsal.authoritativeMode
-              ? "Category deleted in authoritative SQLite. Rotate the checkpoint before restart."
-              : "Unused Category deleted in disposable SQLite.",
-          );
-        } catch {
-          setToastMessage(
-            "Category was written to SQLite, but refresh failed. SQLite may already have changed.",
-          );
-        }
-      } else {
-        await db.categories.delete(id);
-        await fetchCategories();
-        setToastMessage("Category deleted");
-      }
+      if (!planFingerprint) throw new Error("category_delete_plan_missing");
+      await writeCategoryDelete(id, planFingerprint);
+      await refreshCategoryLifecycleReads();
+      setToastMessage("Category deleted successfully!");
       setShowToast(true);
       setDeleteCategoryState({ type: "none" });
     } catch (err) {
       console.error(err);
-      setToastMessage(
-        categoryDeleteMergeWriteExperimentActive
-          ? safeCategoryLifecycleMessage(err)
-          : "Failed to delete category",
-      );
+      setToastMessage(safeCategoryLifecycleMessage(err));
       setShowToast(true);
     }
   };
@@ -795,98 +459,7 @@ const BucketsManagement: React.FC = () => {
   const getCategoriesForBucket = (bId?: number) =>
     categories.filter((c) => c.bucketId === bId);
 
-  const loadSelectedReadPreview = async () => {
-    setSelectedReadPreviewLoading(true);
-    setSelectedReadPreview(null);
-
-    const backend = getRepositoryBackend();
-    const repositories = getSelectedReadRepositories(backend);
-    const source = repositories.source;
-
-    try {
-      const listOptions = {
-        limit: SELECTED_READ_PREVIEW_LIMIT,
-        offset: 0,
-      };
-      const [categoryResult, bucketResult] = await Promise.all([
-        repositories.categories.list(listOptions),
-        repositories.buckets.list(listOptions),
-      ]);
-      const categoryRows = previewRows(
-        categoryResult as DevPreviewListResult,
-      );
-      const bucketRows = previewRows(
-        bucketResult as DevPreviewListResult,
-      );
-
-      if (!categoryRows || !bucketRows) {
-        setSelectedReadPreview({
-          status: "fail",
-          backend,
-          source,
-          categories: { rows: [] },
-          buckets: { rows: [] },
-          errorCode: "invalid_selected_read_preview_response",
-        });
-        return;
-      }
-
-      const categoryPreviewRows = categoryRows.slice(
-        0,
-        SELECTED_READ_PREVIEW_LIMIT,
-      );
-      const bucketPreviewRows = bucketRows.slice(
-        0,
-        SELECTED_READ_PREVIEW_LIMIT,
-      );
-
-      setSelectedReadPreview({
-        status: "pass",
-        backend,
-        source,
-        categories: {
-          count: previewCount(categoryResult as DevPreviewListResult),
-          loadedRowCount: categoryPreviewRows.length,
-          sampledIds: sampledIds(categoryPreviewRows, SELECTED_READ_PREVIEW_LIMIT),
-          rows: categoryPreviewRows.map((row) => ({
-            id: numberValue(row.id),
-            bucketId: numberValue((row as { bucketId?: unknown }).bucketId),
-            isActive: booleanValue((row as { isActive?: unknown }).isActive),
-          })),
-        },
-        buckets: {
-          count: previewCount(bucketResult as DevPreviewListResult),
-          loadedRowCount: bucketPreviewRows.length,
-          sampledIds: sampledIds(bucketPreviewRows, SELECTED_READ_PREVIEW_LIMIT),
-          rows: bucketPreviewRows.map((row) => ({
-            id: numberValue(row.id),
-            displayOrder: numberValue(
-              (row as { displayOrder?: unknown }).displayOrder,
-            ),
-            isActive: booleanValue((row as { isActive?: unknown }).isActive),
-          })),
-        },
-      });
-    } catch (error) {
-      setSelectedReadPreview({
-        status: "fail",
-        backend,
-        source,
-        categories: { rows: [] },
-        buckets: { rows: [] },
-        errorCode: safePreviewErrorCode(error),
-      });
-    } finally {
-      setSelectedReadPreviewLoading(false);
-    }
-  };
-
   const handleOpenBucketModal = () => {
-    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-
     resetForm();
     setShowBucketModal(true);
   };
@@ -897,24 +470,12 @@ const BucketsManagement: React.FC = () => {
   };
 
   const handleSaveBucket = async () => {
-    if (bucketsCategoriesHttpReadonlyWithoutWrites) {
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-
     await saveBucket();
-    // Remove the conditional check - let saveBucket handle it
   };
 
   const handleReorderBuckets = async (
     event: CustomEvent<ItemReorderEventDetail>
   ) => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
-      event.detail.complete();
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-
     const { from, to } = event.detail;
 
     // Create a new array with reordered items
@@ -924,15 +485,7 @@ const BucketsManagement: React.FC = () => {
 
     // Update displayOrder for all buckets based on new position
     try {
-      for (let i = 0; i < reorderedBuckets.length; i++) {
-        const bucket = reorderedBuckets[i];
-        if (bucket.id) {
-          await db.buckets.update(bucket.id, {
-            displayOrder: i,
-            updatedAt: new Date(),
-          } as Partial<Bucket>);
-        }
-      }
+      await reorderBuckets(reorderedBuckets.map((bucket) => bucket.id!).filter(Boolean));
       // Update local state
       setBuckets(reorderedBuckets);
       setToastMessage("Bucket order updated");
@@ -942,279 +495,56 @@ const BucketsManagement: React.FC = () => {
       setToastMessage("Failed to update bucket order");
       setShowToast(true);
       await fetchBuckets(); // Reload to revert changes
+    } finally {
+      event.detail.complete();
     }
   };
 
-  /**
-   * checkBucketUsage - Determines if bucket has been used in transactions
-   */
-  const checkBucketUsage = async (bucketId: number): Promise<boolean> => {
-    try {
-      const categories = await categoryRepository.listCategoriesForBucket(
-        bucketId
-      );
-      const categoryIds = categories.map((c) => c.id);
-      return transactionRepository.categoriesHaveTransactions(categoryIds);
-    } catch (error) {
-      console.error("Error checking bucket usage:", error);
-      return false;
-    }
-  };
-
-  /**
-   * checkCategoryUsage - Determines if category has been used in transactions
-   */
-  const checkCategoryUsage = async (categoryId: number): Promise<boolean> => {
-    try {
-      return transactionRepository.categoryHasTransactions(categoryId);
-    } catch (error) {
-      console.error("Error checking category usage:", error);
-      return false;
-    }
-  };
-
-  /**
-   * initiateBucketDelete - Check bucket usage and show appropriate alert
-   */
   const initiateBucketDelete = async (bucket: Bucket) => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
-      if (!bucketDeleteMergeWriteExperimentActive || !bucket.id) {
-        showReadExperimentWriteDisabledToast();
-        return;
-      }
-      setBucketLifecycleBusy(true);
-      try {
-        const dryRun = await dryRunBucketDelete(bucket.id);
-        if (!dryRun.eligible) {
-          setToastMessage(
-            `Bucket cannot be deleted: ${dryRun.categoryCount} Categories and ` +
-              `${dryRun.sourceReferenceCount} direct references remain. Merge or clean up manually.`,
-          );
-          setShowToast(true);
-          return;
-        }
+    if (!bucket.id) return;
+    try {
+      const dryRun = await dryRunBucketDelete(bucket.id);
+      if (!dryRun.eligible) {
         setDeleteBucketState({
-          type: "delete",
+          type: bucket.isActive === false ? "used_deactivated" : "used",
           bucketId: bucket.id,
           bucketName: bucket.name || "Unknown",
-          planFingerprint: dryRun.planFingerprint,
         });
-      } catch (error) {
-        setToastMessage(safeBucketLifecycleMessage(error));
-        setShowToast(true);
-      } finally {
-        setBucketLifecycleBusy(false);
+        return;
       }
-      return;
-    }
-
-    try {
-      const isUsed = await checkBucketUsage(bucket.id!);
-      const isDeactivated = bucket.isActive === false;
-
-      if (isUsed && !isDeactivated) {
-        // Bucket is ACTIVE and has been used in transactions
-        setDeleteBucketState({
-          type: "used",
-          bucketId: bucket.id!,
-          bucketName: bucket.name || "Unknown",
-        });
-      } else if (isUsed && isDeactivated) {
-        // Bucket is DEACTIVATED and has been used in transactions
-        // Show informational alert, no deactivate option
-        setDeleteBucketState({
-          type: "used_deactivated",
-          bucketId: bucket.id!,
-          bucketName: bucket.name || "Unknown",
-        });
-      } else {
-        // Bucket is unused, safe to delete
-        setDeleteBucketState({
-          type: "delete",
-          bucketId: bucket.id!,
-          bucketName: bucket.name || "Unknown",
-        });
-      }
-    } catch (error) {
-      console.error("Error checking bucket usage:", error);
-    }
-  };
-
-  const openBucketMerge = (bucket: Bucket) => {
-    if (!bucketDeleteMergeWriteExperimentActive || !bucket.id) {
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-    setMergeSourceBucket(bucket);
-    setMergeTargetBucketId(undefined);
-  };
-
-  const runBucketMerge = async () => {
-    const sourceId = mergeSourceBucket?.id;
-    const targetId = mergeTargetBucketId;
-    if (!sourceId || !targetId) {
-      setToastMessage("Choose a compatible target Bucket.");
-      setShowToast(true);
-      return;
-    }
-
-    setBucketLifecycleBusy(true);
-    try {
-      const dryRun = await dryRunBucketMerge(sourceId, targetId);
-      const counts = dryRun.referenceCountsByEntity;
-      const confirmed = window.confirm(
-        `Move ${dryRun.categoriesProposedForMove} Categories to the selected target? ` +
-          `Direct references: transactions ${counts.transactions}, budgets ${counts.budgets}, ` +
-          `snapshots ${counts.budgetSnapshots}, SMS templates ${counts.smsImportTemplates}. ` +
-          "The source Bucket will be permanently removed, Category IDs and metadata remain " +
-          "unchanged, the target remains unchanged, and Bucket-grouped history consolidates " +
-          "under the target.",
-      );
-      if (!confirmed) return;
-
-      await writeBucketMerge(sourceId, targetId, dryRun.planFingerprint!);
-      setMergeSourceBucket(null);
-      setMergeTargetBucketId(undefined);
-      try {
-        await refreshBucketLifecycleReads();
-        setToastMessage(
-          rehearsal.authoritativeMode
-            ? "Buckets merged in authoritative SQLite. Rotate the checkpoint before restart."
-            : "Buckets merged in disposable SQLite.",
-        );
-      } catch {
-        setToastMessage(
-          "Bucket merge completed, but refresh failed. SQLite may already have changed.",
-        );
-      }
-      setShowToast(true);
+      setDeleteBucketState({
+        type: "delete",
+        bucketId: bucket.id,
+        bucketName: bucket.name || "Unknown",
+        planFingerprint: dryRun.planFingerprint,
+      });
     } catch (error) {
       setToastMessage(safeBucketLifecycleMessage(error));
       setShowToast(true);
-    } finally {
-      setBucketLifecycleBusy(false);
     }
   };
 
-  /**
-   * initiateCategoryDelete - Check category usage and show appropriate alert
-   */
   const initiateCategoryDelete = async (category: Category) => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
-      if (!categoryDeleteMergeWriteExperimentActive || !category.id) {
-        showReadExperimentWriteDisabledToast();
-        return;
-      }
-      setCategoryLifecycleBusy(true);
-      try {
-        const dryRun = await dryRunCategoryDelete(category.id);
-        if (!dryRun.eligible) {
-          const counts = dryRun.referenceCountsByEntity;
-          setToastMessage(
-            `Category is referenced and cannot be deleted (transactions ${counts.transactions}, budgets ${counts.budgets}, snapshots ${counts.budgetSnapshots}). Merge or clean up manually.`,
-          );
-          setShowToast(true);
-          return;
-        }
+    if (!category.id) return;
+    try {
+      const dryRun = await dryRunCategoryDelete(category.id);
+      if (!dryRun.eligible) {
         setDeleteCategoryState({
-          type: "delete",
+          type: category.isActive === false ? "used_deactivated" : "used",
           categoryId: category.id,
           categoryName: category.name || "Unknown",
-          planFingerprint: dryRun.planFingerprint,
         });
-      } catch (error) {
-        setToastMessage(safeCategoryLifecycleMessage(error));
-        setShowToast(true);
-      } finally {
-        setCategoryLifecycleBusy(false);
+        return;
       }
-      return;
-    }
-
-    try {
-      const isUsed = await checkCategoryUsage(category.id!);
-      const isDeactivated = category.isActive === false;
-
-      if (isUsed && !isDeactivated) {
-        // Category is ACTIVE and has been used in transactions
-        setDeleteCategoryState({
-          type: "used",
-          categoryId: category.id!,
-          categoryName: category.name || "Unknown",
-        });
-      } else if (isUsed && isDeactivated) {
-        // Category is DEACTIVATED and has been used in transactions
-        // Show informational alert, no deactivate option
-        setDeleteCategoryState({
-          type: "used_deactivated",
-          categoryId: category.id!,
-          categoryName: category.name || "Unknown",
-        });
-      } else {
-        // Category is unused, safe to delete
-        setDeleteCategoryState({
-          type: "delete",
-          categoryId: category.id!,
-          categoryName: category.name || "Unknown",
-        });
-      }
-    } catch (error) {
-      console.error("Error checking category usage:", error);
-    }
-  };
-
-  const openCategoryMerge = (category: Category) => {
-    if (!categoryDeleteMergeWriteExperimentActive || !category.id) {
-      showReadExperimentWriteDisabledToast();
-      return;
-    }
-    setMergeSourceCategory(category);
-    setMergeTargetCategoryId(undefined);
-  };
-
-  const runCategoryMerge = async () => {
-    const sourceId = mergeSourceCategory?.id;
-    const targetId = mergeTargetCategoryId;
-    if (!sourceId || !targetId) {
-      setToastMessage("Choose a target Category in the same Bucket.");
-      setShowToast(true);
-      return;
-    }
-
-    setCategoryLifecycleBusy(true);
-    try {
-      const dryRun = await dryRunCategoryMerge(sourceId, targetId);
-      const counts = dryRun.referenceCountsByEntity;
-      const confirmed = window.confirm(
-        `Merge ${dryRun.sourceReferenceCount} references into the selected target? ` +
-          `Transactions: ${counts.transactions}; Budgets: ${counts.budgets}; ` +
-          `Budget snapshots: ${counts.budgetSnapshots}. The source Category will be ` +
-          "permanently removed, target fields remain unchanged, and categorized history " +
-          "will consolidate under the target.",
-      );
-      if (!confirmed) return;
-
-      await writeCategoryMerge(sourceId, targetId, dryRun.planFingerprint!);
-      setMergeSourceCategory(null);
-      setMergeTargetCategoryId(undefined);
-      try {
-        await refreshCategoryLifecycleReads();
-        setToastMessage(
-          rehearsal.authoritativeMode
-            ? "Categories merged in authoritative SQLite. Rotate the checkpoint before restart."
-            : "Categories merged in disposable SQLite.",
-        );
-      } catch {
-        setToastMessage(
-          "Category merge completed, but refresh failed. SQLite may already have changed.",
-        );
-      }
-      setShowToast(true);
+      setDeleteCategoryState({
+        type: "delete",
+        categoryId: category.id,
+        categoryName: category.name || "Unknown",
+        planFingerprint: dryRun.planFingerprint,
+      });
     } catch (error) {
       setToastMessage(safeCategoryLifecycleMessage(error));
       setShowToast(true);
-    } finally {
-      setCategoryLifecycleBusy(false);
     }
   };
 
@@ -1222,18 +552,8 @@ const BucketsManagement: React.FC = () => {
    * handleDeactivateBucket - Deactivates a bucket instead of deleting
    */
   const handleDeactivateBucket = async (bucketId: number) => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
-      showReadExperimentWriteDisabledToast();
-      setDeleteBucketState({ type: "none" });
-      return;
-    }
-
     try {
-      const now = new Date();
-      await db.buckets.update(bucketId, {
-        isActive: false,
-        updatedAt: now,
-      } as Partial<Bucket>);
+      await writeLookupActiveState("bucket", bucketId, "deactivate");
       setDeleteBucketState({ type: "none" });
       setToastMessage("Bucket deactivated successfully!");
       setShowToast(true);
@@ -1249,18 +569,8 @@ const BucketsManagement: React.FC = () => {
    * handleDeactivateCategory - Deactivates a category instead of deleting
    */
   const handleDeactivateCategory = async (categoryId: number) => {
-    if (bucketsCategoriesReadExperimentHttpReadonly) {
-      showReadExperimentWriteDisabledToast();
-      setDeleteCategoryState({ type: "none" });
-      return;
-    }
-
     try {
-      const now = new Date();
-      await db.categories.update(categoryId, {
-        isActive: false,
-        updatedAt: now,
-      } as Partial<Category>);
+      await writeLookupActiveState("category", categoryId, "deactivate");
       setDeleteCategoryState({ type: "none" });
       setToastMessage("Category deactivated successfully!");
       setShowToast(true);
@@ -1286,194 +596,24 @@ const BucketsManagement: React.FC = () => {
 
       <IonContent className="ion-padding">
         {/* FAB button for adding buckets */}
-        {(!bucketsCategoriesReadExperimentHttpReadonly ||
-          bucketsCategoriesSqliteWriteExperimentActive) && (
-          <IonFab vertical="bottom" horizontal="end" slot="fixed">
-            <IonFabButton onClick={handleOpenBucketModal} title="Add Bucket">
-              <IonIcon icon={add} />
-            </IonFabButton>
-          </IonFab>
-        )}
-
-        {showSelectedReadPreview && (
-          <SelectedReadPreviewCard
-            resourceLabel="Selected-read categories and buckets"
-            loading={selectedReadPreviewLoading}
-            onLoad={() => void loadSelectedReadPreview()}
-            description="This preview uses the selected read facade only when manually loaded. It does not replace this management screen or change create, edit, delete, or reorder actions."
-          >
-              {selectedReadPreview && (
-                <IonList>
-                  <IonItem>
-                    <IonLabel>Backend / source</IonLabel>
-                    <IonText slot="end">
-                      {selectedReadPreview.backend} /{" "}
-                      {selectedReadPreview.source}
-                    </IonText>
-                  </IonItem>
-                  <IonItem>
-                    <IonLabel>Status</IonLabel>
-                    <IonBadge
-                      color={
-                        selectedReadPreview.status === "pass"
-                          ? "success"
-                          : "danger"
-                      }
-                      slot="end"
-                    >
-                      {selectedReadPreview.status === "pass" ? "Pass" : "Fail"}
-                    </IonBadge>
-                  </IonItem>
-                  {selectedReadPreview.errorCode && (
-                    <IonItem>
-                      <IonLabel>Safe error code</IonLabel>
-                      <IonText slot="end">
-                        {selectedReadPreview.errorCode}
-                      </IonText>
-                    </IonItem>
-                  )}
-                  <IonItem>
-                    <IonLabel>
-                      <h3>Categories</h3>
-                      <p>
-                        count={selectedReadPreview.categories.count ?? "-"}{" "}
-                        loaded=
-                        {selectedReadPreview.categories.loadedRowCount ?? "-"}{" "}
-                        sampledIds=
-                        {selectedReadPreview.categories.sampledIds?.length
-                          ? selectedReadPreview.categories.sampledIds.join(", ")
-                          : "-"}
-                      </p>
-                    </IonLabel>
-                  </IonItem>
-                  {selectedReadPreview.categories.rows.map((category) => (
-                    <IonItem key={`selected-category-${category.id ?? "none"}`}>
-                      <IonLabel>
-                        <h3>category id={category.id ?? "-"}</h3>
-                        <p>
-                          bucketId={category.bucketId ?? "-"} isActive=
-                          {category.isActive === undefined
-                            ? "-"
-                            : String(category.isActive)}
-                        </p>
-                      </IonLabel>
-                    </IonItem>
-                  ))}
-                  <IonItem>
-                    <IonLabel>
-                      <h3>Buckets</h3>
-                      <p>
-                        count={selectedReadPreview.buckets.count ?? "-"} loaded=
-                        {selectedReadPreview.buckets.loadedRowCount ?? "-"}{" "}
-                        sampledIds=
-                        {selectedReadPreview.buckets.sampledIds?.length
-                          ? selectedReadPreview.buckets.sampledIds.join(", ")
-                          : "-"}
-                      </p>
-                    </IonLabel>
-                  </IonItem>
-                  {selectedReadPreview.buckets.rows.map((bucket) => (
-                    <IonItem key={`selected-bucket-${bucket.id ?? "none"}`}>
-                      <IonLabel>
-                        <h3>bucket id={bucket.id ?? "-"}</h3>
-                        <p>
-                          displayOrder={bucket.displayOrder ?? "-"} isActive=
-                          {bucket.isActive === undefined
-                            ? "-"
-                            : String(bucket.isActive)}
-                        </p>
-                      </IonLabel>
-                    </IonItem>
-                  ))}
-                </IonList>
-              )}
-          </SelectedReadPreviewCard>
-        )}
-
-        {(bucketsCategoriesReadExperimentEnabled ||
-          bucketsCategoriesWriteExperimentEnabled) && (
-          <IonCard
-            style={{
-              marginBottom: "16px",
-              borderLeft: bucketsCategoriesReadExperimentHttpReadonly
-                ? "4px solid var(--ion-color-warning)"
-                : "4px solid var(--ion-color-medium)",
-            }}
-          >
-            <IonCardContent>
-              <div
-                style={{ display: "flex", alignItems: "center", gap: "12px" }}
-              >
-                <IonIcon
-                  icon={warningOutline}
-                  style={{
-                    color: bucketsCategoriesReadExperimentHttpReadonly
-                      ? "var(--ion-color-warning)"
-                      : "var(--ion-color-medium)",
-                    fontSize: "1.5rem",
-                  }}
-                />
-                <div>
-                  <p
-                    style={{
-                      margin: "0 0 6px 0",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {bucketsCategoriesSqliteWriteExperimentActive
-                      ? rehearsal.authoritativeMode
-                        ? bucketDeleteMergeWriteExperimentActive
-                          ? "Bucket and category management uses verified SQLite. Bucket delete/merge is dry-run-first and exact-ID only; reordering remains unavailable."
-                          : categoryDeleteMergeWriteExperimentActive
-                            ? "Bucket and category management uses verified SQLite. Category delete/merge is dry-run-first and exact-ID only; bucket delete and reorder remain unavailable."
-                          : "Bucket and category management uses verified SQLite. Create and update are available; delete, merge, and reorder remain unavailable until lifecycle capabilities are enabled."
-                        : "Bucket and category writes are available in SQLite rehearsal mode with the current write capabilities."
-                      : bucketsCategoriesReadExperimentHttpReadonly
-                        ? "Buckets and categories are currently read-only in the selected backend mode. Write and reorder actions are blocked."
-                      : "Buckets and categories are using the default local repository mode."}
-                  </p>
-                  <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
-                    Backend: {selectedBackend}
-                    {bucketsCategoriesSqliteWriteExperimentActive &&
-                      !bucketDeleteMergeWriteExperimentActive &&
-                      "; Bucket create/update only; active-state, delete, merge, and reorder actions remain unavailable."}
-                    {bucketDeleteMergeWriteExperimentActive &&
-                      "; Bucket delete/merge enabled; active-state and reorder actions remain unavailable."}
-                    {bucketsCategoriesReadExperimentHttpReadonly &&
-                      bucketsReadExperimentCount !== undefined &&
-                      bucketsReadExperimentCount > buckets.length &&
-                      `; loaded first ${buckets.length} of ${bucketsReadExperimentCount} buckets.`}
-                    {bucketsCategoriesReadExperimentHttpReadonly &&
-                      categoriesReadExperimentCount !== undefined &&
-                      categoriesReadExperimentCount > categories.length &&
-                      `; loaded first ${categories.length} of ${categoriesReadExperimentCount} categories.`}
-                  </p>
-                </div>
-              </div>
-            </IonCardContent>
-          </IonCard>
-        )}
+        <IonFab vertical="bottom" horizontal="end" slot="fixed">
+          <IonFabButton onClick={handleOpenBucketModal} title="Add Bucket">
+            <IonIcon icon={add} />
+          </IonFabButton>
+        </IonFab>
 
         {/* Buckets list with categories nested as accordions */}
         <IonAccordionGroup>
-          <IonReorderGroup
-            disabled={bucketsCategoriesReadExperimentHttpReadonly}
-            onIonItemReorder={handleReorderBuckets}
-          >
+          <IonReorderGroup disabled={false} onIonItemReorder={handleReorderBuckets}>
             {buckets.map((b) => {
               const bucketCategories = getCategoriesForBucket(b.id);
               const isInactiveBucket = b.isActive === false;
               return (
                 <IonAccordion key={b.id} value={`bucket-${b.id}`}>
                   <IonItem slot="header">
-                    {!bucketsCategoriesReadExperimentHttpReadonly && (
-                      <IonReorder slot="start">
-                        <IonIcon
-                          icon={reorderThree}
-                          style={{ cursor: "grab" }}
-                        />
-                      </IonReorder>
-                    )}
+                    <IonReorder slot="start">
+                      <IonIcon icon={reorderThree} style={{ cursor: "grab" }} />
+                    </IonReorder>
 
                     <IonGrid
                       className="ion-no-padding"
@@ -1504,9 +644,7 @@ const BucketsManagement: React.FC = () => {
                         </IonCol>
 
                         {/* Buttons on the right */}
-                        {(!bucketsCategoriesReadExperimentHttpReadonly ||
-                          bucketsCategoriesSqliteWriteExperimentActive) && (
-                          <IonCol size="auto">
+                        <IonCol size="auto">
                             <IonButton
                               fill="clear"
                               size="small"
@@ -1538,8 +676,6 @@ const BucketsManagement: React.FC = () => {
                               <IonIcon icon={createOutline} />
                             </IonButton>
 
-                            {!bucketsCategoriesReadExperimentHttpReadonly && (
-                              <>
                                 <IonButton
                                   fill="clear"
                                   size="small"
@@ -1581,42 +717,7 @@ const BucketsManagement: React.FC = () => {
                                 >
                                   <IonIcon icon={trashOutline} />
                                 </IonButton>
-                              </>
-                            )}
-                            {bucketDeleteMergeWriteExperimentActive && (
-                              <>
-                                <IonButton
-                                  fill="clear"
-                                  size="small"
-                                  color="secondary"
-                                  disabled={bucketLifecycleBusy}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    openBucketMerge(b);
-                                  }}
-                                  aria-label={`Merge Bucket ${b.name}`}
-                                  title="Merge Bucket"
-                                >
-                                  <IonIcon icon={gitMergeOutline} />
-                                </IonButton>
-                                <IonButton
-                                  fill="clear"
-                                  size="small"
-                                  color="danger"
-                                  disabled={bucketLifecycleBusy}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    initiateBucketDelete(b);
-                                  }}
-                                  aria-label={`Delete unused Bucket ${b.name}`}
-                                  title="Delete empty Bucket"
-                                >
-                                  <IonIcon icon={trashOutline} />
-                                </IonButton>
-                              </>
-                            )}
                           </IonCol>
-                        )}
                       </IonRow>
                     </IonGrid>
                   </IonItem>
@@ -1645,9 +746,7 @@ const BucketsManagement: React.FC = () => {
                                 )}
                               </IonLabel>
 
-                              {(!bucketsCategoriesReadExperimentHttpReadonly ||
-                                bucketsCategoriesSqliteWriteExperimentActive) && (
-                                <>
+                              <>
                                   <IonButton
                                     slot="end"
                                     color="secondary"
@@ -1661,8 +760,6 @@ const BucketsManagement: React.FC = () => {
                                   >
                                     <IonIcon icon={createOutline} />
                                   </IonButton>
-                                  {!bucketsCategoriesReadExperimentHttpReadonly && (
-                                    <>
                                       <IonButton
                                         slot="end"
                                         color={c.isActive ? "success" : "medium"}
@@ -1697,36 +794,7 @@ const BucketsManagement: React.FC = () => {
                                       >
                                         <IonIcon icon={trashOutline} />
                                       </IonButton>
-                                    </>
-                                  )}
-                                  {categoryDeleteMergeWriteExperimentActive && (
-                                    <>
-                                      <IonButton
-                                        slot="end"
-                                        color="secondary"
-                                        fill="clear"
-                                        disabled={categoryLifecycleBusy}
-                                        onClick={() => openCategoryMerge(c)}
-                                        aria-label={`Merge category ${c.name}`}
-                                        title="Merge"
-                                      >
-                                        <IonIcon icon={gitMergeOutline} />
-                                      </IonButton>
-                                      <IonButton
-                                        slot="end"
-                                        color="danger"
-                                        fill="clear"
-                                        disabled={categoryLifecycleBusy}
-                                        onClick={() => initiateCategoryDelete(c)}
-                                        aria-label={`Delete category ${c.name}`}
-                                        title="Delete unused Category"
-                                      >
-                                        <IonIcon icon={trashOutline} />
-                                      </IonButton>
-                                    </>
-                                  )}
                                 </>
-                              )}
                             </IonItem>
                           );
                         })}
@@ -1740,9 +808,7 @@ const BucketsManagement: React.FC = () => {
         </IonAccordionGroup>
 
         {/* Bucket Modal */}
-        {(!bucketsCategoriesReadExperimentHttpReadonly ||
-          bucketsCategoriesSqliteWriteExperimentActive) && (
-          <IonModal
+        <IonModal
             isOpen={showBucketModal}
             onDidDismiss={handleCloseBucketModal}
           >
@@ -1863,153 +929,17 @@ const BucketsManagement: React.FC = () => {
               </IonGrid>
             </IonContent>
           </IonModal>
-        )}
 
         {/* Replace inline category form with AddCategoryModal component */}
-        {(!bucketsCategoriesReadExperimentHttpReadonly ||
-          bucketsCategoriesSqliteWriteExperimentActive) && (
-          <AddCategoryModal
+        <AddCategoryModal
             isOpen={showCategoryModal}
             onClose={handleCloseCategoryModal}
             onCategoryAdded={() => handleCategoryAdded(!!editingCategory)}
             buckets={buckets}
             preSelectedBucketId={selectedCategoryBucket}
             editingCategory={editingCategory}
-            onSaveCategory={
-              bucketsCategoriesSqliteWriteExperimentActive
-                ? handleSqliteCategorySave
-                : undefined
-            }
+            onSaveCategory={handleSqliteCategorySave}
           />
-        )}
-
-        <IonModal
-          isOpen={mergeSourceBucket !== null}
-          onDidDismiss={() => {
-            setMergeSourceBucket(null);
-            setMergeTargetBucketId(undefined);
-          }}
-        >
-          <IonHeader>
-            <IonToolbar>
-              <IonTitle>Merge Bucket</IonTitle>
-              <IonButtons slot="end">
-                <IonButton
-                  onClick={() => {
-                    setMergeSourceBucket(null);
-                    setMergeTargetBucketId(undefined);
-                  }}
-                >
-                  <IonIcon icon={close} />
-                </IonButton>
-              </IonButtons>
-            </IonToolbar>
-          </IonHeader>
-          <IonContent className="ion-padding">
-            <IonText>
-              <p>
-                Select a compatible target. Source Categories will move without
-                changing IDs or metadata, the source will be removed, and the
-                target fields and ordering remain unchanged.
-              </p>
-            </IonText>
-            <IonSelect
-              label="Target Bucket"
-              labelPlacement="stacked"
-              fill="outline"
-              value={mergeTargetBucketId}
-              onIonChange={(event) =>
-                setMergeTargetBucketId(numberValue(event.detail.value))
-              }
-            >
-              {buckets
-                .filter(
-                  (bucket) =>
-                    bucket.id !== mergeSourceBucket?.id &&
-                    bucket.isActive === mergeSourceBucket?.isActive &&
-                    !bucket.excludeFromReports &&
-                    !mergeSourceBucket?.excludeFromReports,
-                )
-                .map((bucket) => (
-                  <IonSelectOption key={bucket.id} value={bucket.id}>
-                    {bucket.name || `Bucket ${bucket.id}`}
-                  </IonSelectOption>
-                ))}
-            </IonSelect>
-            <IonButton
-              expand="block"
-              color="danger"
-              disabled={bucketLifecycleBusy || !mergeTargetBucketId}
-              onClick={runBucketMerge}
-              style={{ marginTop: 16 }}
-            >
-              {bucketLifecycleBusy ? <IonSpinner /> : "Review Merge"}
-            </IonButton>
-          </IonContent>
-        </IonModal>
-
-        <IonModal
-          isOpen={mergeSourceCategory !== null}
-          onDidDismiss={() => {
-            setMergeSourceCategory(null);
-            setMergeTargetCategoryId(undefined);
-          }}
-        >
-          <IonHeader>
-            <IonToolbar>
-              <IonTitle>Merge Category</IonTitle>
-              <IonButtons slot="end">
-                <IonButton
-                  onClick={() => {
-                    setMergeSourceCategory(null);
-                    setMergeTargetCategoryId(undefined);
-                  }}
-                >
-                  <IonIcon icon={close} />
-                </IonButton>
-              </IonButtons>
-            </IonToolbar>
-          </IonHeader>
-          <IonContent className="ion-padding">
-            <IonText>
-              <p>
-                Select a target in the same Bucket. The source will be removed,
-                exact references will move, and the target fields will remain
-                unchanged.
-              </p>
-            </IonText>
-            <IonSelect
-              label="Target Category"
-              labelPlacement="stacked"
-              fill="outline"
-              value={mergeTargetCategoryId}
-              onIonChange={(event) =>
-                setMergeTargetCategoryId(numberValue(event.detail.value))
-              }
-            >
-              {categories
-                .filter(
-                  (category) =>
-                    category.id !== mergeSourceCategory?.id &&
-                    category.bucketId === mergeSourceCategory?.bucketId,
-                )
-                .map((category) => (
-                  <IonSelectOption key={category.id} value={category.id}>
-                    {category.name || `Category ${category.id}`}
-                  </IonSelectOption>
-                ))}
-            </IonSelect>
-            <IonButton
-              expand="block"
-              color="danger"
-              disabled={categoryLifecycleBusy || !mergeTargetCategoryId}
-              onClick={runCategoryMerge}
-              style={{ marginTop: 16 }}
-            >
-              {categoryLifecycleBusy ? <IonSpinner /> : "Review Merge"}
-            </IonButton>
-          </IonContent>
-        </IonModal>
 
         <IonToast
           isOpen={showToast}
@@ -2078,19 +1008,11 @@ const BucketsManagement: React.FC = () => {
           isOpen={deleteBucketState.type === "delete"}
           onDidDismiss={() => setDeleteBucketState({ type: "none" })}
           header="Confirm Delete"
-          message={
-            bucketDeleteMergeWriteExperimentActive
-              ? `Delete "${
-                  deleteBucketState.type === "delete"
-                    ? deleteBucketState.bucketName
-                    : ""
-                }"? The dry-run confirmed it has no Categories or references. Only this Bucket will be removed. This action cannot be undone.`
-              : `Are you sure you want to delete "${
-                  deleteBucketState.type === "delete"
-                    ? deleteBucketState.bucketName
-                    : ""
-                }"? All associated categories will also be deleted. This action cannot be undone.`
-          }
+          message={`Are you sure you want to delete "${
+            deleteBucketState.type === "delete"
+              ? deleteBucketState.bucketName
+              : ""
+          }"? This action cannot be undone.`}
           buttons={[
             {
               text: "Cancel",
@@ -2163,11 +1085,11 @@ const BucketsManagement: React.FC = () => {
           isOpen={deleteCategoryState.type === "delete"}
           onDidDismiss={() => setDeleteCategoryState({ type: "none" })}
           header="Confirm Delete"
-          message={`${categoryDeleteMergeWriteExperimentActive ? "The dry-run confirms this Category is unused. " : ""}Are you sure you want to delete "${
+          message={`Are you sure you want to delete "${
             deleteCategoryState.type === "delete"
               ? deleteCategoryState.categoryName
               : ""
-          }"? This action cannot be undone.${categoryDeleteMergeWriteExperimentActive && rehearsal.authoritativeMode ? " Rotate the authoritative checkpoint before restart." : ""}`}
+          }"? This action cannot be undone.`}
           buttons={[
             {
               text: "Cancel",

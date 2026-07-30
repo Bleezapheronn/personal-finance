@@ -271,7 +271,7 @@ const main = async (): Promise<void> => {
       );
     });
 
-    await check("invalid ports, duplicate ports, and incomplete pairs fail closed", async () => {
+    await check("invalid ports and duplicate ports fail closed while management capabilities are independently selectable", async () => {
       await expectFailure(() =>
         validateAuthorityOpsProfile(
           { ...rehearsalProfile, apiPort: 0 },
@@ -286,10 +286,7 @@ const main = async (): Promise<void> => {
         ),
         "authority_profile_ports_must_differ",
       );
-      await expectFailure(() =>
-        validateCapabilitySelection(["recipientActiveStateWrites"], "rehearsal"),
-        "authority_profile_capability_pair_incomplete",
-      );
+      assert(validateCapabilitySelection(["recipientActiveStateWrites"], "rehearsal")[0] === "recipientActiveStateWrites");
     });
 
     await check("missing dependencies and immutable runtime selection fail closed", async () => {
@@ -394,21 +391,15 @@ const main = async (): Promise<void> => {
       assert(verification.sourceComparisonRun);
     });
 
-    await check("capability registry generates paired explicit flags", () => {
+    await check("management capabilities no longer generate frontend experiment flags", () => {
       const selected = [
         "recipientActiveStateWrites",
         "recipientCreateUpdateWrites",
         "accountWrites",
       ] as const;
       const generated = buildCapabilityEnvironment(selected);
-      assert(
-        generated.frontend.VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT ===
-          "true",
-      );
-      assert(
-        generated.frontend.VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT ===
-          "true",
-      );
+      assert(generated.frontend.VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT === undefined);
+      assert(generated.frontend.VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT === undefined);
       const disabled = AUTHORITY_OPS_CAPABILITIES.find(
         ({ name }) => name === "budgetDeleteWrites",
       );

@@ -127,12 +127,12 @@ for (const entity of ["transactions", "budgets", "budgetSnapshots"] as const) {
 const zeroDb = createDb();
 addRecipient(zeroDb, 1);
 addRecipient(zeroDb, 2, false);
-const zeroTargetBefore = zeroDb.prepare("SELECT * FROM recipients WHERE id=2").get();
-const zeroMerge = write(zeroDb, "merge", { sourceRecipientId: 1, targetRecipientId: 2 });
+const zeroTargetBefore = zeroDb.prepare("SELECT * FROM recipients WHERE id=1").get();
+const zeroMerge = write(zeroDb, "merge", { sourceRecipientId: 2, targetRecipientId: 1 });
 check("merge with zero references deletes source and preserves target", zeroMerge.ok &&
   zeroMerge.rowsChanged === 1 &&
-  zeroDb.prepare("SELECT 1 FROM recipients WHERE id=1").get() === undefined &&
-  JSON.stringify(zeroDb.prepare("SELECT * FROM recipients WHERE id=2").get()) ===
+  zeroDb.prepare("SELECT 1 FROM recipients WHERE id=2").get() === undefined &&
+  JSON.stringify(zeroDb.prepare("SELECT * FROM recipients WHERE id=1").get()) ===
     JSON.stringify(zeroTargetBefore));
 zeroDb.close();
 
@@ -140,10 +140,15 @@ const mergeDb = createDb();
 addRecipient(mergeDb, 1);
 addRecipient(mergeDb, 2, false);
 addRecipient(mergeDb, 3);
-addTransactionReference(mergeDb, 1, 1);
-addBudgetReference(mergeDb, 1, 1);
-addSnapshotReference(mergeDb, 1, 1, 1);
-const targetBefore = mergeDb.prepare("SELECT * FROM recipients WHERE id=2").get();
+mergeDb.prepare("UPDATE recipients SET aliases = @aliases, email = @email, tillNumber = @tillNumber, paybill = @paybill, accountNumber = @accountNumber, description = @description WHERE id = 2")
+  .run({ aliases: "Alpha; Source", email: "source@example.com", tillNumber: "123", paybill: "456", accountNumber: "789", description: "source description" });
+mergeDb.prepare("UPDATE recipients SET aliases = @aliases, phone = @phone WHERE id = 1")
+  .run({ aliases: "alpha; Target", phone: "target-phone" });
+addTransactionReference(mergeDb, 1, 2);
+addTransactionReference(mergeDb, 2, 1);
+addBudgetReference(mergeDb, 1, 2);
+addSnapshotReference(mergeDb, 1, 1, 2);
+const targetBefore = mergeDb.prepare("SELECT * FROM recipients WHERE id=1").get();
 const unrelatedBefore = mergeDb.prepare("SELECT * FROM recipients WHERE id=3").get();
 const financialBefore = JSON.stringify({
   transaction: mergeDb.prepare(`SELECT id,categoryId,accountId,date,amount,transactionCost,
@@ -158,27 +163,33 @@ const financialBefore = JSON.stringify({
 });
 const mergeDry = recipientLifecycleDryRun(
   mergeDb,
-  { sourceRecipientId: 1, targetRecipientId: 2 },
+  { sourceRecipientId: 2, targetRecipientId: 1 },
   "merge",
 );
 const mergeResult = write(
   mergeDb,
   "merge",
-  { sourceRecipientId: 1, targetRecipientId: 2 },
+  { sourceRecipientId: 2, targetRecipientId: 1 },
 );
 check("merge counts every supported reference", mergeDry.ok &&
   mergeDry.referenceCountsByEntity.transactions === 1 &&
   mergeDry.referenceCountsByEntity.budgets === 1 &&
   mergeDry.referenceCountsByEntity.budgetSnapshots === 1);
 check("merge moves all exact references and deletes source", mergeResult.ok &&
-  mergeResult.rowsChanged === 4 &&
+  mergeResult.rowsChanged === 5 &&
   ["transactions", "budgets", "budgetSnapshots"].every((table) =>
-    (mergeDb.prepare(`SELECT COUNT(*) count FROM ${table} WHERE recipientId=2`).get() as { count: number }).count === 1 &&
-    (mergeDb.prepare(`SELECT COUNT(*) count FROM ${table} WHERE recipientId=1`).get() as { count: number }).count === 0) &&
-  mergeDb.prepare("SELECT 1 FROM recipients WHERE id=1").get() === undefined);
-check("merge preserves target and unrelated recipients", JSON.stringify(targetBefore) ===
-  JSON.stringify(mergeDb.prepare("SELECT * FROM recipients WHERE id=2").get()) &&
-  JSON.stringify(unrelatedBefore) ===
+    (mergeDb.prepare(`SELECT COUNT(*) count FROM ${table} WHERE recipientId=1`).get() as { count: number }).count === (table === "transactions" ? 2 : 1) &&
+    (mergeDb.prepare(`SELECT COUNT(*) count FROM ${table} WHERE recipientId=2`).get() as { count: number }).count === 0) &&
+  mergeDb.prepare("SELECT 1 FROM recipients WHERE id=2").get() === undefined);
+check("merge fills target gaps and merges aliases without changing populated fields", (() => {
+  const target = mergeDb.prepare("SELECT * FROM recipients WHERE id=1").get() as { name: string; aliases: string; email: string; phone: string; tillNumber: string; paybill: string; accountNumber: string; description: string; isActive: number } | undefined;
+  return target?.name === (targetBefore as { name: string }).name &&
+    target.aliases === "alpha; Target; Source" &&
+    target.email === "source@example.com" && target.phone === "target-phone" &&
+    target.tillNumber === "123" && target.paybill === "456" &&
+    target.accountNumber === "789" && target.description === "source description" &&
+    target.isActive === 1;
+})() && JSON.stringify(unrelatedBefore) ===
   JSON.stringify(mergeDb.prepare("SELECT * FROM recipients WHERE id=3").get()));
 check("merge preserves financial report and Budget History inputs", financialBefore === JSON.stringify({
   transaction: mergeDb.prepare(`SELECT id,categoryId,accountId,date,amount,transactionCost,
@@ -193,7 +204,7 @@ check("merge preserves financial report and Budget History inputs", financialBef
 }));
 const repeated = recipientLifecycleDryRun(
   mergeDb,
-  { sourceRecipientId: 1, targetRecipientId: 2 },
+  { sourceRecipientId: 2, targetRecipientId: 1 },
   "merge",
 );
 check("repeated merge fails safely", !repeated.ok &&
@@ -220,12 +231,51 @@ check("missing target fails safely", !recipientLifecycleDryRun(
 ).ok);
 invalidDb.close();
 
+const preferenceDb = createDb();
+addRecipient(preferenceDb, 1);
+addRecipient(preferenceDb, 2);
+addTransactionReference(preferenceDb, 1, 1);
+const invertedTarget = recipientLifecycleDryRun(
+  preferenceDb,
+  { sourceRecipientId: 1, targetRecipientId: 2 },
+  "merge",
+);
+check("merge rejects a lower-usage target", !invertedTarget.ok &&
+  invertedTarget.code === "recipient_merge_target_not_preferred" &&
+  invertedTarget.preferredTargetId === 1);
+const preferredTarget = recipientLifecycleDryRun(
+  preferenceDb,
+  { sourceRecipientId: 2, targetRecipientId: 1 },
+  "merge",
+);
+check("merge accepts the higher-usage target", preferredTarget.ok &&
+  preferredTarget.preferredTargetId === 1);
+preferenceDb.close();
+
+const tieDb = createDb();
+addRecipient(tieDb, 1);
+addRecipient(tieDb, 2);
+const tieInverted = recipientLifecycleDryRun(
+  tieDb,
+  { sourceRecipientId: 1, targetRecipientId: 2 },
+  "merge",
+);
+const tiePreferred = recipientLifecycleDryRun(
+  tieDb,
+  { sourceRecipientId: 2, targetRecipientId: 1 },
+  "merge",
+);
+check("merge retains the lower ID on equal usage", !tieInverted.ok &&
+  tieInverted.code === "recipient_merge_target_not_preferred" &&
+  tiePreferred.ok && tiePreferred.preferredTargetId === 1);
+tieDb.close();
+
 const staleDb = createDb();
 addRecipient(staleDb, 1);
 addRecipient(staleDb, 2);
 const staleDry = recipientLifecycleDryRun(
   staleDb,
-  { sourceRecipientId: 1, targetRecipientId: 2 },
+  { sourceRecipientId: 2, targetRecipientId: 1 },
   "merge",
 );
 addTransactionReference(staleDb, 1, 1);
@@ -234,8 +284,8 @@ const staleBefore = JSON.stringify({
   transactions: staleDb.prepare("SELECT * FROM transactions ORDER BY id").all(),
 });
 const staleWrite = recipientLifecycleRealWrite(staleDb, {
-  sourceRecipientId: 1,
-  targetRecipientId: 2,
+  sourceRecipientId: 2,
+  targetRecipientId: 1,
   dryRunReviewed: true,
   confirmation: RECIPIENT_LIFECYCLE_CONFIRMATIONS.merge,
   expectedPlanFingerprint: staleDry.planFingerprint,
@@ -277,19 +327,19 @@ malformedDb.close();
 const rollbackDb = createDb();
 addRecipient(rollbackDb, 1);
 addRecipient(rollbackDb, 2);
-addTransactionReference(rollbackDb, 1, 1);
+addTransactionReference(rollbackDb, 1, 2);
 const rollbackDry = recipientLifecycleDryRun(
   rollbackDb,
-  { sourceRecipientId: 1, targetRecipientId: 2 },
+  { sourceRecipientId: 2, targetRecipientId: 1 },
   "merge",
 );
 rollbackDb.exec(`CREATE TRIGGER reject_source_delete BEFORE DELETE ON recipients
-  WHEN OLD.id = 1 BEGIN SELECT RAISE(ABORT, 'synthetic_delete_failure'); END`);
+  WHEN OLD.id = 2 BEGIN SELECT RAISE(ABORT, 'synthetic_delete_failure'); END`);
 let rollbackFailed = false;
 try {
   recipientLifecycleRealWrite(rollbackDb, {
-    sourceRecipientId: 1,
-    targetRecipientId: 2,
+    sourceRecipientId: 2,
+    targetRecipientId: 1,
     dryRunReviewed: true,
     confirmation: RECIPIENT_LIFECYCLE_CONFIRMATIONS.merge,
     expectedPlanFingerprint: rollbackDry.planFingerprint,
@@ -298,7 +348,7 @@ try {
   rollbackFailed = true;
 }
 check("source deletion failure rolls back reference updates atomically", rollbackFailed &&
-  (rollbackDb.prepare("SELECT recipientId FROM transactions WHERE id=1").get() as { recipientId: number }).recipientId === 1 &&
+  (rollbackDb.prepare("SELECT recipientId FROM transactions WHERE id=1").get() as { recipientId: number }).recipientId === 2 &&
   rollbackDb.prepare("SELECT 1 FROM recipients WHERE id=1").get() !== undefined);
 rollbackDb.close();
 

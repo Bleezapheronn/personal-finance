@@ -27,7 +27,19 @@ const readiness = {
   authorityEnabled: true,
   ready: true,
   ...metadata,
-  requiredCapabilities: [...REQUIRED_SQLITE_REHEARSAL_CAPABILITIES],
+  requiredCapabilities: [
+    "recipientActiveStateWrites",
+    "recipientCreateUpdateWrites",
+    "bucketCategoryWrites",
+    "accountWrites",
+    "transactionBasicWrites",
+    "transactionCostBudgetWrites",
+    "transactionTransferWrites",
+    "smsTemplateWrites",
+    "budgetDefinitionWrites",
+    "budgetSnapshotGenerationWrites",
+  ],
+  runtimeRequiredCapabilities: [...REQUIRED_SQLITE_REHEARSAL_CAPABILITIES],
   unsupportedOperations: REQUIRED_SQLITE_UNSUPPORTED_OPERATIONS.filter(
     (operation) =>
       operation !== "transaction_delete" &&
@@ -109,6 +121,28 @@ describe("SQLite authoritative frontend readiness", () => {
     expect(result.missingRequirements).toContain(
       "capability:transactionBasicWrites",
     );
+  });
+
+  it("requires the distinct runtime capability contract", () => {
+    expect(
+      normalizeSqliteAuthoritativeReadiness(
+        metadata,
+        { ...readiness, runtimeRequiredCapabilities: undefined },
+        capabilities,
+      ).ready,
+    ).toBe(false);
+    expect(
+      normalizeSqliteAuthoritativeReadiness(
+        metadata,
+        {
+          ...readiness,
+          runtimeRequiredCapabilities: REQUIRED_SQLITE_REHEARSAL_CAPABILITIES.filter(
+            (key) => key !== "bucketReorderWrites",
+          ),
+        },
+        capabilities,
+      ).ready,
+    ).toBe(false);
   });
 
   it("fails closed without fallback when the local API is unavailable", () => {

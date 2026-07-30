@@ -3,12 +3,14 @@ import {
   ACCOUNT_WRITES_ENV_VAR,
   BUCKET_CATEGORY_WRITES_ENV_VAR,
   BUCKET_DELETE_MERGE_WRITES_ENV_VAR,
+  BUCKET_REORDER_WRITES_ENV_VAR,
   BUDGET_DEFINITION_WRITES_ENV_VAR,
   BUDGET_DELETE_WRITES_ENV_VAR,
   BUDGET_LIFECYCLE_WRITES_ENV_VAR,
   BUDGET_SNAPSHOT_GENERATION_WRITES_ENV_VAR,
   BUDGET_SNAPSHOT_OCCURRENCE_WRITES_ENV_VAR,
   CATEGORY_DELETE_MERGE_WRITES_ENV_VAR,
+  LOOKUP_ACTIVE_STATE_WRITES_ENV_VAR,
   RECIPIENT_ACTIVE_STATE_WRITES_ENV_VAR,
   RECIPIENT_CREATE_UPDATE_WRITES_ENV_VAR,
   RECIPIENT_DELETE_MERGE_WRITES_ENV_VAR,
@@ -34,30 +36,22 @@ export const AUTHORITY_OPS_CAPABILITIES = [
   {
     name: "recipientActiveStateWrites",
     backendEnvironmentVariable: RECIPIENT_ACTIVE_STATE_WRITES_ENV_VAR,
-    frontendEnvironmentVariable:
-      "VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT",
     apiCapabilityField: "recipientActiveStateWrites",
     authorityRequired: true,
     rehearsalAllowed: true,
     authoritativeAllowed: true,
-    frontendPairGroup: "recipient-basic-writes",
   },
   {
     name: "recipientCreateUpdateWrites",
     backendEnvironmentVariable: RECIPIENT_CREATE_UPDATE_WRITES_ENV_VAR,
-    frontendEnvironmentVariable:
-      "VITE_PERSONAL_FINANCE_RECIPIENTS_WRITE_EXPERIMENT",
     apiCapabilityField: "recipientCreateUpdateWrites",
     authorityRequired: true,
     rehearsalAllowed: true,
     authoritativeAllowed: true,
-    frontendPairGroup: "recipient-basic-writes",
   },
   {
     name: "bucketCategoryWrites",
     backendEnvironmentVariable: BUCKET_CATEGORY_WRITES_ENV_VAR,
-    frontendEnvironmentVariable:
-      "VITE_PERSONAL_FINANCE_BUCKETS_CATEGORIES_WRITE_EXPERIMENT",
     apiCapabilityField: "bucketCategoryWrites",
     authorityRequired: true,
     rehearsalAllowed: true,
@@ -66,8 +60,6 @@ export const AUTHORITY_OPS_CAPABILITIES = [
   {
     name: "accountWrites",
     backendEnvironmentVariable: ACCOUNT_WRITES_ENV_VAR,
-    frontendEnvironmentVariable:
-      "VITE_PERSONAL_FINANCE_ACCOUNTS_WRITE_EXPERIMENT",
     apiCapabilityField: "accountWrites",
     authorityRequired: true,
     rehearsalAllowed: true,
@@ -106,8 +98,6 @@ export const AUTHORITY_OPS_CAPABILITIES = [
   {
     name: "smsTemplateWrites",
     backendEnvironmentVariable: SMS_TEMPLATE_WRITES_ENV_VAR,
-    frontendEnvironmentVariable:
-      "VITE_PERSONAL_FINANCE_SMS_TEMPLATES_WRITE_EXPERIMENT",
     apiCapabilityField: "smsTemplateWrites",
     authorityRequired: true,
     rehearsalAllowed: true,
@@ -154,40 +144,48 @@ export const AUTHORITY_OPS_CAPABILITIES = [
   {
     name: "recipientDeleteMergeWrites",
     backendEnvironmentVariable: RECIPIENT_DELETE_MERGE_WRITES_ENV_VAR,
-    frontendEnvironmentVariable:
-      "VITE_PERSONAL_FINANCE_RECIPIENT_DELETE_MERGE_WRITE_EXPERIMENT",
     apiCapabilityField: "recipientDeleteMergeWrites",
-    authorityRequired: false,
+    authorityRequired: true,
     rehearsalAllowed: true,
     authoritativeAllowed: true,
   },
   {
     name: "accountDeleteMergeWrites",
     backendEnvironmentVariable: ACCOUNT_DELETE_MERGE_WRITES_ENV_VAR,
-    frontendEnvironmentVariable:
-      "VITE_PERSONAL_FINANCE_ACCOUNT_DELETE_MERGE_WRITE_EXPERIMENT",
     apiCapabilityField: "accountDeleteMergeWrites",
-    authorityRequired: false,
+    authorityRequired: true,
     rehearsalAllowed: true,
     authoritativeAllowed: true,
   },
   {
     name: "categoryDeleteMergeWrites",
     backendEnvironmentVariable: CATEGORY_DELETE_MERGE_WRITES_ENV_VAR,
-    frontendEnvironmentVariable:
-      "VITE_PERSONAL_FINANCE_CATEGORY_DELETE_MERGE_WRITE_EXPERIMENT",
     apiCapabilityField: "categoryDeleteMergeWrites",
-    authorityRequired: false,
+    authorityRequired: true,
     rehearsalAllowed: true,
     authoritativeAllowed: true,
   },
   {
     name: "bucketDeleteMergeWrites",
     backendEnvironmentVariable: BUCKET_DELETE_MERGE_WRITES_ENV_VAR,
-    frontendEnvironmentVariable:
-      "VITE_PERSONAL_FINANCE_BUCKET_DELETE_MERGE_WRITE_EXPERIMENT",
     apiCapabilityField: "bucketDeleteMergeWrites",
-    authorityRequired: false,
+    authorityRequired: true,
+    rehearsalAllowed: true,
+    authoritativeAllowed: true,
+  },
+  {
+    name: "lookupActiveStateWrites",
+    backendEnvironmentVariable: LOOKUP_ACTIVE_STATE_WRITES_ENV_VAR,
+    apiCapabilityField: "lookupActiveStateWrites",
+    authorityRequired: true,
+    rehearsalAllowed: true,
+    authoritativeAllowed: true,
+  },
+  {
+    name: "bucketReorderWrites",
+    backendEnvironmentVariable: BUCKET_REORDER_WRITES_ENV_VAR,
+    apiCapabilityField: "bucketReorderWrites",
+    authorityRequired: true,
     rehearsalAllowed: true,
     authoritativeAllowed: true,
   },
@@ -247,10 +245,14 @@ export const validateCapabilitySelection = (
   const selected = new Set(names);
   const groups = new Map<string, string[]>();
   for (const capability of AUTHORITY_OPS_CAPABILITIES) {
-    if (!("frontendPairGroup" in capability)) continue;
-    const group = groups.get(capability.frontendPairGroup) ?? [];
+    const pairGroup = "frontendPairGroup" in capability &&
+      typeof capability.frontendPairGroup === "string"
+      ? capability.frontendPairGroup
+      : undefined;
+    if (!pairGroup) continue;
+    const group = groups.get(pairGroup) ?? [];
     group.push(capability.name);
-    groups.set(capability.frontendPairGroup, group);
+    groups.set(pairGroup, group);
   }
   for (const group of groups.values()) {
     const selectedCount = group.filter((name) => selected.has(name)).length;

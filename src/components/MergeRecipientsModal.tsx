@@ -25,7 +25,11 @@ import {
   swapHorizontal,
 } from "ionicons/icons";
 import { Recipient } from "../db";
-import { mergeRecipients, MergeResult } from "../utils/recipientMerge";
+export interface MergeResult {
+  success: boolean;
+  transactionsUpdated: number;
+  error?: string;
+}
 
 interface MergeRecipientsModalProps {
   isOpen: boolean;
@@ -33,6 +37,7 @@ interface MergeRecipientsModalProps {
   duplicatePairs: Array<[Recipient, Recipient]>;
   recipientCounts: Map<number, number>;
   onMergeComplete: () => void;
+  onMerge: (primaryRecipientId: number, secondaryRecipientId: number) => Promise<MergeResult>;
 }
 
 interface SelectedPair {
@@ -47,6 +52,7 @@ export const MergeRecipientsModal: React.FC<MergeRecipientsModalProps> = ({
   duplicatePairs,
   recipientCounts,
   onMergeComplete,
+  onMerge,
 }) => {
   const [selectedPairs, setSelectedPairs] = useState<SelectedPair[]>([]);
   const [showConfirmAlert, setShowConfirmAlert] = useState(false);
@@ -62,8 +68,10 @@ export const MergeRecipientsModal: React.FC<MergeRecipientsModalProps> = ({
     const countPrimary = recipientCounts.get(pair[0].id!) || 0;
     const countSecondary = recipientCounts.get(pair[1].id!) || 0;
 
-    const primary = countPrimary >= countSecondary ? pair[0] : pair[1];
-    const secondary = countPrimary >= countSecondary ? pair[1] : pair[0];
+    const retainFirst = countPrimary > countSecondary ||
+      (countPrimary === countSecondary && pair[0].id! < pair[1].id!);
+    const primary = retainFirst ? pair[0] : pair[1];
+    const secondary = retainFirst ? pair[1] : pair[0];
     const transactionCount = recipientCounts.get(secondary.id!) || 0;
 
     setSelectedPairs((current) => {
@@ -91,7 +99,7 @@ export const MergeRecipientsModal: React.FC<MergeRecipientsModalProps> = ({
 
     try {
       for (const pair of selectedPairs) {
-        const result = await mergeRecipients(
+        const result = await onMerge(
           pair.primary.id!,
           pair.secondary.id!
         );
@@ -122,8 +130,10 @@ export const MergeRecipientsModal: React.FC<MergeRecipientsModalProps> = ({
   const isPairSelected = (pair: [Recipient, Recipient]): boolean => {
     const countPrimary = recipientCounts.get(pair[0].id!) || 0;
     const countSecondary = recipientCounts.get(pair[1].id!) || 0;
-    const primary = countPrimary >= countSecondary ? pair[0] : pair[1];
-    const secondary = countPrimary >= countSecondary ? pair[1] : pair[0];
+    const retainFirst = countPrimary > countSecondary ||
+      (countPrimary === countSecondary && pair[0].id! < pair[1].id!);
+    const primary = retainFirst ? pair[0] : pair[1];
+    const secondary = retainFirst ? pair[1] : pair[0];
 
     return selectedPairs.some(
       (p) => p.primary.id === primary.id && p.secondary.id === secondary.id

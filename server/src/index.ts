@@ -2,6 +2,7 @@ import {
   API_VERSION, READONLY_MODE, SERVER_HOST, SERVICE_MODE, SERVICE_NAME,
   areAccountDeleteMergeWritesEnabled, areAccountWritesEnabled,
   areBucketCategoryWritesEnabled, areBucketDeleteMergeWritesEnabled,
+  areBucketReorderWritesEnabled, areLookupActiveStateWritesEnabled,
   areBudgetDefinitionWritesEnabled, areBudgetDeleteWritesEnabled,
   areBudgetLifecycleWritesEnabled, areBudgetSnapshotGenerationWritesEnabled,
   areBudgetSnapshotOccurrenceWritesEnabled, areCategoryDeleteMergeWritesEnabled,
@@ -39,6 +40,7 @@ const server = createAuthorityApiServer({
   writeCapabilities: {
     areAccountDeleteMergeWritesEnabled, areAccountWritesEnabled,
     areBucketCategoryWritesEnabled, areBucketDeleteMergeWritesEnabled,
+    areBucketReorderWritesEnabled, areLookupActiveStateWritesEnabled,
     areBudgetDefinitionWritesEnabled, areBudgetDeleteWritesEnabled,
     areBudgetLifecycleWritesEnabled, areBudgetSnapshotGenerationWritesEnabled,
     areBudgetSnapshotOccurrenceWritesEnabled, areCategoryDeleteMergeWritesEnabled,

@@ -14,7 +14,7 @@ import {
   IonText,
 } from "@ionic/react";
 import { close, trash } from "ionicons/icons";
-import { db, Account } from "../db";
+import { Account } from "../db";
 import { SelectableDropdown } from "./SelectableDropdown";
 
 interface AddAccountModalProps {
@@ -144,59 +144,20 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
 
     try {
       setLoading(true);
-      const now = new Date();
-
-      if (onSave) {
-        await onSave(
-          {
-            name: accountName.trim(),
-            currency: currency || "KES",
-            isCredit,
-            creditLimit:
-              isCredit && creditLimit ? parseFloat(creditLimit) : undefined,
-          },
-          editingAccount,
-        );
-      } else if (editingAccount?.id) {
-        // UPDATE MODE
-        const updateData: Partial<Account> = {
-          name: accountName.trim(),
-          currency: currency || "KES",
-          isCredit: isCredit,
-          creditLimit: isCredit ? parseFloat(creditLimit) : undefined,
-          updatedAt: now,
-        };
-
-        if (imageFile) {
-          updateData.imageBlob = imageFile;
-        } else if (imageRemovalIntent) {
-          updateData.imageBlob = undefined;
-        }
-
-        await db.accounts.update(editingAccount.id, updateData);
-        const updated = await db.accounts.get(editingAccount.id);
-        if (updated) {
-          onAccountAdded(updated);
-        }
-      } else {
-        // ADD MODE
-        const newAccount: Omit<Account, "id"> = {
-          name: accountName.trim(),
-          currency: currency || "KES",
-          isCredit: isCredit,
-          creditLimit: isCredit ? parseFloat(creditLimit) : undefined,
-          imageBlob: imageFile ?? undefined,
-          isActive: true,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        const id = await db.accounts.add(newAccount);
-        const saved = await db.accounts.get(id);
-        if (saved) {
-          onAccountAdded(saved);
-        }
+      if (!onSave) {
+        throw new Error("Couldn't save this account. Try again.");
       }
+
+      await onSave(
+        {
+          name: accountName.trim(),
+          currency: currency || "KES",
+          isCredit,
+          creditLimit:
+            isCredit && creditLimit ? parseFloat(creditLimit) : undefined,
+        },
+        editingAccount,
+      );
 
       resetForm();
       onClose();
@@ -357,6 +318,19 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                     }}
                   />
                 </div>
+              </IonCol>
+            </IonRow>
+          )}
+
+          {!imageEditingEnabled && (
+            <IonRow>
+              <IonCol>
+                <IonButton disabled fill="outline" size="small">
+                  Change image unavailable
+                </IonButton>
+                <IonText color="medium">
+                  <p>Account image editing is not available yet.</p>
+                </IonText>
               </IonCol>
             </IonRow>
           )}

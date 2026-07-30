@@ -22,7 +22,6 @@ import {
   IonCard,
   IonCardContent,
   IonLabel,
-  IonBadge,
   IonFab,
   IonFabButton,
   IonToast,
@@ -34,82 +33,33 @@ import {
   close,
   checkmarkCircleOutline,
   closeCircleOutline,
-  warningOutline,
 } from "ionicons/icons";
-import { db, SmsImportTemplate, Account } from "../db";
-import {
-  accountRepository,
-  smsImportTemplateRepository,
-} from "../repositories";
+import { SmsImportTemplate, Account } from "../db";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityControlledBackend,
-  type RepositoryBackend,
 } from "../repositories/adapterSelection";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import {
   activateSmsTemplateInDisposableSqlite,
   createSmsTemplateInDisposableSqlite,
   deactivateSmsTemplateInDisposableSqlite,
   deleteSmsTemplateFromDisposableSqlite,
-  isSmsTemplatesWriteExperimentEnabled,
   smsTemplateWriteErrorCode,
   type SmsTemplateWriteInput,
   updateSmsTemplateInDisposableSqlite,
 } from "../repositories/http/smsTemplateWriteExperiment";
-import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
 import {
   booleanValue,
   type DevPreviewListResult,
-  hasValue,
-  isSelectedReadPreviewsEnabled,
   numberValue,
-  previewCount,
   previewRows,
-  safePreviewErrorCode,
-  sampledIds,
   stringValue,
 } from "../utils/devPreview";
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
 
 type LocalAccount = Account;
 
-interface SelectedReadSmsTemplatePreviewRow {
-  id?: number;
-  isActive?: boolean | null;
-  accountId?: number;
-  paymentMethodId?: number;
-  hasReferencePattern: boolean;
-  hasAmountPattern: boolean;
-  hasRecipientNamePattern: boolean;
-  hasRecipientPhonePattern: boolean;
-  hasDateTimePattern: boolean;
-  hasCostPattern: boolean;
-  hasIncomePattern: boolean;
-  hasExpensePattern: boolean;
-}
-
-interface SelectedReadSmsTemplatePreview {
-  status: "pass" | "fail";
-  backend: RepositoryBackend;
-  source: string;
-  count?: number;
-  loadedRowCount?: number;
-  sampledIds?: number[];
-  rows: SelectedReadSmsTemplatePreviewRow[];
-  errorCode?: string;
-}
-
-const SELECTED_READ_PREVIEW_LIMIT = 20;
-const SMS_TEMPLATES_READ_EXPERIMENT_FLAG =
-  "VITE_PERSONAL_FINANCE_SMS_TEMPLATES_READ_EXPERIMENT";
-const SMS_TEMPLATES_READ_EXPERIMENT_LIMIT = 500;
-
-const isSmsTemplatesReadExperimentEnabled = (): boolean => {
-  const env = import.meta.env as Record<string, string | undefined>;
-  return env[SMS_TEMPLATES_READ_EXPERIMENT_FLAG]?.trim() === "true";
-};
+const SMS_TEMPLATES_LIST_LIMIT = 500;
 
 const dateValue = (value: unknown): Date => {
   if (value instanceof Date) {
@@ -192,46 +142,14 @@ const SmsImportTemplatesManagement: React.FC = () => {
   // Toast
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
-  const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
-  const [selectedReadPreview, setSelectedReadPreview] =
-    useState<SelectedReadSmsTemplatePreview | null>(null);
-  const [selectedReadPreviewLoading, setSelectedReadPreviewLoading] =
-    useState(false);
-  const [smsTemplatesReadExperimentCount, setSmsTemplatesReadExperimentCount] =
-    useState<number | undefined>(undefined);
 
   const selectedBackend = getRepositoryBackend();
-  const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
-  const smsTemplatesReadExperimentEnabled =
-    isSmsTemplatesReadExperimentEnabled();
-  const smsTemplatesWriteExperimentEnabled =
-    isSmsTemplatesWriteExperimentEnabled();
-  const smsTemplatesSqliteWriteExperimentActive =
-    (smsTemplatesWriteExperimentEnabled && selectedBackend === "http-readonly") ||
-    (rehearsalSelected && rehearsal.ready);
-  const smsTemplatesReadExperimentHttpReadonly =
-    rehearsalSelected ||
-    ((smsTemplatesReadExperimentEnabled || smsTemplatesWriteExperimentEnabled) &&
-      selectedBackend === "http-readonly");
-  const smsTemplatesHttpReadonlyWithoutWrites =
-    smsTemplatesReadExperimentHttpReadonly &&
-    !smsTemplatesSqliteWriteExperimentActive;
-
-  const showReadExperimentActionDisabledToast = () => {
-    setToastMessage(
-      "SMS template write actions are unavailable in the current backend mode.",
-    );
-    setShowToast(true);
-  };
 
   const fetchData = async (): Promise<boolean> => {
     setLoading(true);
     try {
       let temps: SmsImportTemplate[];
-      let selectedReadCount: number | undefined;
-      const accsPromise: Promise<Account[]> = smsTemplatesReadExperimentHttpReadonly
-        ? getSelectedReadRepositories(selectedBackend)
+      const accsPromise: Promise<Account[]> = getSelectedReadRepositories(selectedBackend)
             .accounts.list({ limit: 500, offset: 0 })
             .then((result) => {
               const rows = previewRows(result as DevPreviewListResult);
@@ -250,32 +168,28 @@ const SmsImportTemplatesManagement: React.FC = () => {
                 },
               );
             })
-        : accountRepository.listAccounts();
+        ;
 
-      if (smsTemplatesReadExperimentHttpReadonly) {
+      {
         const repositories = getSelectedReadRepositories(selectedBackend);
         const result = await repositories.smsImportTemplates.list({
-          limit: SMS_TEMPLATES_READ_EXPERIMENT_LIMIT,
+          limit: SMS_TEMPLATES_LIST_LIMIT,
           offset: 0,
         });
         const rows = previewRows(result as DevPreviewListResult);
 
         if (!rows) {
-          throw new Error("invalid_sms_templates_read_experiment_response");
+          throw new Error("invalid_sms_templates_response");
         }
 
         temps = rows
           .map(selectedReadRowToSmsTemplate)
           .sort(compareSmsTemplatesByExistingDisplayOrder);
-        selectedReadCount = previewCount(result as DevPreviewListResult);
-      } else {
-        temps = await smsImportTemplateRepository.listTemplates();
       }
 
       const accs = await accsPromise;
 
       setTemplates(temps);
-      setSmsTemplatesReadExperimentCount(selectedReadCount);
       setAccounts(accs);
       return true;
     } catch (err) {
@@ -315,11 +229,6 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleEditTemplate - Opens modal with template data
    */
   const handleEditTemplate = (template: SmsImportTemplate) => {
-    if (smsTemplatesHttpReadonlyWithoutWrites) {
-      showReadExperimentActionDisabledToast();
-      return;
-    }
-
     setEditingTemplate(template);
     setFormName(template.name);
     setFormDescription(template.description || "");
@@ -340,11 +249,6 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleSave - Saves or updates template
    */
   const handleSave = async () => {
-    if (smsTemplatesHttpReadonlyWithoutWrites) {
-      showReadExperimentActionDisabledToast();
-      return;
-    }
-
     setFormError("");
 
     if (!formName.trim()) {
@@ -368,70 +272,21 @@ const SmsImportTemplatesManagement: React.FC = () => {
         expensePattern: formExpensePattern,
       };
 
-      if (smsTemplatesSqliteWriteExperimentActive) {
-        if (editingTemplate?.id) {
-          await updateSmsTemplateInDisposableSqlite(editingTemplate.id, input);
-          setToastMessage(rehearsal.authoritativeMode ? "Template updated in authoritative SQLite" : "Template updated in disposable SQLite");
-        } else {
-          await createSmsTemplateInDisposableSqlite(input);
-          setToastMessage(rehearsal.authoritativeMode ? "Template created in authoritative SQLite" : "Template created in disposable SQLite");
-        }
-      } else if (editingTemplate?.id) {
-        const now = new Date();
-        // UPDATE MODE
-        await db.smsImportTemplates.update(editingTemplate.id, {
-          name: formName.trim(),
-          description: formDescription.trim() || undefined,
-          accountId: formAccountId, // CHANGED
-          referencePattern: formReferencePattern.trim() || undefined,
-          amountPattern: formAmountPattern.trim() || undefined,
-          recipientNamePattern: formRecipientNamePattern.trim() || undefined,
-          recipientPhonePattern: formRecipientPhonePattern.trim() || undefined,
-          dateTimePattern: formDateTimePattern.trim() || undefined,
-          costPattern: formCostPattern.trim() || undefined,
-          incomePattern: formIncomePattern.trim() || undefined,
-          expensePattern: formExpensePattern.trim() || undefined,
-          updatedAt: now,
-        } as Partial<SmsImportTemplate>);
+      if (editingTemplate?.id) {
+        await updateSmsTemplateInDisposableSqlite(editingTemplate.id, input);
         setToastMessage("Template updated successfully!");
       } else {
-        const now = new Date();
-        // ADD MODE
-        const newTemplate: Omit<SmsImportTemplate, "id"> = {
-          name: formName.trim(),
-          description: formDescription.trim() || undefined,
-          accountId: formAccountId, // CHANGED
-          referencePattern: formReferencePattern.trim() || undefined,
-          amountPattern: formAmountPattern.trim() || undefined,
-          recipientNamePattern: formRecipientNamePattern.trim() || undefined,
-          recipientPhonePattern: formRecipientPhonePattern.trim() || undefined,
-          dateTimePattern: formDateTimePattern.trim() || undefined,
-          costPattern: formCostPattern.trim() || undefined,
-          incomePattern: formIncomePattern.trim() || undefined,
-          expensePattern: formExpensePattern.trim() || undefined,
-          isActive: true,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        await db.smsImportTemplates.add(newTemplate);
+        await createSmsTemplateInDisposableSqlite(input);
         setToastMessage("Template added successfully!");
       }
 
       setShowToast(true);
       resetForm();
       setShowAddTemplateModal(false);
-      const refreshed = await fetchData();
-      if (!refreshed && smsTemplatesSqliteWriteExperimentActive) {
-        setToastMessage(
-          "SQLite changed, but refresh failed. Reload before retrying.",
-        );
-      }
+      await fetchData();
     } catch (err) {
-      const code = smsTemplatesSqliteWriteExperimentActive
-        ? smsTemplateWriteErrorCode(err)
-        : "sms_template_save_failed";
-      setFormError(`Failed to save template: ${code}`);
+      void smsTemplateWriteErrorCode(err);
+      setFormError("Couldn't save this template. Try again.");
     } finally {
       setLoading(false);
     }
@@ -441,33 +296,12 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleToggleTemplateActive - Toggles template active/inactive status
    */
   const handleToggleTemplateActive = async (template: SmsImportTemplate) => {
-    if (smsTemplatesHttpReadonlyWithoutWrites) {
-      showReadExperimentActionDisabledToast();
-      return;
-    }
-
     try {
       setLoading(true);
       const newStatus = template.isActive ? false : true;
-      if (smsTemplatesSqliteWriteExperimentActive) {
-        if (newStatus) {
-          await activateSmsTemplateInDisposableSqlite(template.id!);
-        } else {
-          await deactivateSmsTemplateInDisposableSqlite(template.id!);
-        }
-      } else {
-        await db.smsImportTemplates.update(template.id!, {
-          isActive: newStatus,
-          updatedAt: new Date(),
-        } as Partial<SmsImportTemplate>);
-      }
-      const refreshed = await fetchData();
-      if (!refreshed && smsTemplatesSqliteWriteExperimentActive) {
-        setToastMessage(
-          "SQLite changed, but refresh failed. Reload before retrying.",
-        );
-        setShowToast(true);
-      }
+      if (newStatus) await activateSmsTemplateInDisposableSqlite(template.id!);
+      else await deactivateSmsTemplateInDisposableSqlite(template.id!);
+      await fetchData();
     } catch (error) {
       console.error("Error toggling template status:", error);
       setToastMessage("Failed to update template status");
@@ -481,28 +315,13 @@ const SmsImportTemplatesManagement: React.FC = () => {
    * handleDeleteTemplate - Removes template from database
    */
   const handleDeleteTemplate = async (templateId: number) => {
-    if (smsTemplatesHttpReadonlyWithoutWrites) {
-      showReadExperimentActionDisabledToast();
-      setDeleteTemplateId(null);
-      return;
-    }
-
     try {
       setLoading(true);
-      if (smsTemplatesSqliteWriteExperimentActive) {
-        await deleteSmsTemplateFromDisposableSqlite(templateId);
-      } else {
-        await db.smsImportTemplates.delete(templateId);
-      }
+      await deleteSmsTemplateFromDisposableSqlite(templateId);
       setDeleteTemplateId(null);
       setToastMessage("Template deleted successfully!");
       setShowToast(true);
-      const refreshed = await fetchData();
-      if (!refreshed && smsTemplatesSqliteWriteExperimentActive) {
-        setToastMessage(
-          "SQLite changed, but refresh failed. Reload before retrying.",
-        );
-      }
+      await fetchData();
     } catch (error) {
       console.error("Error deleting template:", error);
       setToastMessage("Failed to delete template");
@@ -517,90 +336,6 @@ const SmsImportTemplatesManagement: React.FC = () => {
     setShowAddTemplateModal(false);
   };
 
-  const loadSelectedReadPreview = async () => {
-    setSelectedReadPreviewLoading(true);
-    setSelectedReadPreview(null);
-
-    const backend = getRepositoryBackend();
-    const repositories = getSelectedReadRepositories(backend);
-    const source = repositories.source;
-
-    try {
-      const result = await repositories.smsImportTemplates.list({
-        limit: SELECTED_READ_PREVIEW_LIMIT,
-        offset: 0,
-      });
-      const rows = previewRows(result as DevPreviewListResult);
-
-      if (!rows) {
-        setSelectedReadPreview({
-          status: "fail",
-          backend,
-          source,
-          rows: [],
-          errorCode: "invalid_selected_read_sms_templates_preview_response",
-        });
-        return;
-      }
-
-      const visibleRows = rows.slice(0, SELECTED_READ_PREVIEW_LIMIT);
-
-      setSelectedReadPreview({
-        status: "pass",
-        backend,
-        source,
-        count: previewCount(result as DevPreviewListResult),
-        loadedRowCount: visibleRows.length,
-        sampledIds: sampledIds(visibleRows, SELECTED_READ_PREVIEW_LIMIT),
-        rows: visibleRows.map((row) => ({
-          id: numberValue(row.id),
-          isActive: booleanValue((row as { isActive?: unknown }).isActive),
-          accountId: numberValue((row as { accountId?: unknown }).accountId),
-          paymentMethodId: numberValue(
-            (row as { paymentMethodId?: unknown }).paymentMethodId,
-          ),
-          hasReferencePattern: hasValue(
-            (row as { referencePattern?: unknown }).referencePattern,
-          ),
-          hasAmountPattern: hasValue(
-            (row as { amountPattern?: unknown }).amountPattern,
-          ),
-          hasRecipientNamePattern: hasValue(
-            (row as { recipientNamePattern?: unknown }).recipientNamePattern,
-          ),
-          hasRecipientPhonePattern: hasValue(
-            (row as { recipientPhonePattern?: unknown }).recipientPhonePattern,
-          ),
-          hasDateTimePattern: hasValue(
-            (row as { dateTimePattern?: unknown }).dateTimePattern,
-          ),
-          hasCostPattern: hasValue(
-            (row as { costPattern?: unknown }).costPattern,
-          ),
-          hasIncomePattern: hasValue(
-            (row as { incomePattern?: unknown }).incomePattern,
-          ),
-          hasExpensePattern: hasValue(
-            (row as { expensePattern?: unknown }).expensePattern,
-          ),
-        })),
-      });
-    } catch (error) {
-      setSelectedReadPreview({
-        status: "fail",
-        backend,
-        source,
-        rows: [],
-        errorCode: safePreviewErrorCode(
-          error,
-          "selected_read_sms_templates_preview_failed",
-        ),
-      });
-    } finally {
-      setSelectedReadPreviewLoading(false);
-    }
-  };
-
   return (
     <IonPage>
       <IonHeader>
@@ -613,153 +348,12 @@ const SmsImportTemplatesManagement: React.FC = () => {
       </IonHeader>
 
       <IonContent className="ion-padding">
-        {showSelectedReadPreview && (
-          <SelectedReadPreviewCard
-            resourceLabel="Selected-read SMS import templates"
-            loading={selectedReadPreviewLoading}
-            onLoad={() => void loadSelectedReadPreview()}
-            description="This preview uses the selected read facade only when manually loaded. It does not replace this management screen or change create, edit, delete, or import behavior."
-          >
-              {selectedReadPreview && (
-                <IonList>
-                  <IonItem>
-                    <IonLabel>Backend / source</IonLabel>
-                    <IonText slot="end">
-                      {selectedReadPreview.backend} /{" "}
-                      {selectedReadPreview.source}
-                    </IonText>
-                  </IonItem>
-                  <IonItem>
-                    <IonLabel>Status</IonLabel>
-                    <IonBadge
-                      color={
-                        selectedReadPreview.status === "pass"
-                          ? "success"
-                          : "danger"
-                      }
-                      slot="end"
-                    >
-                      {selectedReadPreview.status === "pass" ? "Pass" : "Fail"}
-                    </IonBadge>
-                  </IonItem>
-                  {selectedReadPreview.errorCode && (
-                    <IonItem>
-                      <IonLabel>Safe error code</IonLabel>
-                      <IonText slot="end">
-                        {selectedReadPreview.errorCode}
-                      </IonText>
-                    </IonItem>
-                  )}
-                  <IonItem>
-                    <IonLabel>
-                      <h3>SMS import templates</h3>
-                      <p>
-                        count={selectedReadPreview.count ?? "-"} loaded=
-                        {selectedReadPreview.loadedRowCount ?? "-"} sampledIds=
-                        {selectedReadPreview.sampledIds?.length
-                          ? selectedReadPreview.sampledIds.join(", ")
-                          : "-"}
-                      </p>
-                    </IonLabel>
-                  </IonItem>
-                  {selectedReadPreview.rows.map((template) => (
-                    <IonItem
-                      key={`selected-sms-template-${template.id ?? "none"}`}
-                    >
-                      <IonLabel>
-                        <h3>template id={template.id ?? "-"}</h3>
-                        <p>
-                          isActive=
-                          {template.isActive === undefined
-                            ? "-"
-                            : String(template.isActive)}{" "}
-                          accountId={template.accountId ?? "-"}{" "}
-                          paymentMethodId={template.paymentMethodId ?? "-"}
-                        </p>
-                        <p>
-                          hasReferencePattern=
-                          {String(template.hasReferencePattern)}{" "}
-                          hasAmountPattern={String(template.hasAmountPattern)}{" "}
-                          hasDateTimePattern=
-                          {String(template.hasDateTimePattern)}
-                        </p>
-                        <p>
-                          hasRecipientNamePattern=
-                          {String(template.hasRecipientNamePattern)}{" "}
-                          hasRecipientPhonePattern=
-                          {String(template.hasRecipientPhonePattern)}
-                        </p>
-                        <p>
-                          hasCostPattern={String(template.hasCostPattern)}{" "}
-                          hasIncomePattern={String(template.hasIncomePattern)}{" "}
-                          hasExpensePattern=
-                          {String(template.hasExpensePattern)}
-                        </p>
-                      </IonLabel>
-                    </IonItem>
-                  ))}
-                </IonList>
-              )}
-          </SelectedReadPreviewCard>
-        )}
-
-        {(smsTemplatesReadExperimentEnabled ||
-          smsTemplatesWriteExperimentEnabled) && (
-          <IonCard>
-            <IonCardContent>
-              <IonText
-                color={
-                  smsTemplatesReadExperimentHttpReadonly ? "warning" : "medium"
-                }
-              >
-                <p>
-                  <IonIcon icon={warningOutline} />{" "}
-                  {smsTemplatesSqliteWriteExperimentActive
-                    ? rehearsal.authoritativeMode
-                      ? "SMS template management uses verified SQLite. Create, update, activate/deactivate, and delete are available with dry-run-first safety checks."
-                      : "SMS template writes are available in SQLite rehearsal mode with the current write capabilities."
-                    : smsTemplatesReadExperimentHttpReadonly
-                    ? "SMS templates are currently read-only in the selected backend mode. Write, import, and test-parse actions are blocked."
-                    : "SMS templates are using the default local repository mode."}
-                </p>
-                {smsTemplatesSqliteWriteExperimentActive && (
-                  <p>
-                    Create, update, activate, deactivate, and delete are
-                    available. Each operation runs a dry-run first. No parser,
-                    SMS import, transaction, Account, or Recipient mutation is
-                    performed.
-                  </p>
-                )}
-                {smsTemplatesHttpReadonlyWithoutWrites && (
-                  <p>
-                    This is a list-only read mode. Regex and pattern values are
-                    not shown in this view.
-                  </p>
-                )}
-                {smsTemplatesReadExperimentHttpReadonly &&
-                  smsTemplatesReadExperimentCount !== undefined &&
-                  smsTemplatesReadExperimentCount > templates.length && (
-                    <p>
-                      Showing {templates.length} of{" "}
-                      {smsTemplatesReadExperimentCount} SMS templates from the
-                      bounded selected-read page.
-                    </p>
-                  )}
-              </IonText>
-            </IonCardContent>
-          </IonCard>
-        )}
-
-        {loading && <IonSpinner />}
-
         {/* TEMPLATES LIST */}
         <IonCard>
           <IonCardContent>
             {templates.length === 0 ? (
               <p>
-                {smsTemplatesReadExperimentHttpReadonly
-                  ? "No SMS import templates were loaded in the current read-only mode."
-                  : "No SMS import templates yet. Tap the + button to add one."}
+                No SMS import templates yet. Tap the + button to add one.
               </p>
             ) : (
               <IonList>
@@ -834,9 +428,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
                           </IonCol>
 
                           {/* ACTION BUTTONS */}
-                          {(!smsTemplatesReadExperimentHttpReadonly ||
-                            smsTemplatesSqliteWriteExperimentActive) && (
-                            <IonCol size="auto">
+                          <IonCol size="auto">
                               <IonButton
                                 fill="clear"
                                 size="small"
@@ -877,8 +469,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
                               >
                                 <IonIcon icon={trashOutline} />
                               </IonButton>
-                            </IonCol>
-                          )}
+                          </IonCol>
                         </IonRow>
                       </IonGrid>
                     </IonItem>
@@ -891,11 +482,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
         {/* ALERT: Delete template confirmation */}
         <IonAlert
-          isOpen={
-            deleteTemplateId !== null &&
-            (!smsTemplatesReadExperimentHttpReadonly ||
-              smsTemplatesSqliteWriteExperimentActive)
-          }
+          isOpen={deleteTemplateId !== null}
           onDidDismiss={() => setDeleteTemplateId(null)}
           header="Delete Template"
           message="Are you sure you want to delete this SMS import template?"
@@ -918,11 +505,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
         {/* MODAL: Add/Edit Template */}
         <IonModal
-          isOpen={
-            showAddTemplateModal &&
-            (!smsTemplatesReadExperimentHttpReadonly ||
-              smsTemplatesSqliteWriteExperimentActive)
-          }
+          isOpen={showAddTemplateModal}
           onDidDismiss={handleCloseModal}
         >
           <IonHeader>
@@ -1224,6 +807,20 @@ const SmsImportTemplatesManagement: React.FC = () => {
 
               <IonRow>
                 <IonCol>
+                  <IonButton disabled fill="outline" size="small">
+                    Test parse unavailable
+                  </IonButton>
+                  <IonButton disabled fill="outline" size="small">
+                    Import SMS unavailable
+                  </IonButton>
+                  <IonText color="medium">
+                    <p>Test parsing and SMS import are not available yet.</p>
+                  </IonText>
+                </IonCol>
+              </IonRow>
+
+              <IonRow>
+                <IonCol>
                   <IonButton
                     expand="block"
                     onClick={handleSave}
@@ -1238,9 +835,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
         </IonModal>
 
         {/* FAB BUTTON FOR ADDING TEMPLATES */}
-        {(!smsTemplatesReadExperimentHttpReadonly ||
-          smsTemplatesSqliteWriteExperimentActive) && (
-          <IonFab vertical="bottom" horizontal="end" slot="fixed">
+        <IonFab vertical="bottom" horizontal="end" slot="fixed">
             <IonFabButton
               onClick={() => {
                 resetForm();
@@ -1250,8 +845,7 @@ const SmsImportTemplatesManagement: React.FC = () => {
             >
               <IonIcon icon={add} />
             </IonFabButton>
-          </IonFab>
-        )}
+        </IonFab>
 
         {/* TOAST NOTIFICATIONS */}
         <IonToast

@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import http from "node:http";
@@ -38,6 +38,14 @@ const terminateOwnedChild = async (child: ReturnType<typeof spawn>, stage: strin
 const count = (databasePath: string) => { const db = new Database(databasePath, { readonly: true }); try { return Number((db.prepare("SELECT COUNT(*) AS count FROM recipients").get() as { count: number }).count); } finally { db.close(); } };
 const tableCount = (databasePath: string, table: "budgets" | "budgetSnapshots" | "transactions") => { const db = new Database(databasePath, { readonly: true }); try { return Number((db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count); } finally { db.close(); } };
 const sha256 = (filePath: string) => createHash("sha256").update(readFileSync(filePath)).digest("hex");
+const buildCurrentServerArtifacts = () => {
+  const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  execFileSync(
+    process.execPath,
+    [path.join(serverRoot, "node_modules", "typescript", "bin", "tsc"), "-p", path.join(serverRoot, "tsconfig.json")],
+    { cwd: serverRoot, stdio: "inherit", windowsHide: true },
+  );
+};
 const zeroMutationChange = process.argv.includes("--zero-mutation-change");
 const routeFamilies = process.argv.includes("--route-families");
 const transactionDeleteProcess = process.argv.includes("--transaction-delete");
@@ -55,7 +63,7 @@ const occurrenceCreateAndLinkProcess = process.argv.includes("--occurrence-creat
 const snapshotGenerationProcess = process.argv.includes("--snapshot-generation");
 const budgetFromTransactionProcess = process.argv.includes("--budget-from-transaction");
 const occurrenceLinkProcess = process.argv.includes("--occurrence-link");
-const writeCount = zeroMutationChange ? 0 : routeFamilies ? 10 : transactionDeleteProcess ? 6 : recipientLifecycleProcess ? 10 : accountLifecycleProcess ? 10 : categoryLifecycleProcess ? 10 : bucketLifecycleProcess ? 10 : recipientActiveSmsProcess ? 11 : transferLifecycleProcess ? 7 : budgetDefinitionProcess ? 7 : occurrenceCreateDeleteProcess ? 7 : snapshotGenerationProcess ? 6 : budgetFromTransactionProcess ? 6 : occurrenceCreateAndLinkProcess ? 7 : occurrenceUnlinkProcess ? 11 : occurrenceChangeLinkProcess ? 10 : occurrenceLinkProcess ? 8 : process.argv.includes("--three") ? 3 : 1;
+const writeCount = zeroMutationChange ? 0 : routeFamilies ? 10 : transactionDeleteProcess ? 6 : recipientLifecycleProcess ? 10 : accountLifecycleProcess ? 12 : categoryLifecycleProcess ? 12 : bucketLifecycleProcess ? 13 : recipientActiveSmsProcess ? 11 : transferLifecycleProcess ? 7 : budgetDefinitionProcess ? 7 : occurrenceCreateDeleteProcess ? 7 : snapshotGenerationProcess ? 6 : budgetFromTransactionProcess ? 6 : occurrenceCreateAndLinkProcess ? 7 : occurrenceUnlinkProcess ? 11 : occurrenceChangeLinkProcess ? 10 : occurrenceLinkProcess ? 8 : process.argv.includes("--three") ? 3 : 1;
 const crashAfterWrite = process.argv.includes("--crash");
 const receiptGate = process.argv.includes("--receipt-gate");
 const missingReceipt = process.argv.includes("--missing-receipt");
@@ -102,8 +110,12 @@ try {
   const tables = Object.fromEntries(FULL_BACKUP_TABLE_NAMES.map((name) => [name, []])); writeFileSync(source, JSON.stringify({ tables, integrity: { counts: Object.fromEntries(FULL_BACKUP_TABLE_NAMES.map((name) => [name, 0])) } }), "utf8"); const token = "disposable-test-token"; writeFileSync(tokenPath, `${token}\n`, "utf8");
   await prepareSqliteAuthorityCutover({ sourceBackupPath: source, candidatePath: active, backupOutputPath: path.join(backups, "cutover.sqlite"), manifestPath: initialManifest, asOf: new Date(2026, 6, 27) });
   const apiPort = await port(); let vitePort = await port(); while (apiPort === vitePort) vitePort = await port();
-  const profile: AuthorityOpsProfile = { schemaVersion: AUTHORITY_OPS_PROFILE_SCHEMA_VERSION, mode: "authoritative", activeDatabasePath: active, authorityManifestPath: initialManifest, sourceBackupPath: source, tokenFilePath: tokenPath, backupDirectory: backups, apiHost: "127.0.0.1", apiPort, viteHost: "127.0.0.1", vitePort, enabledWriteCapabilities: [...AUTHORITY_REQUIRED_CAPABILITY_NAMES, ...(routeFamilies ? ["budgetLifecycleWrites" as const] : []), ...(transactionDeleteProcess ? ["transactionDeleteWrites" as const] : []), ...((recipientLifecycleProcess || accountLifecycleProcess || categoryLifecycleProcess || bucketLifecycleProcess) ? ["recipientDeleteMergeWrites" as const] : []), ...(accountLifecycleProcess || recipientActiveSmsProcess ? ["accountDeleteMergeWrites" as const] : []), ...(categoryLifecycleProcess ? ["categoryDeleteMergeWrites" as const] : []), ...(bucketLifecycleProcess ? ["bucketDeleteMergeWrites" as const] : []), ...(budgetDefinitionProcess ? ["budgetDeleteWrites" as const] : []), ...((occurrenceCreateDeleteProcess || occurrenceLinkProcess || occurrenceChangeLinkProcess || occurrenceUnlinkProcess || occurrenceCreateAndLinkProcess || budgetFromTransactionProcess) ? ["budgetSnapshotOccurrenceWrites" as const] : [])] };
-  writeAuthorityOpsProfileAtomic(profilePath, profile); writeJsonAtomic(path.join(root, ".authority-ops-runtime", "build-receipt.json"), currentAuthorityBuildReceipt());
+  const profile: AuthorityOpsProfile = { schemaVersion: AUTHORITY_OPS_PROFILE_SCHEMA_VERSION, mode: "authoritative", activeDatabasePath: active, authorityManifestPath: initialManifest, sourceBackupPath: source, tokenFilePath: tokenPath, backupDirectory: backups, apiHost: "127.0.0.1", apiPort, viteHost: "127.0.0.1", vitePort, enabledWriteCapabilities: [...new Set([...AUTHORITY_REQUIRED_CAPABILITY_NAMES, ...(routeFamilies ? ["budgetLifecycleWrites" as const] : []), ...(transactionDeleteProcess ? ["transactionDeleteWrites" as const] : []), ...((recipientLifecycleProcess || accountLifecycleProcess || categoryLifecycleProcess || bucketLifecycleProcess) ? ["recipientDeleteMergeWrites" as const] : []), ...(accountLifecycleProcess || recipientActiveSmsProcess ? ["accountDeleteMergeWrites" as const] : []), ...(categoryLifecycleProcess ? ["categoryDeleteMergeWrites" as const] : []), ...(bucketLifecycleProcess ? ["bucketDeleteMergeWrites" as const] : []), ...(budgetDefinitionProcess ? ["budgetDeleteWrites" as const] : []), ...((occurrenceCreateDeleteProcess || occurrenceLinkProcess || occurrenceChangeLinkProcess || occurrenceUnlinkProcess || occurrenceCreateAndLinkProcess || budgetFromTransactionProcess) ? ["budgetSnapshotOccurrenceWrites" as const] : [])])] };
+  writeAuthorityOpsProfileAtomic(profilePath, profile);
+  // The supervisor starts server/dist. Never mark source inputs current until
+  // those compiled artifacts have been rebuilt successfully in this process.
+  buildCurrentServerArtifacts();
+  writeJsonAtomic(path.join(root, ".authority-ops-runtime", "build-receipt.json"), currentAuthorityBuildReceipt());
   const beforeSequence = readSqliteAuthorityManifestDescriptor(initialManifest).checkpointSequence; const beforeRecipients = count(active); const beforeCheckpoints = readdirSync(backups).filter((name) => name.startsWith("authority-checkpoint-")).length; const sourceBefore = sha256(source); const originalProfile = readFileSync(profilePath, "utf8");
   const src = path.dirname(fileURLToPath(import.meta.url)); const tsx = path.join(src, "..", "node_modules", "tsx", "dist", "cli.mjs"); const cli = path.join(src, "authorityOps.ts"); const faultRunner = path.join(src, "..", "test-support", "authorityOpsFaultRunner.ts");
   const externalWriter = path.join(src, "..", "test-support", "authorityOpsExternalWriter.ts");
@@ -114,7 +126,13 @@ try {
   const gatePath = path.join(root, ".authority-ops-runtime", "receipt-gate");
   const viteChildPath = path.join(root, ".authority-ops-runtime", "vite-child.json");
   const start = () => { const useGate = gatePending; gatePending = false; const useAcceptanceFence = acceptanceFencePending; acceptanceFencePending = acceptanceFencePending; const faultScenario = finalCleanupRaceDescriptorFailure ? "shutdown-request-race-final-cleanup-descriptor-failure" : finalCleanupControlCloseFailure ? "final-cleanup-control-close-failure" : finalCleanupDescriptorFailure ? "final-cleanup-descriptor-failure" : finalCleanupLockReleaseFailure ? "final-cleanup-lock-release-failure" : quiescenceFault ? "sqlite-quiescence-failure" : checkpointBackupFault ? "checkpoint-backup-failure" : checkpointVerificationFault ? "checkpoint-verification-failure" : profileRotationFault ? "profile-rotation-failure" : useAcceptanceFence ? "checkpoint-acceptance-fence" : postSealViteExit ? "post-seal-vite-exit" : receiptWithoutExit ? "receipt-without-exit" : shutdownRequestRaceFailure ? "shutdown-request-race-failure" : shutdownRequestRace ? "shutdown-request-race" : drainTimeout ? "drain-timeout" : drainSuccess ? "drain-success" : mixedConcurrent ? "mutation-lock-hold" : noOpRollback ? "rollback-route" : viteChildExit ? "vite-exit-observer" : undefined; const args = crashAfterWrite ? [tsx, faultRunner, "--profile", profilePath, "--scenario", "api-crash"] : faultScenario ? [tsx, faultRunner, "--profile", profilePath, "--scenario", faultScenario, ...((drainTimeout || drainSuccess || mixedConcurrent || useAcceptanceFence || postSealViteExit || viteChildExit) ? ["--gate", drainTimeout || drainSuccess || mixedConcurrent || useAcceptanceFence || postSealViteExit ? gatePath : viteChildPath] : [])] : useGate ? [tsx, faultRunner, "--profile", profilePath, "--scenario", "receipt-gate", "--gate", gatePath] : [tsx, cli, "--profile", profilePath, "run"]; supervisor = spawn(process.execPath, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env } }); const collect = (chunk: Buffer) => { const output = chunk.toString("utf8"); supervisorDiagnostics += output.slice(0, 512); if (output.includes("api_shutdown_request_failed_clean_shutdown_verified")) cleanRaceDiagnosticAfterFinalCleanup = !existsSync(controlPathForProfile(profilePath)) && !existsSync(`${profilePath}.lock`); }; supervisor.stdout?.on("data", collect); supervisor.stderr?.on("data", collect); return supervisor; };
-  start(); await wait("supervisor_readiness", async () => existsSync(controlPathForProfile(profilePath)) && (await request(apiPort, "GET", "/health").catch(() => ({ status: 0 }))).status === 200);
+  start();
+  try {
+    await wait("supervisor_readiness", async () => existsSync(controlPathForProfile(profilePath)) && (await request(apiPort, "GET", "/health").catch(() => ({ status: 0 }))).status === 200);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "supervisor_readiness_failed";
+    throw new Error(`${code}:${supervisorDiagnostics || "no_supervisor_diagnostics"}`);
+  }
   if (viteChildExit) await wait("vite_child_readiness", async () => (await responseStatus(vitePort, "/")) === 200 && existsSync(viteChildPath));
   if (snapshotGenerationProcess) {
     const write = async (p: string,b: Record<string,unknown>) => { const r=await request(apiPort,"POST",p,token,b); const id=(r.body as {targetId?:unknown})?.targetId; if(r.status!==200||typeof id!=="number")throw new Error("snapshot_generation_setup"); return id; }; const bucketId=await write("/prototype/repositories/buckets/write/create",{name:"generation-bucket",description:null,dryRunReviewed:true,confirmation:"create bucket in disposable sqlite"}); const categoryId=await write("/prototype/repositories/categories/write/create",{name:"generation-category",bucketId,description:null,dryRunReviewed:true,confirmation:"create category in disposable sqlite"}); const accountId=await write("/prototype/repositories/accounts/write/create",{name:"generation-account",currency:"KES",isCredit:false,creditLimit:null,dryRunReviewed:true,confirmation:"create account in disposable sqlite"}); const recipientId=await write("/prototype/repositories/recipients/write/create",{name:"generation-recipient",aliases:null,email:null,phone:null,tillNumber:null,paybill:null,accountNumber:null,description:null,dryRunReviewed:true,confirmation:"create recipient in disposable sqlite"}); const budget=await request(apiPort,"POST","/prototype/repositories/budgets/write/create",token,{description:"generation budget",categoryId,accountId,recipientId,amount:-50,transactionCost:null,frequency:"monthly",frequencyDetails:{dayOfMonth:15},isGoal:false,isFlexible:false,goalPercentage:null,goalDirection:null,remainingCyclesTotal:null,dueDate:"2026-08-15T00:00:00.000Z",dryRunReviewed:true,confirmation:"create budget definition in disposable sqlite"}); const budgetId=(budget.body as {targetId?:unknown})?.targetId; if(budget.status!==200||typeof budgetId!=="number")throw new Error("snapshot_generation_budget"); const asOf="2026-09-15"; const dry=await request(apiPort,"POST","/prototype/repositories/budget-snapshots/lifecycle/dry-run/generate",token,{asOf}); if(dry.status!==200)throw new Error("snapshot_generation_dry"); const generated=await request(apiPort,"POST","/prototype/repositories/budget-snapshots/lifecycle/write/generate",token,{asOf,dryRunReviewed:true,confirmation:"generate missing budget snapshots in disposable sqlite"}); const generation=generated.body as {rowsInserted?:unknown;eligibleBudgetCount?:unknown;proposedSnapshotCount?:unknown;activeCoverageThrough?:unknown}; if(generated.status!==200||generation.rowsInserted!==14||generation.eligibleBudgetCount!==1||generation.proposedSnapshotCount!==14||generation.activeCoverageThrough!=="2027-09-15"||tableCount(active,"budgetSnapshots")!==14)throw new Error("snapshot_generation_write"); const replay=await request(apiPort,"POST","/prototype/repositories/budget-snapshots/lifecycle/write/generate",token,{asOf,dryRunReviewed:true,confirmation:"generate missing budget snapshots in disposable sqlite"}); if(replay.status!==200||(replay.body as {rowsInserted?:unknown}).rowsInserted!==0||tableCount(active,"budgetSnapshots")!==14)throw new Error("snapshot_generation_replay");
@@ -313,6 +331,27 @@ try {
     if (malformed.status !== 400) throw new Error("bucket_lifecycle_malformed_create_failed");
     const updated = await request(apiPort, "POST", "/prototype/repositories/buckets/write/update", token, { id: targetBucketId, name: "bucket-target-updated", description: "updated", minPercentage: null, maxPercentage: null, minFixedAmount: null, excludeFromReports: false, dryRunReviewed: true, confirmation: "update bucket in disposable sqlite" });
     if (updated.status !== 200) throw new Error("bucket_lifecycle_update_failed");
+    const setActive = async (action: "activate" | "deactivate", id: number, expectedActive: boolean) => {
+      const dry = await request(apiPort, "POST", `/prototype/repositories/buckets/active-state/dry-run/${action}`, token, { id });
+      const fingerprint = dry.body && typeof dry.body === "object" && !Array.isArray(dry.body) ? (dry.body as { planFingerprint?: unknown }).planFingerprint : undefined;
+      if (dry.status !== 200 || typeof fingerprint !== "string") throw new Error(`bucket_lifecycle_${action}_dry_run_failed`);
+      const stale = await request(apiPort, "POST", `/prototype/repositories/buckets/active-state/write/${action}`, token, { id, dryRunReviewed: true, confirmation: `${action} bucket in authoritative sqlite`, expectedPlanFingerprint: "0".repeat(64) });
+      if (stale.status !== 409) throw new Error(`bucket_lifecycle_${action}_stale_failed`);
+      const write = await request(apiPort, "POST", `/prototype/repositories/buckets/active-state/write/${action}`, token, { id, dryRunReviewed: true, confirmation: `${action} bucket in authoritative sqlite`, expectedPlanFingerprint: fingerprint });
+      if (write.status !== 200) throw new Error(`bucket_lifecycle_${action}_write_failed`);
+      const observed = new Database(active, { readonly: true }); try { const row = observed.prepare("SELECT isActive FROM buckets WHERE id = ?").get(id) as { isActive: number } | undefined; if (!row || Boolean(row.isActive) !== expectedActive) throw new Error(`bucket_lifecycle_${action}_not_persisted`); } finally { observed.close(); }
+    };
+    await setActive("deactivate", unusedBucketId, false);
+    await setActive("activate", unusedBucketId, true);
+    const reorderedIds = [unusedBucketId, targetBucketId, sourceBucketId];
+    const reorderDry = await request(apiPort, "POST", "/prototype/repositories/buckets/reorder/dry-run", token, { orderedBucketIds: reorderedIds });
+    const reorderFingerprint = reorderDry.body && typeof reorderDry.body === "object" && !Array.isArray(reorderDry.body) ? (reorderDry.body as { planFingerprint?: unknown }).planFingerprint : undefined;
+    if (reorderDry.status !== 200 || typeof reorderFingerprint !== "string") throw new Error("bucket_lifecycle_reorder_dry_run_failed");
+    const staleReorder = await request(apiPort, "POST", "/prototype/repositories/buckets/reorder/write", token, { orderedBucketIds: reorderedIds, dryRunReviewed: true, confirmation: "reorder buckets in authoritative sqlite", expectedPlanFingerprint: "0".repeat(64) });
+    if (staleReorder.status !== 409) throw new Error("bucket_lifecycle_reorder_stale_failed");
+    const reordered = await request(apiPort, "POST", "/prototype/repositories/buckets/reorder/write", token, { orderedBucketIds: reorderedIds, dryRunReviewed: true, confirmation: "reorder buckets in authoritative sqlite", expectedPlanFingerprint: reorderFingerprint });
+    if (reordered.status !== 200) throw new Error("bucket_lifecycle_reorder_write_failed");
+    const reorderObserved = new Database(active, { readonly: true }); try { const rows = reorderObserved.prepare("SELECT id FROM buckets ORDER BY displayOrder, id").all() as Array<{ id: number }>; if (rows.map((row) => row.id).join(",") !== reorderedIds.join(",")) throw new Error("bucket_lifecycle_reorder_not_atomic"); } finally { reorderObserved.close(); }
     const missingUpdate = await request(apiPort, "POST", "/prototype/repositories/buckets/write/update", token, { id: 99999, name: "missing", description: null, minPercentage: null, maxPercentage: null, minFixedAmount: null, excludeFromReports: false, dryRunReviewed: true, confirmation: "update bucket in disposable sqlite" });
     if (missingUpdate.status !== 404) throw new Error("bucket_lifecycle_missing_update_failed");
     const categoryId = await write("/prototype/repositories/categories/write/create", { name: "bucket-linked-category", bucketId: sourceBucketId, description: null, dryRunReviewed: true, confirmation: "create category in disposable sqlite" });
@@ -352,6 +391,18 @@ try {
     if (malformed.status !== 400) throw new Error("category_lifecycle_malformed_create_failed");
     const updated = await request(apiPort, "POST", "/prototype/repositories/categories/write/update", token, { id: targetCategoryId, name: "category-target-updated", bucketId, description: "updated", dryRunReviewed: true, confirmation: "update category in disposable sqlite" });
     if (updated.status !== 200) throw new Error("category_lifecycle_update_failed");
+    const setActive = async (action: "activate" | "deactivate", id: number, expectedActive: boolean) => {
+      const dry = await request(apiPort, "POST", `/prototype/repositories/categories/active-state/dry-run/${action}`, token, { id });
+      const fingerprint = dry.body && typeof dry.body === "object" && !Array.isArray(dry.body) ? (dry.body as { planFingerprint?: unknown }).planFingerprint : undefined;
+      if (dry.status !== 200 || typeof fingerprint !== "string") throw new Error(`category_lifecycle_${action}_dry_run_failed`);
+      const stale = await request(apiPort, "POST", `/prototype/repositories/categories/active-state/write/${action}`, token, { id, dryRunReviewed: true, confirmation: `${action} category in authoritative sqlite`, expectedPlanFingerprint: "0".repeat(64) });
+      if (stale.status !== 409) throw new Error(`category_lifecycle_${action}_stale_failed`);
+      const write = await request(apiPort, "POST", `/prototype/repositories/categories/active-state/write/${action}`, token, { id, dryRunReviewed: true, confirmation: `${action} category in authoritative sqlite`, expectedPlanFingerprint: fingerprint });
+      if (write.status !== 200) throw new Error(`category_lifecycle_${action}_write_failed`);
+      const observed = new Database(active, { readonly: true }); try { const row = observed.prepare("SELECT isActive FROM categories WHERE id = ?").get(id) as { isActive: number } | undefined; if (!row || Boolean(row.isActive) !== expectedActive) throw new Error(`category_lifecycle_${action}_not_persisted`); } finally { observed.close(); }
+    };
+    await setActive("deactivate", unusedCategoryId, false);
+    await setActive("activate", unusedCategoryId, true);
     const missingUpdate = await request(apiPort, "POST", "/prototype/repositories/categories/write/update", token, { id: 99999, name: "missing", bucketId, description: null, dryRunReviewed: true, confirmation: "update category in disposable sqlite" });
     if (missingUpdate.status !== 404) throw new Error("category_lifecycle_missing_update_failed");
     const transaction = await request(apiPort, "POST", "/prototype/repositories/transactions/write/create", token, { classification: "expense", date: "2026-07-27T12:00:00.000Z", amount: -100, transactionCost: null, categoryId: sourceCategoryId, accountId, recipientId, description: "category-link", dryRunReviewed: true, confirmation: "create basic transaction in disposable sqlite" });
@@ -390,6 +441,18 @@ try {
     if (malformed.status !== 400) throw new Error("account_lifecycle_malformed_create_failed");
     const updated = await request(apiPort, "POST", "/prototype/repositories/accounts/write/update", token, { id: targetAccountId, name: "account-target-updated", currency: "KES", isCredit: false, creditLimit: null, dryRunReviewed: true, confirmation: "update account in disposable sqlite" });
     if (updated.status !== 200) throw new Error("account_lifecycle_update_failed");
+    const setActive = async (action: "activate" | "deactivate", id: number, expectedActive: boolean) => {
+      const dry = await request(apiPort, "POST", `/prototype/repositories/accounts/active-state/dry-run/${action}`, token, { id });
+      const fingerprint = dry.body && typeof dry.body === "object" && !Array.isArray(dry.body) ? (dry.body as { planFingerprint?: unknown }).planFingerprint : undefined;
+      if (dry.status !== 200 || typeof fingerprint !== "string") throw new Error(`account_lifecycle_${action}_dry_run_failed`);
+      const stale = await request(apiPort, "POST", `/prototype/repositories/accounts/active-state/write/${action}`, token, { id, dryRunReviewed: true, confirmation: `${action} account in authoritative sqlite`, expectedPlanFingerprint: "0".repeat(64) });
+      if (stale.status !== 409) throw new Error(`account_lifecycle_${action}_stale_failed`);
+      const write = await request(apiPort, "POST", `/prototype/repositories/accounts/active-state/write/${action}`, token, { id, dryRunReviewed: true, confirmation: `${action} account in authoritative sqlite`, expectedPlanFingerprint: fingerprint });
+      if (write.status !== 200) throw new Error(`account_lifecycle_${action}_write_failed`);
+      const observed = new Database(active, { readonly: true }); try { const row = observed.prepare("SELECT isActive FROM accounts WHERE id = ?").get(id) as { isActive: number } | undefined; if (!row || Boolean(row.isActive) !== expectedActive) throw new Error(`account_lifecycle_${action}_not_persisted`); } finally { observed.close(); }
+    };
+    await setActive("deactivate", unusedAccountId, false);
+    await setActive("activate", unusedAccountId, true);
     const missingUpdate = await request(apiPort, "POST", "/prototype/repositories/accounts/write/update", token, { id: 99999, name: "missing", currency: "KES", isCredit: false, creditLimit: null, dryRunReviewed: true, confirmation: "update account in disposable sqlite" });
     if (missingUpdate.status !== 404) throw new Error("account_lifecycle_missing_update_failed");
     const transaction = await request(apiPort, "POST", "/prototype/repositories/transactions/write/create", token, { classification: "expense", date: "2026-07-27T12:00:00.000Z", amount: -100, transactionCost: null, categoryId, accountId: sourceAccountId, recipientId, description: "account-link", dryRunReviewed: true, confirmation: "create basic transaction in disposable sqlite" });
@@ -421,11 +484,11 @@ try {
     const bucketId = await write("/prototype/repositories/buckets/write/create", { name: "recipient-bucket", description: null, dryRunReviewed: true, confirmation: "create bucket in disposable sqlite" });
     const categoryId = await write("/prototype/repositories/categories/write/create", { name: "recipient-category", bucketId, description: null, dryRunReviewed: true, confirmation: "create category in disposable sqlite" });
     const accountId = await write("/prototype/repositories/accounts/write/create", { name: "recipient-account", currency: "KES", isCredit: false, dryRunReviewed: true, confirmation: "create account in disposable sqlite" });
-    const sourceRecipientId = await write("/prototype/repositories/recipients/write/create", recipientBody("recipient-source"));
     const targetRecipientId = await write("/prototype/repositories/recipients/write/create", recipientBody("recipient-target"));
+    const sourceRecipientId = await write("/prototype/repositories/recipients/write/create", recipientBody("recipient-source"));
     const updated = await request(apiPort, "POST", "/prototype/repositories/recipients/write/update", token, { id: targetRecipientId, ...recipientBody("recipient-target-updated"), confirmation: "update recipient in disposable sqlite" });
     if (updated.status !== 200) throw new Error("recipient_lifecycle_update_failed");
-    const transaction = await request(apiPort, "POST", "/prototype/repositories/transactions/write/create", token, { classification: "expense", date: "2026-07-27T12:00:00.000Z", amount: -100, transactionCost: null, categoryId, accountId, recipientId: sourceRecipientId, description: "recipient-link", dryRunReviewed: true, confirmation: "create basic transaction in disposable sqlite" });
+    const transaction = await request(apiPort, "POST", "/prototype/repositories/transactions/write/create", token, { classification: "expense", date: "2026-07-27T12:00:00.000Z", amount: -100, transactionCost: null, categoryId, accountId, recipientId: targetRecipientId, description: "recipient-link", dryRunReviewed: true, confirmation: "create basic transaction in disposable sqlite" });
     if (transaction.status !== 200 || tableCount(active, "transactions") !== 1) throw new Error("recipient_lifecycle_transaction_setup_failed");
     const mergeDry = await request(apiPort, "POST", "/prototype/repositories/recipients/merge/dry-run", token, { sourceRecipientId, targetRecipientId });
     const mergePlan = mergeDry.body && typeof mergeDry.body === "object" && !Array.isArray(mergeDry.body) ? (mergeDry.body as { planFingerprint?: unknown }).planFingerprint : undefined;

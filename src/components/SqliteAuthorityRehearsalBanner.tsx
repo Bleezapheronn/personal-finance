@@ -22,6 +22,7 @@ const SqliteAuthorityRehearsalBanner: React.FC = () => {
 
   if (
     !readiness.selected ||
+    readiness.checking ||
     (readiness.ready && readiness.authoritativeMode)
   ) {
     return null;

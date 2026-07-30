@@ -34,6 +34,10 @@ export const CATEGORY_DELETE_MERGE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_CATEGORY_DELETE_MERGE_WRITES" as const;
 export const BUCKET_DELETE_MERGE_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_BUCKET_DELETE_MERGE_WRITES" as const;
+export const LOOKUP_ACTIVE_STATE_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_LOOKUP_ACTIVE_STATE_WRITES" as const;
+export const BUCKET_REORDER_WRITES_ENV_VAR =
+  "PERSONAL_FINANCE_ENABLE_BUCKET_REORDER_WRITES" as const;
 export const TRANSACTION_BASIC_WRITES_ENV_VAR =
   "PERSONAL_FINANCE_ENABLE_TRANSACTION_BASIC_WRITES" as const;
 export const TRANSACTION_COST_BUDGET_WRITES_ENV_VAR =
@@ -148,6 +152,12 @@ export const areCategoryDeleteMergeWritesEnabled = (): boolean =>
 
 export const areBucketDeleteMergeWritesEnabled = (): boolean =>
   process.env[BUCKET_DELETE_MERGE_WRITES_ENV_VAR] === "true";
+
+export const areLookupActiveStateWritesEnabled = (): boolean =>
+  process.env[LOOKUP_ACTIVE_STATE_WRITES_ENV_VAR] === "true";
+
+export const areBucketReorderWritesEnabled = (): boolean =>
+  process.env[BUCKET_REORDER_WRITES_ENV_VAR] === "true";
 
 export const areTransactionBasicWritesEnabled = (): boolean =>
   process.env[TRANSACTION_BASIC_WRITES_ENV_VAR] === "true";

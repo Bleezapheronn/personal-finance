@@ -138,6 +138,7 @@
     "test:account-images": "tsx src/testAccountImages.ts",
     "test:category-lifecycle": "tsx src/testCategoryLifecycle.ts",
     "test:bucket-lifecycle": "tsx src/testBucketLifecycle.ts",
+    "test:management-lifecycle-writes": "tsx src/testManagementLifecycleWrites.ts",
     "verify:sqlite": "tsx src/verifySqlitePrototype.ts",
     "smoke:api": "tsx src/smokeApi.ts",
     "token:show": "tsx src/tokenCli.ts show",

@@ -9,7 +9,11 @@ import {
   evaluateSqliteAuthorityReadiness,
   type SqliteAuthorityReadiness,
 } from "./lib/sqliteAuthorityCutover.js";
-import type { WriteCapabilities } from "./lib/writeCapabilities.js";
+import {
+  RUNTIME_FRONTEND_REQUIRED_CAPABILITY_KEYS,
+  unsupportedOperationsForCapabilities,
+  type WriteCapabilities,
+} from "./lib/writeCapabilities.js";
 import {
   getLookupConfig,
   getAccountImageById,
@@ -103,6 +107,22 @@ import {
   BucketLifecycleRequestError,
   validateBucketLifecyclePayload,
 } from "./lib/bucketLifecycle.js";
+import {
+  lookupActiveStateDryRun,
+  lookupActiveStateErrorResponse,
+  lookupActiveStateWrite,
+  LookupActiveStateRequestError,
+  type LookupActiveStateAction,
+  type LookupActiveStateEntity,
+  validateLookupActiveStatePayload,
+} from "./lib/lookupActiveStateLifecycle.js";
+import {
+  bucketReorderDryRun,
+  bucketReorderErrorResponse,
+  bucketReorderWrite,
+  BucketReorderRequestError,
+  validateBucketReorderPayload,
+} from "./lib/bucketReorderLifecycle.js";
 import {
   getBudgetById,
   getBudgetSnapshotById,
@@ -271,6 +291,7 @@ const readWriteCapabilities = options.readWriteCapabilities;
 const {
   areAccountDeleteMergeWritesEnabled, areAccountWritesEnabled,
   areCategoryDeleteMergeWritesEnabled, areBucketDeleteMergeWritesEnabled,
+  areLookupActiveStateWritesEnabled, areBucketReorderWritesEnabled,
   areBudgetDefinitionWritesEnabled, areBudgetDeleteWritesEnabled,
   areBudgetLifecycleWritesEnabled, areBudgetSnapshotGenerationWritesEnabled,
   areBudgetSnapshotOccurrenceWritesEnabled, areBucketCategoryWritesEnabled,
@@ -764,40 +785,12 @@ server.get("/prototype/sqlite/authority-readiness", async () => ({
   backupVerified: sqliteAuthorityReadiness.backupVerified,
   rollbackAvailable: sqliteAuthorityReadiness.rollbackAvailable,
   missingRequirements: [...sqliteAuthorityReadiness.missingRequirements],
+  // Legacy requiredCapabilities remains the checkpoint-manifest schema.
+  // Runtime management requirements are intentionally published separately.
   requiredCapabilities: [...sqliteAuthorityReadiness.requiredCapabilities],
+  runtimeRequiredCapabilities: [...RUNTIME_FRONTEND_REQUIRED_CAPABILITY_KEYS],
   unsupportedOperations: sqliteAuthorityReadiness.unsupportedOperations.filter(
-    (operation) => {
-      if (operation === "transaction_delete") {
-        return !areTransactionDeleteWritesEnabled();
-      }
-      if (
-        operation === "recipient_delete" ||
-        operation === "recipient_merge" ||
-        operation === "recipient_reference_reassignment"
-      ) {
-        return !areRecipientDeleteMergeWritesEnabled();
-      }
-      if (
-        operation === "account_delete" ||
-        operation === "account_merge" ||
-        operation === "account_reference_migration"
-      ) {
-        return !areAccountDeleteMergeWritesEnabled();
-      }
-      if (operation === "bucket_category_delete") {
-        return !(
-          areCategoryDeleteMergeWritesEnabled() ||
-          areBucketDeleteMergeWritesEnabled()
-        );
-      }
-      if (operation === "budget_definition_delete") {
-        return !areBudgetDeleteWritesEnabled();
-      }
-      if (operation === "budget_snapshot_deletion") {
-        return !areBudgetSnapshotOccurrenceWritesEnabled();
-      }
-      return true;
-    },
+    (operation) => unsupportedOperationsForCapabilities(readWriteCapabilities()).includes(operation),
   ),
   code: sqliteAuthorityReadiness.code,
 }));
@@ -1675,6 +1668,83 @@ for (const action of ["create", "update"] as const) {
     },
   );
 }
+
+const lookupActiveStateResources = {
+  account: "accounts",
+  bucket: "buckets",
+  category: "categories",
+} as const;
+
+for (const entity of ["account", "bucket", "category"] as const) {
+  const resource = lookupActiveStateResources[entity];
+  for (const action of ["activate", "deactivate"] as const) {
+    server.post<{ Body: unknown }>(
+      `/prototype/repositories/${resource}/active-state/dry-run/${action}`,
+      async (request, reply) => {
+        let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+        try { opened = openConfiguredReadOnlyDatabase(); } catch (error) {
+          return reply.code(sqliteUnavailableStatusCode(error)).send({ ok: false, code: "sqlite_unavailable" });
+        }
+        if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+        try {
+          const result = lookupActiveStateDryRun(opened.db, request.body, entity, action);
+          return result.ok ? result : reply.code(result.code?.endsWith("_not_found") ? 404 : 409).send(result);
+        } catch (error) {
+          if (error instanceof LookupActiveStateRequestError) {
+            return reply.code(error.statusCode).send(lookupActiveStateErrorResponse(entity, action, error.code));
+          }
+          return reply.code(500).send({ ok: false, code: `${entity}_active_state_dry_run_failed` });
+        } finally { opened.db.close(); }
+      },
+    );
+    server.post<{ Body: unknown }>(
+      `/prototype/repositories/${resource}/active-state/write/${action}`,
+      async (request, reply) => {
+        try { validateLookupActiveStatePayload(request.body, entity, action, true); } catch (error) {
+          if (error instanceof LookupActiveStateRequestError) return reply.code(error.statusCode).send(lookupActiveStateErrorResponse(entity, action, error.code));
+          return reply.code(400).send(lookupActiveStateErrorResponse(entity, action, "active_state_write_invalid"));
+        }
+        if (!areLookupActiveStateWritesEnabled()) {
+          return reply.code(403).send(lookupActiveStateErrorResponse(entity, action, "lookup_active_state_writes_disabled"));
+        }
+        let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+        try { opened = openConfiguredWritableDatabase(); } catch (error) {
+          return reply.code(sqliteUnavailableStatusCode(error)).send({ ok: false, code: "sqlite_unavailable" });
+        }
+        if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+        try {
+          const result = lookupActiveStateWrite(opened.db, request.body, entity, action);
+          return result.ok ? result : reply.code(result.code?.endsWith("_not_found") ? 404 : 409).send(result);
+        } catch (error) {
+          if (error instanceof LookupActiveStateRequestError) return reply.code(error.statusCode).send(lookupActiveStateErrorResponse(entity, action, error.code));
+          return reply.code(500).send({ ok: false, code: `${entity}_active_state_write_failed` });
+        } finally { opened.db.close(); }
+      },
+    );
+  }
+}
+
+server.post<{ Body: unknown }>("/prototype/repositories/buckets/reorder/dry-run", async (request, reply) => {
+  let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+  try { opened = openConfiguredReadOnlyDatabase(); } catch (error) { return reply.code(sqliteUnavailableStatusCode(error)).send({ ok: false, code: "sqlite_unavailable" }); }
+  if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+  try { const result = bucketReorderDryRun(opened.db, request.body); return result.ok ? result : reply.code(409).send(result); }
+  catch (error) { if (error instanceof BucketReorderRequestError) return reply.code(error.statusCode).send(bucketReorderErrorResponse(error.code)); return reply.code(500).send({ ok: false, code: "bucket_reorder_dry_run_failed" }); }
+  finally { opened.db.close(); }
+});
+server.post<{ Body: unknown }>("/prototype/repositories/buckets/reorder/write", async (request, reply) => {
+  try { validateBucketReorderPayload(request.body, true); } catch (error) {
+    if (error instanceof BucketReorderRequestError) return reply.code(error.statusCode).send(bucketReorderErrorResponse(error.code));
+    return reply.code(400).send(bucketReorderErrorResponse("bucket_reorder_write_invalid"));
+  }
+  if (!areBucketReorderWritesEnabled()) return reply.code(403).send(bucketReorderErrorResponse("bucket_reorder_writes_disabled"));
+  let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+  try { opened = openConfiguredWritableDatabase(); } catch (error) { return reply.code(sqliteUnavailableStatusCode(error)).send({ ok: false, code: "sqlite_unavailable" }); }
+  if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+  try { const result = bucketReorderWrite(opened.db, request.body); return result.ok ? result : reply.code(409).send(result); }
+  catch (error) { if (error instanceof BucketReorderRequestError) return reply.code(error.statusCode).send(bucketReorderErrorResponse(error.code)); return reply.code(500).send({ ok: false, code: "bucket_reorder_write_failed" }); }
+  finally { opened.db.close(); }
+});
 
 for (const action of ["delete", "merge"] as const) {
   server.post<{ Body: unknown }>(

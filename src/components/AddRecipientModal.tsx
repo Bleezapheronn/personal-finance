@@ -34,6 +34,7 @@ interface AddRecipientModalProps {
     input: RecipientFormValues,
     editingRecipient?: Recipient | null
   ) => Promise<void>;
+  existingRecipients?: Recipient[];
 }
 
 export interface RecipientFormValues {
@@ -55,6 +56,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
   onDuplicateFound,
   checkForDuplicate,
   onSaveRecipient,
+  existingRecipients,
 }) => {
   const [name, setName] = useState("");
   const [aliases, setAliases] = useState(""); // NEW: Aliases field
@@ -141,13 +143,6 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
         description: description.trim() || undefined,
       };
 
-      if (onSaveRecipient) {
-        await onSaveRecipient(formValues, editingRecipient);
-        resetForm();
-        onClose();
-        return;
-      }
-
       // Check for duplicate name when adding NEW recipient
       if (!editingRecipient?.id && checkForDuplicate) {
         const duplicate = await checkForDuplicate(
@@ -189,7 +184,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
           .map((alias) => alias.toLowerCase().trim())
           .filter((alias) => alias.length > 0);
 
-        const allRecipients = await db.recipients.toArray();
+        const allRecipients = existingRecipients ?? await db.recipients.toArray();
 
         for (const alias of aliasesList) {
           for (const recipient of allRecipients) {
@@ -210,6 +205,13 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
             }
           }
         }
+      }
+
+      if (onSaveRecipient) {
+        await onSaveRecipient(formValues, editingRecipient);
+        resetForm();
+        onClose();
+        return;
       }
 
       const now = new Date();

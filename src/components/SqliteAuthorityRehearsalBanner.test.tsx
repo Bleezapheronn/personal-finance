@@ -85,6 +85,17 @@ describe("SqliteAuthorityRehearsalBanner", () => {
     expect(render(<SqliteAuthorityToolbarStatus />).container).toBeEmptyDOMElement();
   });
 
+  test("does not show a transient verification failure while readiness is loading", () => {
+    mockedReadiness.mockReturnValue({
+      ...baseReadiness,
+      ready: false,
+      checking: true,
+    });
+
+    const { container } = render(<SqliteAuthorityRehearsalBanner />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   test("renders nothing when Dexie is selected", () => {
     mockedReadiness.mockReturnValue({
       ...baseReadiness,

@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-07-29
+Updated: 2026-07-30
 
 ## Authority
 
@@ -8,6 +8,11 @@ The local SQLite API is authoritative for the current main application runtime.
 The live authority profile and SQLite database are operational assets outside
 this repository. Dexie/IndexedDB remains as a legacy compatibility path and
 must not receive new authoritative writes.
+
+Accounts, Buckets/Categories, Recipients, and SMS Import Templates use this
+normal authoritative path for their supported management actions. Their former
+selected-read and per-page write-experiment controls are historical migration
+material, not runtime product controls.
 
 SQLite is still a local, controlled runtime. It is not a reason to expose the
 API to a network or to treat browser tokens as production credentials.
@@ -82,6 +87,11 @@ contracts and must not silently fall back to Dexie for an authoritative write.
 - Restore has been verified to a disposable database. Automatic live restore remains out of scope.
 - Budget model, direction, and sign semantics remain deferred unless separately approved.
 - Future Dexie retirement requires a separate plan, compatibility review, and rollback strategy.
+- Account image mutation remains disabled in authoritative management because it
+  needs a separate guarded image-storage workflow; image display remains
+  supported.
+- SMS template parsing/import remains disabled because it requires a separate
+  dry-run financial-transaction workflow; ordinary template CRUD is supported.
 
 ## Data handling
 
@@ -92,5 +102,6 @@ Use safe summaries and aggregate counts when documenting verification.
 ## Related documentation
 
 - `docs/sqlite-main-app-feature-parity-final-report.md` is a historical migration report, not the living project state.
-- `docs/local-api-frontend-adapter-notes.md` covers local API and frontend adapter experiments.
-- `docs/selected-read-migration-readiness-audit.md` covers selected-read migration gates.
+- `docs/local-api-frontend-adapter-notes.md` and
+  `docs/selected-read-migration-readiness-audit.md` are historical migration
+  records, not normal runtime operating instructions.

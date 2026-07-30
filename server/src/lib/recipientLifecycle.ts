@@ -41,6 +41,11 @@ interface RecipientLifecyclePlan {
   distinctRecipients: boolean;
   source?: Row;
   target?: Row;
+  preferredTargetId?: number;
+  sourceTransactionReferenceCount: number;
+  targetTransactionReferenceCount: number;
+  targetAfterMerge?: Row;
+  targetFieldsToFill: string[];
   sourceReferences: Record<ReferenceEntity, Row[]>;
   targetReferenceCounts: ReferenceCounts;
   unsupportedReferenceLocations: string[];
@@ -60,9 +65,13 @@ export interface RecipientLifecycleResponse {
   referenceCount: number;
   sourceReferenceCount: number;
   targetExistingReferenceCount: number;
+  preferredTargetId?: number;
+  sourceTransactionReferenceCount: number;
+  targetTransactionReferenceCount: number;
   referenceCountsByEntity: ReferenceCounts;
   rowsProposedForUpdate: number;
   sourceWouldBeDeleted: boolean;
+  targetFieldsToFill: string[];
   planFingerprint?: string;
   validationErrors: string[];
   warnings: string[];
@@ -74,7 +83,7 @@ export interface RecipientLifecycleResponse {
     filesWritten: false;
     financialFieldsMutated: false;
     budgetLifecycleInvoked: false;
-    targetRecipientMutated: false;
+    targetRecipientMutated: boolean;
     rawRowsIncluded: false;
     automaticCheckpointCreated: false;
   };
@@ -254,6 +263,40 @@ const referenceCounts = (
 const totalCounts = (counts: ReferenceCounts): number =>
   counts.transactions + counts.budgets + counts.budgetSnapshots;
 
+const text = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+const mergedAliases = (target: Row, source: Row): string | undefined => {
+  const values = [text(target.aliases), text(source.aliases)]
+    .flatMap((value) => value?.split(";") ?? [])
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const deduped = values.filter((value) => {
+    const key = value.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return deduped.length > 0 ? deduped.join("; ") : undefined;
+};
+const consolidatedTarget = (target: Row | undefined, source: Row | undefined) => {
+  if (!target || !source) return { targetAfterMerge: target, targetFieldsToFill: [] };
+  const targetAfterMerge = { ...target };
+  const targetFieldsToFill: string[] = [];
+  for (const field of ["email", "phone", "tillNumber", "paybill", "accountNumber", "description"] as const) {
+    if (!text(target[field]) && text(source[field])) {
+      targetAfterMerge[field] = text(source[field]);
+      targetFieldsToFill.push(field);
+    }
+  }
+  const aliases = mergedAliases(target, source);
+  if (aliases !== text(target.aliases)) {
+    targetAfterMerge.aliases = aliases;
+    targetFieldsToFill.push("aliases");
+  }
+  return { targetAfterMerge, targetFieldsToFill };
+};
+
 const buildPlan = (
   db: Database.Database,
   input: NormalizedInput,
@@ -269,6 +312,18 @@ const buildPlan = (
   const targetReferences = targetId === undefined
     ? { transactions: [], budgets: [], budgetSnapshots: [] }
     : referencesFor(db, targetId);
+  const sourceTransactionReferenceCount = sourceReferences.transactions.length;
+  const targetTransactionReferenceCount = targetReferences.transactions.length;
+  const preferredTargetId = input.action === "merge" && source && target
+    ? targetTransactionReferenceCount > sourceTransactionReferenceCount
+      ? targetId
+      : targetTransactionReferenceCount < sourceTransactionReferenceCount
+        ? sourceId
+        : Math.min(sourceId, targetId!)
+    : undefined;
+  const consolidation = input.action === "merge"
+    ? consolidatedTarget(target, source)
+    : { targetAfterMerge: target, targetFieldsToFill: [] };
   const unsupportedReferenceLocations = unsupportedRecipientReferenceLocations(db);
   const errors = new Set<string>(validateStoredReferences(db));
   if (unsupportedReferenceLocations.length > 0) {
@@ -279,6 +334,9 @@ const buildPlan = (
   }
   if (input.action === "merge" && !target) errors.add("target_recipient_not_found");
   if (!distinctRecipients) errors.add("source_target_recipient_same");
+  if (input.action === "merge" && preferredTargetId !== undefined && targetId !== preferredTargetId) {
+    errors.add("recipient_merge_target_not_preferred");
+  }
   const counts = referenceCounts(sourceReferences);
   if (input.action === "delete" && totalCounts(counts) > 0) {
     errors.add("recipient_referenced");
@@ -303,6 +361,9 @@ const buildPlan = (
       REFERENCE_FIELDS.map(({ table }) => [table, tableRows(db, table)]),
     ),
     unsupportedReferenceLocations,
+    preferredTargetId,
+    sourceTransactionReferenceCount,
+    targetTransactionReferenceCount,
     validationErrors,
   };
   return {
@@ -312,6 +373,10 @@ const buildPlan = (
     distinctRecipients,
     source,
     target,
+    preferredTargetId,
+    sourceTransactionReferenceCount,
+    targetTransactionReferenceCount,
+    ...consolidation,
     sourceReferences,
     targetReferenceCounts: referenceCounts(targetReferences),
     unsupportedReferenceLocations,
@@ -347,14 +412,20 @@ const response = (
     referenceCount: sourceReferenceCount,
     sourceReferenceCount,
     targetExistingReferenceCount: totalCounts(plan.targetReferenceCounts),
+    ...(plan.preferredTargetId !== undefined ? { preferredTargetId: plan.preferredTargetId } : {}),
+    sourceTransactionReferenceCount: plan.sourceTransactionReferenceCount,
+    targetTransactionReferenceCount: plan.targetTransactionReferenceCount,
     referenceCountsByEntity: counts,
     rowsProposedForUpdate: plan.input.action === "merge" ? sourceReferenceCount : 0,
     sourceWouldBeDeleted: eligible,
+    targetFieldsToFill: [...plan.targetFieldsToFill],
     ...(plan.planFingerprint ? { planFingerprint: plan.planFingerprint } : {}),
     validationErrors: [...plan.validationErrors],
     warnings: eligible
       ? [
-          "target_recipient_fields_remain_unchanged",
+          ...(plan.input.action === "merge" && plan.targetFieldsToFill.length > 0
+            ? ["target_recipient_missing_fields_will_be_consolidated"]
+            : ["target_recipient_fields_remain_unchanged"]),
           "manual_checkpoint_rotation_required_before_authority_restart",
         ]
       : plan.validationErrors.includes("recipient_referenced")
@@ -368,7 +439,7 @@ const response = (
       filesWritten: false,
       financialFieldsMutated: false,
       budgetLifecycleInvoked: false,
-      targetRecipientMutated: false,
+      targetRecipientMutated: plan.input.action === "merge" && plan.targetFieldsToFill.length > 0,
       rawRowsIncluded: false,
       automaticCheckpointCreated: false,
     },
@@ -387,6 +458,9 @@ const errorPlan = (action: Action, code: string): RecipientLifecyclePlan => ({
   sourcePresent: false,
   distinctRecipients: action === "delete",
   sourceReferences: { transactions: [], budgets: [], budgetSnapshots: [] },
+  targetFieldsToFill: [],
+  sourceTransactionReferenceCount: 0,
+  targetTransactionReferenceCount: 0,
   targetReferenceCounts: emptyCounts(),
   unsupportedReferenceLocations: [],
   validationErrors: [code],
@@ -414,6 +488,14 @@ const expectedReferenceRows = (
   row.recipientId === sourceId ? { ...row, recipientId: targetId } : row,
 );
 
+const expectedRecipientRows = (
+  before: Row[], sourceId: number, targetId: number | undefined, targetAfterMerge: Row | undefined,
+): Row[] => before
+  .filter((row) => Number(row.id) !== sourceId)
+  .map((row) => targetId !== undefined && Number(row.id) === targetId && targetAfterMerge
+    ? targetAfterMerge
+    : row);
+
 export const recipientLifecycleRealWrite = (
   db: Database.Database,
   payload: unknown,
@@ -436,6 +518,7 @@ export const recipientLifecycleRealWrite = (
       tables.map((table) => [table, tableRows(db, table)]),
     ) as Record<string, Row[]>;
     let rowsChanged = 0;
+    let persistedTargetAfterMerge = plan.targetAfterMerge;
 
     if (action === "merge") {
       const sourceId = input.sourceRecipientId!;
@@ -449,6 +532,15 @@ export const recipientLifecycleRealWrite = (
         }
         rowsChanged += changes;
       }
+      if (plan.targetFieldsToFill.length > 0) {
+        persistedTargetAfterMerge = { ...plan.targetAfterMerge, updatedAt: new Date().toISOString() };
+        const updates = plan.targetFieldsToFill.map((field) => `"${field}" = @${field}`).join(", ");
+        const values = Object.fromEntries(plan.targetFieldsToFill.map((field) => [field, persistedTargetAfterMerge?.[field] ?? null]));
+        const changed = db.prepare(`UPDATE recipients SET ${updates}, updatedAt = @updatedAt WHERE id = @targetId`)
+          .run({ ...values, updatedAt: persistedTargetAfterMerge!.updatedAt, targetId }).changes;
+        if (changed !== 1) throw new Error("recipient_merge_target_update_failed");
+        rowsChanged += changed;
+      }
     }
 
     const sourceId = action === "delete" ? input.recipientId! : input.sourceRecipientId!;
@@ -459,7 +551,7 @@ export const recipientLifecycleRealWrite = (
     for (const table of tables) {
       let expected = before[table];
       if (table === "recipients") {
-        expected = before.recipients.filter((row) => Number(row.id) !== sourceId);
+        expected = expectedRecipientRows(before.recipients, sourceId, input.targetRecipientId, persistedTargetAfterMerge);
       } else if (action === "merge" && REFERENCE_FIELDS.some((item) => item.table === table)) {
         expected = expectedReferenceRows(before[table], sourceId, input.targetRecipientId!);
       }
@@ -473,7 +565,7 @@ export const recipientLifecycleRealWrite = (
     }
     if (
       action === "merge" &&
-      serialized(recipientById(db, input.targetRecipientId!)) !== serialized(plan.target)
+      serialized(recipientById(db, input.targetRecipientId!)) !== serialized(persistedTargetAfterMerge)
     ) {
       throw new Error("recipient_lifecycle_target_changed");
     }

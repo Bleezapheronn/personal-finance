@@ -26,6 +26,8 @@ export const REQUIRED_SQLITE_REHEARSAL_CAPABILITIES = [
   "smsTemplateWrites",
   "budgetDefinitionWrites",
   "budgetSnapshotGenerationWrites",
+  "lookupActiveStateWrites",
+  "bucketReorderWrites",
 ] as const;
 
 export type SqliteRehearsalCapability =
@@ -83,6 +85,7 @@ interface AuthorityReadinessResponse extends MetadataResponse {
   authorityEnabled?: unknown;
   ready?: unknown;
   requiredCapabilities?: unknown;
+  runtimeRequiredCapabilities?: unknown;
   unsupportedOperations?: unknown;
 }
 
@@ -105,6 +108,8 @@ export interface SqliteAuthorityRehearsalReadiness {
   accountDeleteMergeWritesAvailable: boolean;
   categoryDeleteMergeWritesAvailable: boolean;
   bucketDeleteMergeWritesAvailable: boolean;
+  lookupActiveStateWritesAvailable?: boolean;
+  bucketReorderWritesAvailable?: boolean;
   code?: string;
   message: string;
 }
@@ -150,6 +155,8 @@ const initialReadiness = (
       accountDeleteMergeWritesAvailable: false,
       categoryDeleteMergeWritesAvailable: false,
       bucketDeleteMergeWritesAvailable: false,
+      lookupActiveStateWritesAvailable: false,
+      bucketReorderWritesAvailable: false,
       message: "SQLite authority mode is not selected.",
     };
   }
@@ -176,6 +183,8 @@ const initialReadiness = (
     accountDeleteMergeWritesAvailable: false,
     categoryDeleteMergeWritesAvailable: false,
     bucketDeleteMergeWritesAvailable: false,
+    lookupActiveStateWritesAvailable: false,
+    bucketReorderWritesAvailable: false,
     code: acknowledged ? undefined : `${acknowledgementRequirement}_missing`,
     message: acknowledged
       ? "Checking required local API authority status."
@@ -285,6 +294,10 @@ export const normalizeSqliteAuthorityRehearsalCapabilities = (
       capabilities.categoryDeleteMergeWrites === true,
     bucketDeleteMergeWritesAvailable:
       capabilities.bucketDeleteMergeWrites === true,
+    lookupActiveStateWritesAvailable:
+      capabilities.lookupActiveStateWrites === true,
+    bucketReorderWritesAvailable:
+      capabilities.bucketReorderWrites === true,
     code: ready ? undefined : "required_write_capabilities_missing",
     message: ready
       ? "All required disposable SQLite write capabilities are available."
@@ -314,10 +327,10 @@ export const normalizeSqliteAuthoritativeReadiness = (
   const unsupportedOperations = validStringArray(authority.unsupportedOperations)
     ? authority.unsupportedOperations
     : [];
-  const reportedRequiredCapabilities = validStringArray(
-    authority.requiredCapabilities,
+  const reportedRuntimeRequiredCapabilities = validStringArray(
+    authority.runtimeRequiredCapabilities,
   )
-    ? authority.requiredCapabilities
+    ? authority.runtimeRequiredCapabilities
     : [];
   const safety = capabilitiesResponse.safety as
     | Record<string, unknown>
@@ -348,6 +361,12 @@ export const normalizeSqliteAuthoritativeReadiness = (
           capabilities?.categoryDeleteMergeWrites === true ||
           capabilities?.bucketDeleteMergeWrites === true
         );
+      }
+      if (operation === "bucket_reorder") {
+        return capabilities?.bucketReorderWrites !== true;
+      }
+      if (operation === "bucket_category_active_state" || operation === "account_active_state") {
+        return capabilities?.lookupActiveStateWrites !== true;
       }
       if (operation === "budget_definition_delete") {
         return capabilities?.budgetDeleteWrites !== true;
@@ -387,7 +406,7 @@ export const normalizeSqliteAuthoritativeReadiness = (
     missingCapabilities.length === 0 &&
     missingRequirements.length === 0 &&
     REQUIRED_SQLITE_REHEARSAL_CAPABILITIES.every((key) =>
-      reportedRequiredCapabilities.includes(key),
+      reportedRuntimeRequiredCapabilities.includes(key),
     ) &&
     requiredUnsupportedOperations.every((operation) =>
       unsupportedOperations.includes(operation),
@@ -431,6 +450,10 @@ export const normalizeSqliteAuthoritativeReadiness = (
       capabilities?.categoryDeleteMergeWrites === true,
     bucketDeleteMergeWritesAvailable:
       capabilities?.bucketDeleteMergeWrites === true,
+    lookupActiveStateWritesAvailable:
+      capabilities?.lookupActiveStateWrites === true,
+    bucketReorderWritesAvailable:
+      capabilities?.bucketReorderWrites === true,
     message:
       "Verified SQLite authoritative mode is active. Dexie writes remain disabled.",
   };
