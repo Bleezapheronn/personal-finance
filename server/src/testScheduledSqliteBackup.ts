@@ -3,8 +3,9 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { AUTHORITY_OPS_PROFILE_SCHEMA_VERSION, writeAuthorityOpsProfileAtomic, type AuthorityOpsProfile } from "./lib/authorityOpsProfile.js";
-import { acquireAuthorityOpsLock } from "./lib/authorityOpsLock.js";
-import { createRetentionPlan, initializeBackupSettings, inventoryScheduledBackups, readBackupSettings, runScheduledSqliteBackup, updateBackupSettings, validateBackupDestination } from "./lib/scheduledSqliteBackup.js";
+import os from "node:os";
+import { acquireAuthorityOpsLock, lockPathForProfile } from "./lib/authorityOpsLock.js";
+import { backupStatusPathForProfile, createRetentionPlan, initializeBackupSettings, inventoryScheduledBackups, readBackupSettings, runScheduledSqliteBackup, updateBackupSettings, validateBackupDestination } from "./lib/scheduledSqliteBackup.js";
 import { serverRoot } from "./lib/paths.js";
 import { readSqliteLogicalVerificationAtPath } from "./lib/sqliteLogicalVerification.js";
 
@@ -30,6 +31,8 @@ const main = async () => {
     await check("incomplete partial publication is ignored",()=>{ writeFileSync(path.join(destination,"Daily","ignored.sqlite.partial"),"partial"); const rows=inventoryScheduledBackups(profilePath); assert(rows.every(x=>!x.basename.includes("ignored"))); });
     await check("filename collision refuses overwrite",async()=>{ await expectFailure(()=>runScheduledSqliteBackup(profilePath),"scheduled_backup_filename_collision"); });
     await check("concurrent backup lock is refused",async()=>{ const release=acquireAuthorityOpsLock(profilePath,"test-held-lock"); try { await expectFailure(()=>runScheduledSqliteBackup(profilePath),"authority_ops_lock_held"); } finally { release(); } });
+    await check("lock-held failure still records attempted and failure status", async()=>{ const release=acquireAuthorityOpsLock(profilePath,"test-held-lock"); try { await expectFailure(()=>runScheduledSqliteBackup(profilePath),"authority_ops_lock_held"); } finally { release(); } const status=JSON.parse(readFileSync(backupStatusPathForProfile(profilePath),"utf8")) as {lastAttemptedAt?:string;lastResultCode?:string}; assert(typeof status.lastAttemptedAt==="string"&&status.lastResultCode==="authority_ops_lock_held"); });
+    await check("stale lock is recovered for scheduled backup", async()=>{ const lockPath=lockPathForProfile(profilePath); writeFileSync(lockPath, `${JSON.stringify({processId:2_147_483_647,hostname:os.hostname(),command:"run",startedAt:new Date().toISOString()},null,2)}\n`, "utf8"); const result=await runScheduledSqliteBackup(profilePath,"monthly"); assert(result.basename.endsWith(".sqlite")); assert(!existsSync(lockPath)); });
     await check("corrupt manifest and missing pair are invalid",()=>{ const row=inventoryScheduledBackups(profilePath)[0]; const saved=readFileSync(row.manifestPath,"utf8"); writeFileSync(row.manifestPath,"not-json"); assert(inventoryScheduledBackups(profilePath).some(x=>!x.valid)); writeFileSync(row.manifestPath,saved); unlinkSync(row.databasePath); assert(inventoryScheduledBackups(profilePath).some(x=>x.reason==="missing_database")); });
     await check("checksum mismatch is classified invalid",()=>{ const rows=inventoryScheduledBackups(profilePath); const db=rows[0].databasePath; writeFileSync(db,"tampered"); const invalid=inventoryScheduledBackups(profilePath); assert(invalid.some(x=>!x.valid)); unlinkSync(db); unlinkSync(rows[0].manifestPath); });
     // A fresh backup is used as a clean source for retention fixtures.
