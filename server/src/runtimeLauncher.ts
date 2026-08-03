@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { repoRoot } from "./lib/paths.js";
@@ -44,9 +44,27 @@ const frontend = spawn(
 const children: ChildProcess[] = [api, frontend];
 let stopping = false;
 
+const stopChildTree = (child: ChildProcess): void => {
+  if (child.exitCode !== null || !child.pid) return;
+
+  if (process.platform === "win32") {
+    try {
+      execFileSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    } catch {
+      // A child can finish naturally between the exit check and taskkill.
+    }
+    return;
+  }
+
+  child.kill("SIGTERM");
+};
+
 const stopChildren = (): void => {
   for (const child of children) {
-    if (child.exitCode === null && !child.killed) child.kill();
+    stopChildTree(child);
   }
 };
 
@@ -60,15 +78,14 @@ const stop = (exitCode: number): void => {
 for (const child of children) {
   child.once("error", (error) => {
     console.error(`Unable to start Personal Finance runtime: ${error.message}`);
+    stop(1);
   });
   child.once("exit", (code, signal) => {
     if (!stopping) {
       console.error(
         `Personal Finance runtime process stopped (${signal ?? `exit code ${code ?? 1}`}).`,
       );
-      if (children.every((process) => process.exitCode !== null)) {
-        process.exitCode = code ?? 1;
-      }
+      stop(code ?? 1);
     }
   });
 }

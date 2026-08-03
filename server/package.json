@@ -23,6 +23,7 @@
     "backup:ops": "tsx src/backupOps.ts",
     "test:automatic-backups-api": "tsx src/testAutomaticBackupsApi.ts",
     "test:scheduled-sqlite-backup": "tsx src/testScheduledSqliteBackup.ts",
+    "test:runtime-launcher": "npm run build && node dist/testRuntimeLauncher.js",
     "test:sqlite-backup-restore": "tsx src/testSqliteBackupRestore.ts",
     "test:transaction-delete": "tsx src/testTransactionDelete.ts",
     "test:transaction-description-prefill": "tsx src/testTransactionDescriptionPrefill.ts",
