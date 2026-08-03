@@ -1,20 +1,18 @@
 param(
-  [Parameter(Mandatory = $false)]
-  [string]$ProfilePath = $env:PERSONAL_FINANCE_AUTHORITY_PROFILE_PATH
+  [Parameter(Mandatory = $true)]
+  [string]$RuntimeConfigPath
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$authorityCli = Join-Path $repoRoot "server\node_modules\tsx\dist\cli.mjs"
-$authoritySource = Join-Path $repoRoot "server\src\authorityOps.ts"
-
-if (-not $ProfilePath -or -not [System.IO.Path]::IsPathRooted($ProfilePath)) {
-  throw "A valid absolute authority profile path is required."
-}
-if (-not (Test-Path -LiteralPath $ProfilePath -PathType Leaf)) {
-  throw "The authority profile is unavailable."
+if (-not [System.IO.Path]::IsPathRooted($RuntimeConfigPath)) {
+  throw "A valid absolute runtime config path is required."
 }
 
-$arguments = @($authorityCli, $authoritySource, "--profile", $ProfilePath, "run")
-& node.exe $arguments
-if ($LASTEXITCODE -ne 0) { throw "Personal Finance supervised run failed." }
+$launcher = Join-Path $repoRoot "server\src\runtimeLauncher.ts"
+$tsx = Join-Path $repoRoot "server\node_modules\tsx\dist\cli.mjs"
+
+# This foreground process owns both children. It deliberately performs no API,
+# SQLite, or readiness gate and never opens a browser.
+& node.exe $tsx $launcher "--runtime-config" $RuntimeConfigPath
+exit $LASTEXITCODE

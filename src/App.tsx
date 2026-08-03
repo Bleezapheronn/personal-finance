@@ -44,7 +44,6 @@ import SqliteAuthoritySettings from "./pages/SqliteAuthoritySettings";
 import LocalApiDiagnostics, {
   isLocalApiDiagnosticsEnabled,
 } from "./pages/LocalApiDiagnostics";
-import SqliteAuthorityRehearsalBanner from "./components/SqliteAuthorityRehearsalBanner";
 import {
   SqliteAuthorityRehearsalProvider,
   useSqliteAuthorityRehearsal,
@@ -91,7 +90,6 @@ const InnerApp: React.FC = () => {
   return (
     <IonApp>
       <IonReactRouter>
-        <SqliteAuthorityRehearsalBanner />
         {/* Side menu */}
         <IonMenu side="start" contentId="main">
           <IonHeader>

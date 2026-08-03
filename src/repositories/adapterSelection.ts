@@ -1,6 +1,7 @@
 export type RepositoryBackend =
   | "dexie"
   | "http-readonly"
+  | "http-sqlite"
   | "http-sqlite-rehearsal"
   | "http-sqlite-authoritative";
 
@@ -10,6 +11,7 @@ const DEFAULT_REPOSITORY_BACKEND: RepositoryBackend = "dexie";
 const repositoryBackendValues = new Set<RepositoryBackend>([
   "dexie",
   "http-readonly",
+  "http-sqlite",
   "http-sqlite-rehearsal",
   "http-sqlite-authoritative",
 ]);
@@ -55,6 +57,7 @@ export const isSqliteAuthoritativeBackend = (
 export const isSqliteAuthorityControlledBackend = (
   backend: RepositoryBackend = getRepositoryBackend(),
 ): boolean =>
+  backend === "http-sqlite" ||
   isSqliteAuthorityRehearsalBackend(backend) ||
   isSqliteAuthoritativeBackend(backend);
 

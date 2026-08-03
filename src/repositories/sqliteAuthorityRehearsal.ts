@@ -131,6 +131,31 @@ const initialReadiness = (
 ): SqliteAuthorityRehearsalReadiness => {
   const selected = isSqliteAuthorityControlledBackend(mode);
   const authoritativeMode = isSqliteAuthoritativeBackend(mode);
+  if (mode === "http-sqlite") {
+    return {
+      mode,
+      selected: true,
+      authoritativeMode: true,
+      acknowledged: true,
+      checking: false,
+      ready: true,
+      apiAvailable: true,
+      missingCapabilities: [],
+      missingRequirements: [],
+      unsupportedOperations: [],
+      transactionDeleteWritesAvailable: true,
+      budgetLifecycleWritesAvailable: true,
+      budgetSnapshotOccurrenceWritesAvailable: true,
+      budgetDeleteWritesAvailable: true,
+      recipientDeleteMergeWritesAvailable: true,
+      accountDeleteMergeWritesAvailable: true,
+      categoryDeleteMergeWritesAvailable: true,
+      bucketDeleteMergeWritesAvailable: true,
+      lookupActiveStateWritesAvailable: true,
+      bucketReorderWritesAvailable: true,
+      message: "SQLite local API is selected.",
+    };
+  }
   const acknowledged = authoritativeMode
     ? isSqliteAuthorityEnabledInFrontend()
     : isSqliteAuthorityRehearsalAcknowledged();
@@ -488,6 +513,7 @@ export const normalizeSqliteAuthorityReadinessFailure = (
 
 export const loadSqliteAuthorityRehearsalReadiness = async (): Promise<SqliteAuthorityRehearsalReadiness> => {
   const initial = initialReadiness();
+  if (initial.mode === "http-sqlite") return initial;
   if (!initial.selected || !initial.acknowledged) return initial;
 
   try {

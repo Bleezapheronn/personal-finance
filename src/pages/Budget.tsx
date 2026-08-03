@@ -1623,7 +1623,7 @@ const BudgetPage: React.FC = () => {
           return;
         }
         setSuccessMsg(
-          "Budget and its unlinked snapshots deleted from SQLite. Rotate the authority checkpoint before restart.",
+          "Budget and its unlinked snapshots deleted from SQLite.",
         );
         setShowSuccessToast(true);
         setShowDeleteConfirm(false);

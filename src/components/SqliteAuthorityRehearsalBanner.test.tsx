@@ -57,6 +57,16 @@ describe("SqliteAuthorityRehearsalBanner", () => {
     expect(status).toHaveTextContent("SQLite authoritative");
   });
 
+  test("does not show authority status for the normal SQLite backend", () => {
+    mockedReadiness.mockReturnValue({
+      ...baseReadiness,
+      mode: "http-sqlite",
+    });
+
+    expect(render(<SqliteAuthorityRehearsalBanner />).container).toBeEmptyDOMElement();
+    expect(render(<SqliteAuthorityToolbarStatus />).container).toBeEmptyDOMElement();
+  });
+
   test("keeps healthy rehearsal mode prominent", () => {
     mockedReadiness.mockReturnValue({
       ...baseReadiness,

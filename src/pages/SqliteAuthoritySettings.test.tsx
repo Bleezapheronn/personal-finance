@@ -2,12 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import SqliteAuthoritySettings from "./SqliteAuthoritySettings";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
 import * as backupApi from "../api/automaticBackupsApi";
-
-vi.mock("../contexts/SqliteAuthorityRehearsalContext", () => ({
-  useSqliteAuthorityRehearsal: vi.fn(),
-}));
 
 vi.mock("../api/automaticBackupsApi", () => ({
   readAutomaticBackupsState: vi.fn(),
@@ -21,7 +16,6 @@ vi.mock("../api/automaticBackupsApi", () => ({
   openAutomaticBackupFolder: vi.fn(),
 }));
 
-const mockedReadiness = vi.mocked(useSqliteAuthorityRehearsal);
 const mockedApi = {
   read: vi.mocked(backupApi.readAutomaticBackupsState),
   browse: vi.mocked(backupApi.browseAutomaticBackupDestination),
@@ -183,29 +177,6 @@ const waitForBackupsReady = async (): Promise<void> => {
 describe("SqliteAuthoritySettings automatic backups", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-
-    mockedReadiness.mockReturnValue({
-      mode: "http-sqlite-authoritative",
-      selected: true,
-      authoritativeMode: true,
-      acknowledged: true,
-      checking: false,
-      ready: true,
-      apiAvailable: true,
-      missingCapabilities: [],
-      missingRequirements: [],
-      unsupportedOperations: [],
-      transactionDeleteWritesAvailable: true,
-      budgetLifecycleWritesAvailable: true,
-      budgetSnapshotOccurrenceWritesAvailable: true,
-      budgetDeleteWritesAvailable: true,
-      recipientDeleteMergeWritesAvailable: true,
-      accountDeleteMergeWritesAvailable: true,
-      categoryDeleteMergeWritesAvailable: true,
-      bucketDeleteMergeWritesAvailable: true,
-      message: "ready",
-      refresh: async () => undefined,
-    });
 
     mockedApi.read.mockResolvedValue({ ...baseState });
     mockedApi.browse.mockResolvedValue({ cancelled: true });

@@ -4,8 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import type { FastifyInstance } from "fastify";
 import {
-  backupStatusPathForProfile,
-  backupConfigPathForProfile,
+  backupStatusPathForRuntime as backupStatusPathForProfile,
+  backupConfigPathForRuntime as backupConfigPathForProfile,
   initializeBackupSettings,
   inventoryScheduledBackups,
   readBackupSettings,
@@ -18,11 +18,10 @@ import {
   type BackupSettings,
   type BackupStatusRecord,
 } from "./scheduledSqliteBackup.js";
-import { readAuthorityOpsProfile } from "./authorityOpsProfile.js";
-import { getSqlitePath } from "../config.js";
+import { readRuntimeConfig } from "../runtimeConfig.js";
 
-const AUTHORITY_PROFILE_PATH_ENV_VAR =
-  "PERSONAL_FINANCE_AUTHORITY_PROFILE_PATH" as const;
+const RUNTIME_CONFIG_PATH_ENV_VAR =
+  "PERSONAL_FINANCE_RUNTIME_CONFIG_PATH" as const;
 
 const RETENTION_SUMMARY =
   "One verified daily backup for the latest 30 days, then one verified monthly backup for older months.";
@@ -626,26 +625,22 @@ const createService = (profilePath: string): AutomaticBackupsService => ({
   },
 });
 
-const profilePathFromEnvironment = (): string => {
-  const profilePath = process.env[AUTHORITY_PROFILE_PATH_ENV_VAR]?.trim();
-  if (!profilePath) {
-    throw new Error("authority_profile_path_missing");
+const runtimeConfigPathFromEnvironment = (): string => {
+  const runtimeConfigPath = process.env[RUNTIME_CONFIG_PATH_ENV_VAR]?.trim();
+  if (!runtimeConfigPath) {
+    throw new Error("runtime_config_path_missing");
   }
-  if (!path.isAbsolute(profilePath)) {
-    throw new Error("authority_profile_path_invalid");
+  if (!path.isAbsolute(runtimeConfigPath)) {
+    throw new Error("runtime_config_path_invalid");
   }
-  if (!existsSync(profilePath)) throw new Error("authority_profile_not_found");
+  if (!existsSync(runtimeConfigPath)) throw new Error("runtime_config_unavailable");
   try {
-    const profile = readAuthorityOpsProfile(profilePath);
-    const configuredSqlite = getSqlitePath();
-    if (configuredSqlite && path.resolve(configuredSqlite) !== path.resolve(profile.activeDatabasePath)) {
-      throw new Error("authority_profile_runtime_mismatch");
-    }
+    readRuntimeConfig(runtimeConfigPath);
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("authority_profile_")) throw error;
-    throw new Error("authority_profile_not_found");
+    if (error instanceof Error && error.message.startsWith("runtime_config_")) throw error;
+    throw new Error("runtime_config_unavailable");
   }
-  return profilePath;
+  return runtimeConfigPath;
 };
 
 const initialState = (): AutomaticBackupsReadState => ({
@@ -676,7 +671,7 @@ const mapError = (error: unknown): RouteError => {
   if (code === "backup_run_in_progress") return routeError(409, code);
   if (code === "backup_run_timeout") return routeError(504, code);
   if (code.startsWith("folder_picker_")) return routeError(409, code);
-  if (code.startsWith("authority_profile_")) return routeError(409, code);
+  if (code.startsWith("runtime_config_")) return routeError(409, code);
   if (code === "backup_folder_open_failed") return routeError(500, code);
   if (code.includes("invalid") || code.includes("required")) {
     return routeError(400, code);
@@ -703,19 +698,19 @@ export const registerAutomaticBackupsRoutes = (
   server: FastifyInstance,
 ): void => {
   const service = (): AutomaticBackupsService =>
-    createService(profilePathFromEnvironment());
+    createService(runtimeConfigPathFromEnvironment());
 
   server.get(
     "/prototype/settings/automatic-backups/state",
     async (_request, reply) => {
       try {
-        const profilePath = profilePathFromEnvironment();
-        if (!existsSync(backupConfigPathForProfile(profilePath))) {
+        const runtimeConfigPath = runtimeConfigPathFromEnvironment();
+        if (!existsSync(backupConfigPathForProfile(runtimeConfigPath))) {
           return { ok: true, state: initialState() };
         }
         return {
           ok: true,
-          state: createService(profilePath).readState(),
+          state: createService(runtimeConfigPath).readState(),
         };
       } catch (error) {
         const mapped = mapError(error);

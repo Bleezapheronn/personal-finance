@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import Database from "better-sqlite3";
 import {
   isKnownTableName,
   openReadOnlyDatabase,
@@ -565,10 +566,12 @@ const openConfiguredWritableDatabase = ():
     return { ok: false, code: "sqlite_not_configured" };
   }
   const context = currentMutationContext;
-  if (!context || context.fence.finalized) {
-    throw new Error("unguarded_authoritative_write");
+  if (context && !context.fence.finalized) {
+    return { ok: true, db: context.fence.database };
   }
-  return { ok: true, db: context.fence.database };
+  // Ordinary local runtime writes use the route's own validated transaction.
+  // No checkpoint/session fence participates in normal application use.
+  return { ok: true, db: trackDatabase(new Database(sqlitePath)) };
 };
 
 options.registerAuthentication(server);
@@ -653,9 +656,7 @@ server.addHook("preHandler", async (request, reply) => {
     });
   }
   if (!isAuthoritativeMutationRequest(request.url)) return;
-  if (!authorityMutationTracker || !authorityMutationExecutor) {
-    return reply.code(503).send({ ok: false, code: "unguarded_authoritative_write" });
-  }
+  if (!authorityMutationTracker || !authorityMutationExecutor) return;
   if (!authorityMutationTracker.isAccepting()) {
     return reply.code(503).send({ ok: false, code: "authority_shutdown_in_progress" });
   }
@@ -738,23 +739,10 @@ server.get("/health", async () => {
   };
 });
 
-let sqliteAuthorityReadiness: SqliteAuthorityReadiness =
-  evaluateSqliteAuthorityReadiness({
-    authorityEnabled: false,
-    capabilities: readWriteCapabilities(),
-  });
-
-server.addHook("preHandler", async (request, reply) => {
-  if (
-    isSqliteAuthorityEnabled() &&
-    request.url.split("?", 1)[0].includes("/write/") &&
-    !sqliteAuthorityReadiness.ready
-  ) {
-    return reply.code(503).send({
-      ok: false,
-      code: "sqlite_authority_not_ready",
-    });
-  }
+const normalRuntimeMetadata = () => ({
+  readonly: false,
+  storageMode: "sqlite" as const,
+  authoritative: true,
 });
 
 options.registerAutomaticBackups(server);
@@ -764,36 +752,9 @@ server.get("/metadata", async () => {
     service: SERVICE_NAME,
     mode: SERVICE_MODE,
     apiVersion: API_VERSION,
-    readonly: !sqliteAuthorityReadiness.authoritative,
-    storageMode: sqliteAuthorityReadiness.storageMode,
-    authoritative: sqliteAuthorityReadiness.authoritative,
-    cutoverVerified: sqliteAuthorityReadiness.cutoverVerified,
-    backupVerified: sqliteAuthorityReadiness.backupVerified,
-    rollbackAvailable: sqliteAuthorityReadiness.rollbackAvailable,
-    missingRequirements: [...sqliteAuthorityReadiness.missingRequirements],
+    ...normalRuntimeMetadata(),
   };
 });
-
-server.get("/prototype/sqlite/authority-readiness", async () => ({
-  ok: true,
-  mode: SERVICE_MODE,
-  authorityEnabled: sqliteAuthorityReadiness.authorityEnabled,
-  ready: sqliteAuthorityReadiness.ready,
-  storageMode: sqliteAuthorityReadiness.storageMode,
-  authoritative: sqliteAuthorityReadiness.authoritative,
-  cutoverVerified: sqliteAuthorityReadiness.cutoverVerified,
-  backupVerified: sqliteAuthorityReadiness.backupVerified,
-  rollbackAvailable: sqliteAuthorityReadiness.rollbackAvailable,
-  missingRequirements: [...sqliteAuthorityReadiness.missingRequirements],
-  // Legacy requiredCapabilities remains the checkpoint-manifest schema.
-  // Runtime management requirements are intentionally published separately.
-  requiredCapabilities: [...sqliteAuthorityReadiness.requiredCapabilities],
-  runtimeRequiredCapabilities: [...RUNTIME_FRONTEND_REQUIRED_CAPABILITY_KEYS],
-  unsupportedOperations: sqliteAuthorityReadiness.unsupportedOperations.filter(
-    (operation) => unsupportedOperationsForCapabilities(readWriteCapabilities()).includes(operation),
-  ),
-  code: sqliteAuthorityReadiness.code,
-}));
 
 server.get("/prototype/write-capabilities", async () => {
   let sqliteAvailable = false;
@@ -811,7 +772,15 @@ server.get("/prototype/write-capabilities", async () => {
     database?.close();
   }
 
-  return buildWriteCapabilitiesResponse(sqliteAvailable, sqliteAuthorityReadiness);
+  return buildWriteCapabilitiesResponse(sqliteAvailable, {
+    authorityEnabled: false,
+    storageMode: "sqlite-authoritative",
+    authoritative: true,
+    cutoverVerified: true,
+    backupVerified: true,
+    rollbackAvailable: false,
+    missingRequirements: [],
+  });
 });
 
 server.get("/prototype/sqlite/row-counts", async (_request, reply) => {
@@ -4069,11 +4038,5 @@ for (const resource of lookupResources) {
   );
 }
 
-sqliteAuthorityReadiness = evaluateSqliteAuthorityReadiness({
-    authorityEnabled: isSqliteAuthorityEnabled(),
-    sqlitePath: getSqlitePath(),
-    manifestPath: getSqliteCutoverManifestPath(),
-    capabilities: readWriteCapabilities(),
-  });
 return server;
 };

@@ -129,62 +129,45 @@ export const getSqliteCutoverManifestPath = (): string | undefined => {
     : undefined;
 };
 
-export const areRecipientActiveStateWritesEnabled = (): boolean =>
-  process.env[RECIPIENT_ACTIVE_STATE_WRITES_ENV_VAR] === "true";
+// SQLite is the normal local runtime. These routes remain protected by the
+// existing authenticated, validated mutation contracts; they are no longer
+// migration/profile capability switches.
+export const areRecipientActiveStateWritesEnabled = (): boolean => true;
 
-export const areRecipientCreateUpdateWritesEnabled = (): boolean =>
-  process.env[RECIPIENT_CREATE_UPDATE_WRITES_ENV_VAR] === "true";
+export const areRecipientCreateUpdateWritesEnabled = (): boolean => true;
 
-export const areRecipientDeleteMergeWritesEnabled = (): boolean =>
-  process.env[RECIPIENT_DELETE_MERGE_WRITES_ENV_VAR] === "true";
+export const areRecipientDeleteMergeWritesEnabled = (): boolean => true;
 
-export const areBucketCategoryWritesEnabled = (): boolean =>
-  process.env[BUCKET_CATEGORY_WRITES_ENV_VAR] === "true";
+export const areBucketCategoryWritesEnabled = (): boolean => true;
 
-export const areAccountWritesEnabled = (): boolean =>
-  process.env[ACCOUNT_WRITES_ENV_VAR] === "true";
+export const areAccountWritesEnabled = (): boolean => true;
 
-export const areAccountDeleteMergeWritesEnabled = (): boolean =>
-  process.env[ACCOUNT_DELETE_MERGE_WRITES_ENV_VAR] === "true";
+export const areAccountDeleteMergeWritesEnabled = (): boolean => true;
 
-export const areCategoryDeleteMergeWritesEnabled = (): boolean =>
-  process.env[CATEGORY_DELETE_MERGE_WRITES_ENV_VAR] === "true";
+export const areCategoryDeleteMergeWritesEnabled = (): boolean => true;
 
-export const areBucketDeleteMergeWritesEnabled = (): boolean =>
-  process.env[BUCKET_DELETE_MERGE_WRITES_ENV_VAR] === "true";
+export const areBucketDeleteMergeWritesEnabled = (): boolean => true;
 
-export const areLookupActiveStateWritesEnabled = (): boolean =>
-  process.env[LOOKUP_ACTIVE_STATE_WRITES_ENV_VAR] === "true";
+export const areLookupActiveStateWritesEnabled = (): boolean => true;
 
-export const areBucketReorderWritesEnabled = (): boolean =>
-  process.env[BUCKET_REORDER_WRITES_ENV_VAR] === "true";
+export const areBucketReorderWritesEnabled = (): boolean => true;
 
-export const areTransactionBasicWritesEnabled = (): boolean =>
-  process.env[TRANSACTION_BASIC_WRITES_ENV_VAR] === "true";
+export const areTransactionBasicWritesEnabled = (): boolean => true;
 
-export const areTransactionCostBudgetWritesEnabled = (): boolean =>
-  process.env[TRANSACTION_COST_BUDGET_WRITES_ENV_VAR] === "true";
+export const areTransactionCostBudgetWritesEnabled = (): boolean => true;
 
-export const areTransactionTransferWritesEnabled = (): boolean =>
-  process.env[TRANSACTION_TRANSFER_WRITES_ENV_VAR] === "true";
+export const areTransactionTransferWritesEnabled = (): boolean => true;
 
-export const areTransactionDeleteWritesEnabled = (): boolean =>
-  process.env[TRANSACTION_DELETE_WRITES_ENV_VAR] === "true";
+export const areTransactionDeleteWritesEnabled = (): boolean => true;
 
-export const areSmsTemplateWritesEnabled = (): boolean =>
-  process.env[SMS_TEMPLATE_WRITES_ENV_VAR] === "true";
+export const areSmsTemplateWritesEnabled = (): boolean => true;
 
-export const areBudgetDefinitionWritesEnabled = (): boolean =>
-  process.env[BUDGET_DEFINITION_WRITES_ENV_VAR] === "true";
+export const areBudgetDefinitionWritesEnabled = (): boolean => true;
 
-export const areBudgetSnapshotGenerationWritesEnabled = (): boolean =>
-  process.env[BUDGET_SNAPSHOT_GENERATION_WRITES_ENV_VAR] === "true";
+export const areBudgetSnapshotGenerationWritesEnabled = (): boolean => true;
 
-export const areBudgetLifecycleWritesEnabled = (): boolean =>
-  process.env[BUDGET_LIFECYCLE_WRITES_ENV_VAR] === "true";
+export const areBudgetLifecycleWritesEnabled = (): boolean => true;
 
-export const areBudgetDeleteWritesEnabled = (): boolean =>
-  process.env[BUDGET_DELETE_WRITES_ENV_VAR] === "true";
+export const areBudgetDeleteWritesEnabled = (): boolean => true;
 
-export const areBudgetSnapshotOccurrenceWritesEnabled = (): boolean =>
-  process.env[BUDGET_SNAPSHOT_OCCURRENCE_WRITES_ENV_VAR] === "true";
+export const areBudgetSnapshotOccurrenceWritesEnabled = (): boolean => true;

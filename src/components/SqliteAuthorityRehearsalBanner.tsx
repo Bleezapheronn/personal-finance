@@ -20,6 +20,8 @@ export const sqliteAuthorityIndicatorClassName = (
 const SqliteAuthorityRehearsalBanner: React.FC = () => {
   const readiness = useSqliteAuthorityRehearsal();
 
+  if (readiness.mode === "http-sqlite") return null;
+
   if (
     !readiness.selected ||
     readiness.checking ||
@@ -63,6 +65,8 @@ const SqliteAuthorityRehearsalBanner: React.FC = () => {
 
 export const SqliteAuthorityToolbarStatus: React.FC = () => {
   const readiness = useSqliteAuthorityRehearsal();
+
+  if (readiness.mode === "http-sqlite") return null;
 
   if (
     !readiness.selected ||

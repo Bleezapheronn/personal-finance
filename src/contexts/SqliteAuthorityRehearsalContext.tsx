@@ -36,8 +36,9 @@ export const SqliteAuthorityRehearsalProvider: React.FC<{
   };
 
   useEffect(() => {
+    if (readiness.mode === "http-sqlite") return;
     void refresh();
-  }, []);
+  }, [readiness.mode]);
 
   const value = useMemo(
     () => ({ ...readiness, refresh }),

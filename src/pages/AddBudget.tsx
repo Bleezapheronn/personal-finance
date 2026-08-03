@@ -943,7 +943,7 @@ const AddBudget: React.FC = () => {
             `Linked snapshots protected: ${dryRun.linkedSnapshotsProtected}\n` +
             `Out-of-schedule linked snapshots retained: ${dryRun.outOfScheduleLinkedSnapshotsRetained}\n` +
             `Snapshots to generate: ${dryRun.snapshotsProposedForGeneration}\n\n` +
-            "This changes SQLite only. Rotate the authority checkpoint before restarting the API.",
+            "This changes SQLite only.",
         );
         if (!confirmed) return;
         const writeResponse = await writeBudgetLifecycle(
@@ -959,7 +959,7 @@ const AddBudget: React.FC = () => {
         if (!refreshed) throw new Error("budget_lifecycle_refresh_failed");
         setSuccessToastMessage(
           rehearsal.authoritativeMode
-            ? "Budget lifecycle updated authoritative SQLite. Rotate the checkpoint before API restart."
+            ? "Budget lifecycle updated in SQLite."
             : "Budget lifecycle updated disposable SQLite. Dexie was not changed.",
         );
         setShowSuccessToast(true);
@@ -998,7 +998,7 @@ const AddBudget: React.FC = () => {
           writtenId = Number(writeResponse.targetId);
           setSuccessToastMessage(
             rehearsal.authoritativeMode
-              ? "Budget definition updated in authoritative SQLite. Existing snapshots and Budget History were not changed."
+              ? "Budget definition updated in SQLite. Existing snapshots and Budget History were not changed."
               : "Budget definition updated in disposable SQLite. Existing snapshots and Budget History were not changed.",
           );
         } else {
@@ -1008,7 +1008,7 @@ const AddBudget: React.FC = () => {
           writtenId = Number(writeResponse.targetId);
           setSuccessToastMessage(
             rehearsal.authoritativeMode
-              ? "Budget definition created in authoritative SQLite. No snapshot or Budget History occurrence was generated."
+              ? "Budget definition created in SQLite. No snapshot or Budget History occurrence was generated."
               : "Budget definition created in disposable SQLite. No snapshot or Budget History occurrence was generated.",
           );
         }

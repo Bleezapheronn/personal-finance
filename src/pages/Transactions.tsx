@@ -960,8 +960,8 @@ const Transactions: React.FC = () => {
         } else {
           setSuccessMsg(
             result.rowsChanged === 2
-              ? "Transfer pair deleted from SQLite. Rotate the authority checkpoint before restart."
-              : "Transaction deleted from SQLite. Rotate the authority checkpoint before restart.",
+              ? "Transfer pair deleted from SQLite."
+              : "Transaction deleted from SQLite.",
           );
           setShowSuccessToast(true);
         }
@@ -1610,7 +1610,7 @@ const Transactions: React.FC = () => {
             sqliteDeletePlan
               ? `${
                   isTransferDelete ? "Verified transfer pair" : "Transaction"
-                }: ${sqliteDeletePlan.rowsProposedForDeletion ?? 0} row(s) will be deleted. This is permanent within the current SQLite checkpoint.`
+                }: ${sqliteDeletePlan.rowsProposedForDeletion ?? 0} row(s) will be deleted. This cannot be undone.`
               : isTransferDelete
               ? "Are you sure you want to delete this transfer transaction? This will remove both the outgoing and incoming transactions. This action cannot be undone."
               : "Are you sure you want to delete this transaction? This action cannot be undone."
@@ -1714,8 +1714,7 @@ const Transactions: React.FC = () => {
                 )}
                 {transactionsDeleteWriteActive && (
                   <p style={{ marginBottom: 0, color: "#666", fontSize: "0.85rem" }}>
-                    Delete is SQLite-only and permanent within the current
-                    checkpoint. Rotate the authority checkpoint before restart.
+                    Delete is permanent and cannot be undone.
                   </p>
                 )}
               </IonText>
@@ -2588,7 +2587,7 @@ const Transactions: React.FC = () => {
                                   const editTitle =
                                     transactionsHttpSelectedReadActive
                                       ? rehearsal.authoritativeMode
-                                        ? "Edit transaction in authoritative SQLite"
+                                        ? "Edit transaction"
                                         : txn.isTransfer
                                           ? "Edit atomic transfer pair in disposable SQLite"
                                           : transactionsCostBudgetWriteExperimentActive
