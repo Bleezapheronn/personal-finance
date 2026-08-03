@@ -69,6 +69,8 @@ import {
   createAccountInDisposableSqlite,
   updateAccountInDisposableSqlite,
 } from "../repositories/http/accountWriteExperiment";
+import { applyAccountImageChange } from "../repositories/http/accountImageWrite";
+import type { AccountImageChange } from "../types/accountImage";
 import {
   accountLifecycleErrorCode,
   dryRunAccountDelete,
@@ -136,7 +138,10 @@ const compareAccountsByExistingDisplayOrder = (
 const AccountsManagement: React.FC = () => {
   // Account state
   const [accounts, setAccounts] = useState<LocalAccount[]>([]);
-  const { imageUrls: accountImageUrls } = useAccountImageUrls(accounts);
+  const {
+    imageUrls: accountImageUrls,
+    invalidate: invalidateAccountImages,
+  } = useAccountImageUrls(accounts);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
 
@@ -196,25 +201,39 @@ const AccountsManagement: React.FC = () => {
   /**
    * handleEditAccount - Opens modal with account data
    */
-  const handleEditAccount = (account: Account) => {
-    setEditingAccount(account);
+  const handleEditAccount = async (account: Account) => {
+    let imageBlob: Blob | undefined;
+    if (account.id) {
+      try {
+        imageBlob = await getSelectedReadRepositories(selectedBackend).accounts.getImage(
+          account.id,
+        );
+      } catch (error) {
+        console.warn("Couldn't load account image for editing:", error);
+        setToastMessage("Couldn't load the account image. You can still edit the account.");
+        setShowToast(true);
+      }
+    }
+    setEditingAccount({ ...account, imageBlob });
     setShowAddAccountModal(true);
   };
 
   const handleSqliteAccountSave = async (
     values: AccountFormValues,
     currentAccount?: Account | null,
-  ) => {
+  ): Promise<{ accountId: number }> => {
     try {
+      let result;
       if (currentAccount?.id) {
-        await updateAccountInDisposableSqlite(currentAccount.id, values);
+        result = await updateAccountInDisposableSqlite(currentAccount.id, values);
         setToastMessage("Account updated successfully!");
       } else {
-        await createAccountInDisposableSqlite(values);
+        result = await createAccountInDisposableSqlite(values);
         setToastMessage("Account added successfully!");
       }
       await fetchAccounts();
       setShowToast(true);
+      return { accountId: result.targetId as number };
     } catch (error) {
       setToastMessage("Couldn't save the account. Try again.");
       setShowToast(true);
@@ -297,6 +316,15 @@ const AccountsManagement: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSqliteAccountImageSave = async (
+    accountId: number,
+    change: AccountImageChange,
+  ): Promise<void> => {
+    await applyAccountImageChange(accountId, change);
+    invalidateAccountImages();
+    await fetchAccounts();
   };
 
   /**
@@ -545,6 +573,11 @@ const AccountsManagement: React.FC = () => {
 
         {/* MODALS */}
         <AddAccountModal
+            key={
+              showAddAccountModal
+                ? `account-modal-${editingAccount?.id ?? "new"}`
+                : "account-modal-closed"
+            }
             isOpen={showAddAccountModal}
             onClose={() => {
               setShowAddAccountModal(false);
@@ -553,7 +586,7 @@ const AccountsManagement: React.FC = () => {
             onAccountAdded={() => handleAccountSaved(!!editingAccount)}
             editingAccount={editingAccount}
             onSave={handleSqliteAccountSave}
-            imageEditingEnabled={false}
+            onImageSave={handleSqliteAccountImageSave}
           />
 
         {/* FAB BUTTON FOR ADDING ACCOUNTS */}

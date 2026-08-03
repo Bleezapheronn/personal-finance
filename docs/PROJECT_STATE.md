@@ -43,6 +43,8 @@ Keep backup files outside the repository and protect them as financial data.
 
 Use focused tests and TypeScript checks for changed workflows. Generated
 databases, tokens, backups, logs, and financial rows must remain outside Git.
-Account-image mutation and SMS parsing/import remain separate, deliberately
-incomplete features; ordinary account-image display and SMS template CRUD are
-supported.
+Account images support display, selection, replacement, and removal through
+the authenticated local SQLite API. Account fields save first; a separate
+dry-run-confirmed image mutation can be retried without repeating that Account
+save. A missing image is a normal read result. SMS parsing/import remains a
+separate, deliberately incomplete feature; SMS template CRUD is supported.

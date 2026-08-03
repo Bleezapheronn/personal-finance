@@ -7,6 +7,7 @@ interface SelectableDropdownProps {
   value: string | undefined;
   options: Array<{ value: string; label: string }>;
   onValueChange: (value: string) => void;
+  disabled?: boolean;
 }
 
 export const SelectableDropdown: React.FC<SelectableDropdownProps> = ({
@@ -15,6 +16,7 @@ export const SelectableDropdown: React.FC<SelectableDropdownProps> = ({
   value,
   options,
   onValueChange,
+  disabled = false,
 }) => {
   const valueIndex = options.findIndex((opt) => opt.value === value);
 
@@ -34,6 +36,7 @@ export const SelectableDropdown: React.FC<SelectableDropdownProps> = ({
           onValueChange(options[selectedId].value);
         }
       }}
+      disabled={disabled}
     />
   );
 };

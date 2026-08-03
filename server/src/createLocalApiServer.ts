@@ -85,6 +85,13 @@ import {
   validateAccountLifecyclePayload,
 } from "./lib/accountLifecycle.js";
 import {
+  accountImageMutationDryRun,
+  accountImageMutationRequestErrorResponse,
+  accountImageMutationWrite,
+  AccountImageMutationRequestError,
+  validateAccountImageMutationPayload,
+} from "./lib/accountImageMutation.js";
+import {
   categoryLifecycleDisabledResponse,
   categoryLifecycleDryRun,
   categoryLifecycleRealWrite,
@@ -1801,6 +1808,89 @@ for (const action of ["delete", "merge"] as const) {
         return reply
           .code(500)
           .send({ ok: false, code: `category_${action}_write_failed` });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+}
+
+const accountImageErrorStatus = (code: string | undefined): number =>
+  code === "account_not_found" || code === "account_image_not_found"
+    ? 404
+    : code === "account_image_plan_stale" || code === "account_image_unchanged"
+      ? 409
+      : 400;
+
+for (const action of ["set", "remove"] as const) {
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/accounts/images/dry-run/${action}`,
+    { bodyLimit: 7 * 1024 * 1024 },
+    async (request, reply) => {
+      let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+      try {
+        opened = openConfiguredReadOnlyDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code: statusCode === 503 ? "sqlite_unavailable" : "account_image_dry_run_failed",
+        });
+      }
+      if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+      try {
+        const response = accountImageMutationDryRun(opened.db, request.body, action);
+        return response.ok ? response : reply.code(accountImageErrorStatus(response.code)).send(response);
+      } catch (error) {
+        if (error instanceof AccountImageMutationRequestError) {
+          return reply.code(error.statusCode).send(
+            accountImageMutationRequestErrorResponse(action, error.code),
+          );
+        }
+        return reply.code(500).send({ ok: false, code: "account_image_dry_run_failed" });
+      } finally {
+        opened.db.close();
+      }
+    },
+  );
+
+  server.post<{ Body: unknown }>(
+    `/prototype/repositories/accounts/images/write/${action}`,
+    { bodyLimit: 7 * 1024 * 1024 },
+    async (request, reply) => {
+      try {
+        validateAccountImageMutationPayload(request.body, action, true);
+      } catch (error) {
+        if (error instanceof AccountImageMutationRequestError) {
+          return reply.code(error.statusCode).send(
+            accountImageMutationRequestErrorResponse(action, error.code),
+          );
+        }
+        return reply.code(400).send(
+          accountImageMutationRequestErrorResponse(action, "account_image_write_invalid"),
+        );
+      }
+      let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+      try {
+        opened = openConfiguredWritableDatabase();
+      } catch (error) {
+        const statusCode = sqliteUnavailableStatusCode(error);
+        return reply.code(statusCode).send({
+          ok: false,
+          code: statusCode === 503 ? "sqlite_unavailable" : "account_image_write_failed",
+        });
+      }
+      if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+      try {
+        const response = accountImageMutationWrite(opened.db, request.body, action);
+        return response.ok ? response : reply.code(accountImageErrorStatus(response.code)).send(response);
+      } catch (error) {
+        if (error instanceof AccountImageMutationRequestError) {
+          return reply.code(error.statusCode).send(
+            accountImageMutationRequestErrorResponse(action, error.code),
+          );
+        }
+        return reply.code(500).send({ ok: false, code: "account_image_write_failed" });
       } finally {
         opened.db.close();
       }
@@ -3639,6 +3729,7 @@ for (const action of smsTemplateActions) {
 server.get<{ Params: { id: string } }>(
   "/prototype/repositories/accounts/:id/image",
   async (request, reply) => {
+    reply.header("cache-control", "no-store");
     let id: number;
     try {
       id = parsePositiveInteger(request.params.id, "account_id");
@@ -3676,7 +3767,6 @@ server.get<{ Params: { id: string } }>(
       }
       return reply
         .header("content-type", image.mimeType)
-        .header("cache-control", "private, max-age=300")
         .header("x-content-type-options", "nosniff")
         .send(image.bytes);
     } catch {

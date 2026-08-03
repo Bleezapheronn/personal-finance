@@ -13,7 +13,7 @@ export interface AccountWriteInput {
   creditLimit?: number;
 }
 
-interface AccountWriteResponse {
+export interface AccountWriteResponse {
   ok: boolean;
   code?: string;
   entity: "account";
@@ -25,6 +25,7 @@ interface AccountWriteResponse {
   validationErrors?: string[];
   warnings?: string[];
   resultCodes?: string[];
+  targetId?: number | null;
 }
 
 const envValue = (key: string): string | undefined => {
@@ -75,6 +76,12 @@ const assertWritePassed = (
     throw new LocalApiError(
       response.code ?? `account_${action}_write_failed`,
       "Account write failed.",
+    );
+  }
+  if (typeof response.targetId !== "number" || !Number.isInteger(response.targetId) || response.targetId <= 0) {
+    throw new LocalApiError(
+      response.code ?? `account_${action}_target_missing`,
+      "Account write did not return its identifier.",
     );
   }
   return response;

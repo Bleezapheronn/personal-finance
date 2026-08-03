@@ -33,6 +33,8 @@
     "test:recipient-lifecycle": "tsx src/testRecipientLifecycle.ts",
     "test:account-lifecycle": "tsx src/testAccountLifecycle.ts",
     "test:account-images": "tsx src/testAccountImages.ts",
+    "test:account-image-mutation": "tsx src/testAccountImageMutation.ts",
+    "test:account-image-mutation-api": "tsx src/testAccountImageMutationApi.ts",
     "test:category-lifecycle": "tsx src/testCategoryLifecycle.ts",
     "test:bucket-lifecycle": "tsx src/testBucketLifecycle.ts",
     "test:management-lifecycle-writes": "tsx src/testManagementLifecycleWrites.ts",

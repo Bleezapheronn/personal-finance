@@ -115,6 +115,7 @@ export const localApiGetBlob = async (
 ): Promise<Blob | undefined> => {
   const config = getLocalApiClientConfig();
   const response = await fetch(buildUrl(config.baseUrl, pathname, undefined), {
+    cache: "no-store",
     headers: {
       [TOKEN_HEADER_NAME]: config.token,
     },

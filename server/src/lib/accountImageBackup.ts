@@ -24,10 +24,9 @@ export class AccountImageDecodeError extends Error {
   }
 }
 
-export const decodeBackupAccountImage = (
-  record: BackupRecord,
+export const decodeSerializedAccountImage = (
+  value: unknown,
 ): DecodedAccountImage | undefined => {
-  const value = record.imageBlob;
   if (value === undefined || value === null) {
     return undefined;
   }
@@ -61,12 +60,19 @@ export const decodeBackupAccountImage = (
   }
 
   const bytes = Buffer.from(value.base64, "base64");
+  if (bytes.length === 0) {
+    throw new AccountImageDecodeError("account_image_empty");
+  }
   if (bytes.length !== value.size) {
     throw new AccountImageDecodeError("account_image_size_mismatch");
   }
 
   return { bytes, mimeType };
 };
+
+export const decodeBackupAccountImage = (
+  record: BackupRecord,
+): DecodedAccountImage | undefined => decodeSerializedAccountImage(record.imageBlob);
 
 export const accountImageMaxBytes = MAX_ACCOUNT_IMAGE_BYTES;
 

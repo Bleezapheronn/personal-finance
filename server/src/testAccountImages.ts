@@ -41,6 +41,25 @@ const testDecoder = (): void => {
       "decoder_size_error_mismatch",
     );
   }
+
+  try {
+    decodeBackupAccountImage({
+      ...imageRecord,
+      imageBlob: {
+        __type: "Blob",
+        mimeType: "image/png",
+        size: 0,
+        base64: "",
+      },
+    });
+    throw new Error("decoder_empty_validation_missing");
+  } catch (error) {
+    expect(
+      error instanceof AccountImageDecodeError &&
+        error.code === "account_image_empty",
+      "decoder_empty_error_mismatch",
+    );
+  }
 };
 
 const createFixtureDatabase = (databasePath: string): Database.Database => {

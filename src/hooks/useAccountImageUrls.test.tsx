@@ -56,4 +56,50 @@ describe("useAccountImageUrls", () => {
     act(() => unmount());
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:account-image");
   });
+
+  test("invalidates and replaces cached image URLs after an image mutation", async () => {
+    let version = 0;
+    createObjectUrl.mockImplementation(() => `blob:account-image-${++version}`);
+    getImage.mockResolvedValue(new Blob(["image"], { type: "image/png" }));
+
+    const { result, unmount } = renderHook(() => useAccountImageUrls([{ id: 1 }]));
+
+    await waitFor(() => {
+      expect(result.current.imageUrls.get(1)).toBe("blob:account-image-1");
+    });
+
+    act(() => result.current.invalidate());
+
+    await waitFor(() => {
+      expect(result.current.imageUrls.get(1)).toBe("blob:account-image-2");
+    });
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:account-image-1");
+
+    act(() => unmount());
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:account-image-2");
+  });
+
+  test("clears and revokes a removed image before the refreshed no-image read completes", async () => {
+    getImage
+      .mockResolvedValueOnce(new Blob(["image"], { type: "image/png" }))
+      .mockResolvedValueOnce(undefined);
+
+    const { result, unmount } = renderHook(() => useAccountImageUrls([{ id: 1 }]));
+
+    await waitFor(() => {
+      expect(result.current.imageUrls.get(1)).toBe("blob:account-image");
+    });
+
+    act(() => result.current.invalidate());
+
+    expect(result.current.imageUrls.has(1)).toBe(false);
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:account-image");
+
+    await waitFor(() => {
+      expect(result.current.imageUrls.has(1)).toBe(false);
+      expect(result.current.errorCodes.has(1)).toBe(false);
+    });
+
+    act(() => unmount());
+  });
 });

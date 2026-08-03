@@ -15,6 +15,7 @@ interface SearchableFilterSelectProps {
   value: number | undefined;
   options: Array<{ id: number | undefined; name: string }>;
   onIonChange: (value: number | undefined) => void;
+  disabled?: boolean;
 }
 
 export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
@@ -23,6 +24,7 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
   value,
   options,
   onIonChange,
+  disabled = false,
 }) => {
   const [searchText, setSearchText] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -66,18 +68,21 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
   }, [isOpen]);
 
   const handleSelect = (id: number | undefined) => {
+    if (disabled) return;
     onIonChange(id);
     setIsOpen(false);
     setSearchText("");
   };
 
   const handleOpen = () => {
+    if (disabled) return;
     setIsOpen(true);
     setSearchText("");
   };
 
   // NEW: Handle clear button click
   const handleClear = (e: React.MouseEvent) => {
+    if (disabled) return;
     e.preventDefault();
     e.stopPropagation();
     onIonChange(undefined);
@@ -86,7 +91,7 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
   };
 
   return (
-    <div ref={containerRef} style={{ position: "relative" }}>
+    <div ref={containerRef} style={{ position: "relative" }} aria-disabled={disabled}>
       {/* Closed State - Looks like a native select */}
       {!isOpen && (
         <div
@@ -96,7 +101,8 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
             border: "1px solid var(--ion-color-medium)",
             borderRadius: "4px",
             backgroundColor: "var(--ion-background-color)",
-            cursor: "pointer",
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled ? 0.6 : 1,
             minHeight: "44px",
             display: "flex",
             alignItems: "center",
@@ -120,6 +126,7 @@ export const SearchableFilterSelect: React.FC<SearchableFilterSelectProps> = ({
               <button
                 type="button"
                 onClick={handleClear}
+                disabled={disabled}
                 style={{
                   position: "absolute", // ADD THIS - remove from flex flow
                   left: "-20px",

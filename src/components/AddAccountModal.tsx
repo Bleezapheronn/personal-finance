@@ -15,6 +15,7 @@ import {
 } from "@ionic/react";
 import { close, trash } from "ionicons/icons";
 import { Account } from "../db";
+import type { AccountImageChange } from "../types/accountImage";
 import { SelectableDropdown } from "./SelectableDropdown";
 
 interface AddAccountModalProps {
@@ -25,6 +26,10 @@ interface AddAccountModalProps {
   onSave?: (
     values: AccountFormValues,
     editingAccount?: Account | null,
+  ) => Promise<{ accountId: number }>;
+  onImageSave?: (
+    accountId: number,
+    change: AccountImageChange,
   ) => Promise<void>;
   imageEditingEnabled?: boolean;
 }
@@ -44,6 +49,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
   onAccountAdded,
   editingAccount,
   onSave,
+  onImageSave,
   imageEditingEnabled = true,
 }) => {
   const [accountName, setAccountName] = useState("");
@@ -55,6 +61,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
   const [imageRemovalIntent, setImageRemovalIntent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [savedAccountId, setSavedAccountId] = useState<number | null>(null);
   const previewUrlRef = useRef<string | null>(null);
 
   const resetForm = useCallback(() => {
@@ -70,9 +77,14 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
     setPreviewUrl(null);
     setImageRemovalIntent(false);
     setErrorMsg("");
+    setSavedAccountId(null);
   }, []);
 
   useEffect(() => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
     if (isOpen && editingAccount) {
       setAccountName(editingAccount.name);
       setCurrency(editingAccount.currency || "KES");
@@ -89,10 +101,18 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
       setImageFile(null);
       setImageRemovalIntent(false);
       setErrorMsg("");
+      setSavedAccountId(null);
     } else if (isOpen) {
       resetForm();
     }
   }, [isOpen, editingAccount, resetForm]);
+
+  useEffect(() => () => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+  }, []);
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] ?? null;
@@ -142,31 +162,53 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
       }
     }
 
+    let accountFieldsSaved = savedAccountId !== null;
+
     try {
       setLoading(true);
       if (!onSave) {
         throw new Error("Couldn't save this account. Try again.");
       }
 
-      await onSave(
-        {
-          name: accountName.trim(),
-          currency: currency || "KES",
-          isCredit,
-          creditLimit:
-            isCredit && creditLimit ? parseFloat(creditLimit) : undefined,
-        },
-        editingAccount,
-      );
+      let accountId = savedAccountId;
+      if (accountId === null) {
+        const result = await onSave(
+          {
+            name: accountName.trim(),
+            currency: currency || "KES",
+            isCredit,
+            creditLimit:
+              isCredit && creditLimit ? parseFloat(creditLimit) : undefined,
+          },
+          editingAccount,
+        );
+        accountId = result.accountId;
+        accountFieldsSaved = true;
+        setSavedAccountId(accountId);
+      }
+
+      const imageChange = imageFile
+        ? ({ action: "set", file: imageFile } as const)
+        : imageRemovalIntent
+          ? ({ action: "remove" } as const)
+          : undefined;
+      if (imageChange) {
+        if (!onImageSave) {
+          throw new Error("Account saved, but image editing is unavailable.");
+        }
+        await onImageSave(accountId, imageChange);
+      }
 
       resetForm();
       onClose();
     } catch (error) {
       console.error("Error saving account:", error);
       setErrorMsg(
-        onSave && error instanceof Error
-          ? error.message
-          : "Failed to save account",
+        accountFieldsSaved
+          ? "Account saved, but the image change was not applied. Retry the image or cancel it."
+          : onSave && error instanceof Error
+            ? error.message
+            : "Failed to save account",
       );
     } finally {
       setLoading(false);
@@ -177,6 +219,8 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
     resetForm();
     onClose();
   };
+
+  const accountFieldsLocked = loading || savedAccountId !== null;
 
   return (
     <IonModal isOpen={isOpen} onDidDismiss={handleClose}>
@@ -212,7 +256,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                   placeholder="e.g., M-Pesa, PayPal, Fuliza"
                   value={accountName}
                   onChange={(e) => setAccountName(e.target.value)}
-                  disabled={loading}
+                  disabled={accountFieldsLocked}
                   style={{
                     padding: "12px",
                     border: "1px solid var(--ion-color-medium)",
@@ -242,6 +286,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                   onValueChange={(selectedCurrency) => {
                     setCurrency(selectedCurrency);
                   }}
+                  disabled={accountFieldsLocked}
                 />
               </div>
             </IonCol>
@@ -258,7 +303,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                   id="isCredit"
                   checked={isCredit}
                   onChange={(e) => setIsCredit(e.target.checked)}
-                  disabled={loading}
+                  disabled={accountFieldsLocked}
                   style={{ width: "18px", height: "18px", cursor: "pointer" }}
                 />
                 <label
@@ -282,7 +327,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                     placeholder="e.g., 50000"
                     value={creditLimit}
                     onChange={(e) => setCreditLimit(e.target.value)}
-                    disabled={loading}
+                    disabled={accountFieldsLocked}
                     inputMode="decimal"
                     step="0.01"
                     style={{
@@ -388,7 +433,11 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
           <IonRow>
             <IonCol>
               <IonButton expand="block" onClick={handleSave} disabled={loading}>
-                {editingAccount ? "Update Account" : "Add Account"}
+                {savedAccountId !== null
+                  ? "Retry image"
+                  : editingAccount
+                    ? "Update Account"
+                    : "Add Account"}
               </IonButton>
             </IonCol>
           </IonRow>

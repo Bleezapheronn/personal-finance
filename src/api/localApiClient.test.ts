@@ -28,6 +28,7 @@ describe("localApiGetBlob", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:3147/prototype/repositories/accounts/2/image",
       expect.objectContaining({
+        cache: "no-store",
         headers: { "x-personal-finance-token": "test-token" },
       }),
     );
