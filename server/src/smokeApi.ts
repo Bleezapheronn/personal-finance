@@ -1087,7 +1087,7 @@ const buildChecks = (
       run: async () => {
         const { status, json } = await requestJson(baseUrl, "/metadata", authedOptions);
         expectStatus(status, 200);
-        expect(json.mode === "prototype" && json.readonly === true, "unexpected_metadata_response");
+        expect(json.mode === "local" && json.readonly === false, "unexpected_metadata_response");
       },
     },
     {
@@ -1099,37 +1099,6 @@ const buildChecks = (
         );
         expectStatus(status, 401);
         expect(json.error === "unauthorized", "unexpected_capabilities_unauthorized_response");
-      },
-    },
-    {
-      name: "authority readiness fails without token",
-      run: async () => {
-        const { status, json } = await requestJson(
-          baseUrl,
-          "/prototype/sqlite/authority-readiness",
-        );
-        expectStatus(status, 401);
-        expect(json.error === "unauthorized", "unexpected_authority_unauthorized_response");
-      },
-    },
-    {
-      name: "authority readiness is disabled and redacted by default",
-      run: async () => {
-        const { status, json } = await requestJson(
-          baseUrl,
-          "/prototype/sqlite/authority-readiness",
-          authedOptions,
-        );
-        expectStatus(status, 200);
-        expect(json.authorityEnabled === false, "authority_enabled_by_default");
-        expect(json.ready === false, "authority_ready_by_default");
-        expect(json.authoritative === false, "authority_marked_authoritative_by_default");
-        expect(Array.isArray(json.unsupportedOperations), "authority_unsupported_missing");
-        const serialized = JSON.stringify(json);
-        expect(!serialized.includes(token), "authority_echoed_token");
-        for (const forbiddenKey of ["sqlitePath", "manifestPath", "backupPath", "filePath", "token", "environment"]) {
-          expect(!serialized.includes(forbiddenKey), `authority_exposed_${forbiddenKey}`);
-        }
       },
     },
     {

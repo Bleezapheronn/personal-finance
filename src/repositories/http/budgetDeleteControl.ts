@@ -18,7 +18,7 @@ export const budgetDeleteBlockedMessage = (
 export const budgetDeleteConfirmationMessage = (
   plan: BudgetDeleteWriteResponse,
 ): string =>
-  `This permanently removes the Budget and ${plan.snapshotCount} unlinked snapshot(s) from SQLite. Transaction dependencies: ${plan.transactionDependencyCount}. No transactions will be unlinked or deleted. Rotate the authority checkpoint before restart.`;
+  `This permanently removes the Budget and ${plan.snapshotCount} unlinked snapshot(s) from SQLite. Transaction dependencies: ${plan.transactionDependencyCount}. No transactions will be unlinked or deleted.`;
 
 export const budgetDeleteRefreshFailureMessage = (
   sqliteMutated: boolean,

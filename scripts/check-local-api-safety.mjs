@@ -7,16 +7,6 @@ const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
 const steps = [
   {
-    label: "Authority production test-hook guard",
-    cwd: repoRoot,
-    args: ["run", "check:authority-production-test-hooks"],
-  },
-  {
-    label: "Authority write-boundary guard",
-    cwd: repoRoot,
-    args: ["run", "check:authority-write-boundary"],
-  },
-  {
     label: "Selected-read import guard",
     cwd: repoRoot,
     args: ["run", "check:selected-read-imports"],

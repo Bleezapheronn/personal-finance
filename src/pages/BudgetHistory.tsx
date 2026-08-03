@@ -55,12 +55,11 @@ import { CompleteBudgetModal } from "../components/CompleteBudgetModal";
 import { EditSnapshotModal } from "../components/EditSnapshotModal";
 import { LinkPastTransactionsModal } from "../components/LinkPastTransactionsModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import { SelectedReadPreviewCard } from "../components/dev/SelectedReadPreviewCard";
 import { budgetRepository } from "../repositories";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityControlledBackend,
+  isLocalSqliteBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
@@ -77,7 +76,7 @@ import {
   stringValue,
 } from "../utils/devPreview";
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
+import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import {
   visibleDescriptionSuggestions,
   type DescriptionSuggestion,
@@ -514,11 +513,11 @@ const BudgetHistory: React.FC = () => {
   const budgetHistoryReadExperimentEnabled =
     isBudgetHistoryReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
-  const rehearsalSelected = isSqliteAuthorityControlledBackend(repositoryBackend);
+  const rehearsalSelected = isLocalSqliteBackend(repositoryBackend);
   const budgetHistoryHttpReadonlyExperimentActive =
     rehearsalSelected ||
     (budgetHistoryReadExperimentEnabled && repositoryBackend === "http-readonly");
-  const authority = useSqliteAuthorityRehearsal();
+  const authority = useLocalSqliteRuntime();
   const occurrenceWritesActive =
     budgetHistoryHttpReadonlyExperimentActive &&
     authority.ready &&
@@ -1845,7 +1844,6 @@ const BudgetHistory: React.FC = () => {
             <IonBackButton defaultHref="/budget" />
           </IonButtons>
           <IonTitle>Budget History</IonTitle>
-          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 

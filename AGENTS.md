@@ -5,7 +5,7 @@
 - The local SQLite API and its authoritative profile are the current source of truth.
 - Dexie/IndexedDB is a legacy compatibility path. Do not add new authoritative writes to Dexie.
 - The local API is authenticated, capability-gated, and intended for local use.
-- Read and mutation operations must use the existing repository and authority-operation contracts.
+- Read and mutation operations must use the existing repository contracts.
 - See `docs/PROJECT_STATE.md` for the current project state and operating workflow.
 
 ## Critical data safety rules

@@ -66,13 +66,12 @@ import {
 } from "../utils/budgetCsvExport";
 import { ensureBudgetSnapshotCoverage } from "../utils/budgetSnapshots";
 import { ImportModal } from "../components/ImportModal";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityControlledBackend,
+  isLocalSqliteBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
+import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import { isBudgetsWriteExperimentEnabled } from "../repositories/http/budgetDefinitionWriteExperiment";
 import {
@@ -599,8 +598,8 @@ const BudgetPage: React.FC = () => {
   const history = useHistory();
   const budgetReadExperimentEnabled = isBudgetReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
-  const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityControlledBackend(repositoryBackend);
+  const rehearsal = useLocalSqliteRuntime();
+  const rehearsalSelected = isLocalSqliteBackend(repositoryBackend);
   const budgetDefinitionWriteExperimentActive =
     (repositoryBackend === "http-readonly" &&
       isBudgetsWriteExperimentEnabled()) ||
@@ -2319,7 +2318,6 @@ const BudgetPage: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Budget</IonTitle>
-          <SqliteAuthorityToolbarStatus />
           <IonButtons slot="end">
             <IonButton
               onClick={() => history.push("/budget/history")}

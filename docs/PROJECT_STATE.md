@@ -1,107 +1,48 @@
 # Project State
 
-Updated: 2026-07-30
+Personal Finance is a single-user local application. Its local SQLite database
+is the runtime source of truth; Dexie/IndexedDB remains legacy compatibility
+only and receives no new authoritative writes.
 
-## Authority
+## Normal use
 
-The local SQLite API is authoritative for the current main application runtime.
-The live authority profile and SQLite database are operational assets outside
-this repository. Dexie/IndexedDB remains as a legacy compatibility path and
-must not receive new authoritative writes.
+Start the application by double-clicking the Personal Finance shortcut. One
+terminal opens and owns the local API and frontend processes. The shortcut does
+not open a browser. Closing that terminal, ending its processes, or restarting
+the computer does not require cleanup before the next launch.
 
-Accounts, Buckets/Categories, Recipients, and SMS Import Templates use this
-normal authoritative path for their supported management actions. Their former
-selected-read and per-page write-experiment controls are historical migration
-material, not runtime product controls.
+The launcher reads the runtime configuration only to locate the SQLite database,
+local token file, and loopback ports. It does not perform API health, database
+integrity, logical verification, or readiness checks before starting the
+frontend. Runtime failures are shown by the application or reported in the
+terminal.
 
-SQLite is still a local, controlled runtime. It is not a reason to expose the
-API to a network or to treat browser tokens as production credentials.
+## Data safety
 
-## Operating workflow
+- The local API is loopback-only and requires its local token for requests.
+- Existing repository write contracts validate input and preserve transaction,
+  transfer, budget, and snapshot invariants.
+- Expenses are negative; income is positive. Transfers remain paired through
+  `transferPairId`. `budgetSnapshotId` is canonical when present.
+- Do not modify the SQLite schema, budget snapshot history, or live financial
+  data without a separately reviewed change.
 
-Use the documented profile-specific launcher outside Git. Before starting an
-authoritative runtime, verify its profile and checkpoint lineage with the
-authority operations `status`, `verify`, and `start --dry-run` commands.
+## Backups and restore
 
-Use `authority:ops stop` for a clean runtime stop; closing a browser tab does
-not stop the API or supervisor. In the foreground unified runtime, Ctrl+C is
-owned by the supervisor and enters this same authenticated shutdown path;
-supervisor-owned API and Vite children ignore inherited console interrupts.
-The authenticated stop closes the authoritative write gate, drains accepted
-requests, closes Fastify and SQLite, writes the clean receipt from the stopped
-database, and requires the exact API child to exit successfully before
-automatic checkpointing is eligible. An unexpected Vite exit takes the abort
-path, never checkpoints automatically, preserves the changed database and
-prior profile, and requires explicit review. Confirm the authority lock and
-SQLite WAL/SHM files are absent before backup, restore, or rotation
-operations. Controlled manual Ctrl+C acceptance completed successfully on
-2026-07-29; standalone API and Vite processes are outside this contract.
-Create a fresh verified checkpoint before operational changes. Use disposable
-copies for acceptance tests and never open a checkpoint backup as a writable
-runtime.
+Automatic backups are configured in Settings and run independently through
+Windows Task Scheduler. Each run creates a native SQLite backup, verifies it,
+verifies a disposable restore, and publishes only the verified pair. Retention
+keeps one verified daily backup for the latest 30 days and one verified monthly
+backup thereafter.
 
-## Current safety model
+The standalone backup and restore commands operate on explicit paths. Restore
+always targets a fresh SQLite output path; it never replaces the live database.
+Keep backup files outside the repository and protect them as financial data.
 
-- Mutations are authenticated, capability-gated, dry-run-first, explicitly confirmed, and exact-targeted.
-- Live authoritative mutations are serialized under `BEGIN IMMEDIATE` and a
-  trusted canonical logical-state chain. Mutation counts alone are not trust
-  evidence. Direct SQLite changes irreversibly contaminate the session, prevent
-  automatic checkpointing, preserve the changed database for review, and leave
-  the prior profile authoritative.
-- Clean receipts, stopped active state, safety backups, and checkpoint
-  candidates must agree on the final logical fingerprint in addition to the
-  existing physical fingerprint, quiescence, and lineage checks.
-- Atomic operations must preserve transaction, transfer, budget, and snapshot invariants.
-- Budget snapshot generation, pruning, repair, and direction/sign changes remain deliberate lifecycle operations.
-- Focused tests are preferred; unrelated refactors and broad data audits are out of scope for ordinary changes.
-- Generated databases, backups, manifests, reports, logs, tokens, and financial rows stay outside Git.
+## Development
 
-## Migration completion definition
-
-The SQLite migration is operationally complete when the authoritative profile,
-checkpoint workflow, main-app reads, supported writes, lifecycle operations,
-focused tests, safety checks, and accepted browser workflows are all verified
-against disposable fixtures or the explicitly approved live checkpoint process.
-SQLite authority does not authorize unreviewed new mutation paths.
-
-Transaction entry uses authoritative success terminology and refreshes edits
-from confirmed SQLite data while preserving the edit route. Cached Ionic
-Add/Edit lifecycle handling explicitly resets transient form and autocomplete
-state. Description-history prefill uses ordinary descriptions and verified
-reciprocal transfer pairs only; fuzzy, frequency-ranked description
-autocomplete is operational across transaction and budget entry, filter, and
-budget-history workflows.
-
-## Known legacy remnants
-
-Dexie imports, compatibility repository paths, legacy schema fields, and
-historical migration terminology may remain in the codebase. They are not
-evidence that Dexie is authoritative. New work must use SQLite authority
-contracts and must not silently fall back to Dexie for an authoritative write.
-
-## Deferred work
-
-- Verified automatic SQLite backups are operational. Destination and daily time are configurable in Settings, and Windows Task Scheduler runs the standalone worker while the app is closed.
-- Retention keeps one verified daily backup for the latest 30 days and one verified monthly backup thereafter. Authority checkpoints remain separate and are never pruned.
-- Backups are plain SQLite and are not encrypted. OneDrive manages cloud synchronization; the app does not verify cloud sync.
-- Restore has been verified to a disposable database. Automatic live restore remains out of scope.
-- Budget model, direction, and sign semantics remain deferred unless separately approved.
-- Future Dexie retirement requires a separate plan, compatibility review, and rollback strategy.
-- Account image mutation remains disabled in authoritative management because it
-  needs a separate guarded image-storage workflow; image display remains
-  supported.
-- SMS template parsing/import remains disabled because it requires a separate
-  dry-run financial-transaction workflow; ordinary template CRUD is supported.
-
-## Data handling
-
-Do not place secrets, tokens, financial rows, backup contents, generated
-databases, manifests, reports, or logs in the repository or documentation.
-Use safe summaries and aggregate counts when documenting verification.
-
-## Related documentation
-
-- `docs/sqlite-main-app-feature-parity-final-report.md` is a historical migration report, not the living project state.
-- `docs/local-api-frontend-adapter-notes.md` and
-  `docs/selected-read-migration-readiness-audit.md` are historical migration
-  records, not normal runtime operating instructions.
+Use focused tests and TypeScript checks for changed workflows. Generated
+databases, tokens, backups, logs, and financial rows must remain outside Git.
+Account-image mutation and SMS parsing/import remain separate, deliberately
+incomplete features; ordinary account-image display and SMS template CRUD are
+supported.

@@ -35,8 +35,7 @@ import type {
   RecipientDto,
   TransactionDto,
 } from "../repositories/http/types";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
+import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import {
   dryRunBudgetSnapshotOccurrence,
   writeBudgetSnapshotOccurrence,
@@ -129,7 +128,7 @@ const TransactionDetails: React.FC = () => {
   const navigate = useHistory();
   const backend = getRepositoryBackend();
   const httpSelected = isHttpSelectedReadRepositoryBackend(backend);
-  const authority = useSqliteAuthorityRehearsal();
+  const authority = useLocalSqliteRuntime();
   const [txn, setTxn] = useState<Transaction | null>(null);
   const [history, setHistory] = useState<Transaction[]>([]);
   const [category, setCategory] = useState<Category | null>(null);
@@ -330,7 +329,6 @@ const TransactionDetails: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Transaction Details</IonTitle>
-          <SqliteAuthorityToolbarStatus />
           <IonButtons slot="end">
             {httpSelected && occurrenceWritesActive && (
               <IonButton

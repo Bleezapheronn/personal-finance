@@ -1,134 +1,47 @@
 # Personal Finance
 
-An offline-first personal finance tracker built from a spreadsheet-based accounting and budget workflow. The app is local-first and private by default: the local SQLite API and its authoritative profile are the current source of truth, and no cloud sync is required for normal use.
+Personal Finance is a private, local-first finance tracker. The local SQLite
+database and authenticated loopback API are the runtime source of truth; Dexie
+is retained only for legacy compatibility.
 
-This project tracks transactions, budgets, budget snapshots, accounts, recipients, categories, SMS import templates, reports, and safety/debug tooling in one Ionic React app.
+## Normal use
 
-## Stack
+Double-click the Personal Finance shortcut. It opens one terminal that starts
+the API and frontend together. It does not open a browser automatically. You
+can close the terminal, end its processes, or restart the computer and launch
+again normally.
 
-- Ionic React 8
-- React 19
-- React Router 5
-- Vite 5
-- TypeScript
-- SQLite local API (authoritative runtime)
-- Dexie / IndexedDB (legacy compatibility)
-- Capacitor
-- Recharts
-- Vitest and Cypress
+The launcher uses runtime configuration for the SQLite path, token file, and
+loopback ports. It deliberately does not run health, integrity, readiness, or
+recovery gates before opening the frontend.
 
-## Main App Areas
+## Backups and restore
 
-- **Transactions**: add, edit, delete, filter, import/export CSV, and manage expenses, income, and transfers.
-- **Budget**: manage recurring and one-time budget items, budget occurrences, completion state, and historical budget snapshots.
-- **Reports**: review spending and income summaries from local transaction data.
-- **Accounts**: manage accounts and currencies. `accountId` is the current account reference used by transactions, budgets, and SMS import templates.
-- **Buckets/Categories**: organize categories inside buckets for reporting and filtering.
-- **Recipients**: manage payees, payers, aliases, and recipient history.
-- **SMS Import Templates**: define local templates for parsing imported SMS transaction text.
-- **Settings & Debug**: CSV tools, full JSON backup export, backup dry-run validation, guarded full restore, database health checks, and narrowly scoped repair/cleanup actions.
-
-## Data Safety
-
-The current runtime stores authoritative financial data in SQLite behind the authenticated, capability-gated local API. Dexie/IndexedDB remains only for legacy compatibility and migration context; it is not an authoritative write target.
-
-The normal application workflow is the unified supervised runtime. Operators must use its authenticated stop workflow: closing a browser tab alone does not stop the backend. A clean trusted session that changed SQLite can create an automatic authority checkpoint; an unchanged session does not create another checkpoint. Checkpoints and automatic backups are separate mechanisms, and automatic backups do not substitute for authority checkpoints. Production activation remains gated pending controlled live acceptance.
-
-Backups are essential:
-
-- Full JSON backup remains legacy/migration tooling; operational backups and authority checkpoints are managed separately from the authoritative SQLite runtime.
-- Full restore always runs dry-run validation first.
-- Restore is destructive and requires the explicit confirmation phrase `RESTORE MY FINANCE DATABASE`.
-- The database health check can be run after restore to verify references, transfer pairs, row counts, and known integrity issues.
-- CSV export/import is useful for transaction workflows, but it is not a full disaster-recovery backup.
-
-See [Backup and Restore](docs/backup-restore.md) for the recommended safety workflow.
-
-## Architecture Notes
-
-- The local SQLite API and its authoritative profile are the current source of truth.
-- Dexie table definitions and data interfaces in [src/db.ts](src/db.ts) are legacy compatibility and migration context.
-- Application code enforces relationships and integrity rules; IndexedDB does not enforce foreign keys.
-- Expenses are stored as negative amounts. Income is stored as positive amounts.
-- Transfers are stored as two transaction rows linked reciprocally by `transferPairId`.
-- `paymentChannelId`, `paymentMethodId`, and the `paymentMethods` table are legacy migration fields. Newer logic should prefer `accountId`.
-- `budgetSnapshotId` is the canonical budget linkage when present.
-
-See [Data Model Notes](docs/data-model-notes.md) for invariants and caveats that matter when changing code.
+Configure automatic backups in Settings. Windows Task Scheduler runs the
+independent worker even while the application is closed. Each published backup
+is verified together with a disposable restore. Restore tooling requires an
+explicit backup, manifest, and fresh output path; it never overwrites the live
+database.
 
 ## Development
 
-### Install
-
 ```bash
 npm install
-```
-
-For a clean dependency install from `package-lock.json`:
-
-```bash
-npm ci
-```
-
-### Commands
-
-```bash
-npm run dev
 npm run build
-npm run preview
-npm run lint
 npm run test.unit
-npm run test.e2e
 ```
 
-Command details:
+The server has focused SQLite, backup, and write-workflow checks under
+`server/package.json`. Keep generated databases, tokens, backups, logs, and
+financial data outside Git.
 
-- `npm run dev`: start the Vite development server.
-- `npm run build`: run TypeScript checking and create a production Vite build.
-- `npm run preview`: preview the production build locally.
-- `npm run lint`: run ESLint.
-- `npm run test.unit`: run Vitest.
-- `npm run test.e2e`: run Cypress tests.
+## Data invariants
 
-Run `npm run build` after TypeScript, data-model, backup/restore, or safety-tooling changes.
+- Expenses are negative and income is positive.
+- Transfers are paired through `transferPairId`.
+- `accountId` is the current account field.
+- `budgetSnapshotId` is canonical when present; historical linked snapshots
+  remain stable after later Budget edits.
 
-## Project Structure
-
-```text
-src/
-  components/          Reusable Ionic/React components
-  hooks/               Custom hooks
-  pages/               Routed app screens
-  styles/              Shared styles
-  theme/               Ionic theme variables
-  utils/               Import/export, reports, validation, health, and safety helpers
-  db.ts                Dexie schema, interfaces, migrations, and snapshot helpers
-  App.tsx              Routing and app shell
-```
-
-Important utility areas:
-
-- `src/utils/fullBackup.ts`: full JSON backup export.
-- `src/utils/fullBackupRestore.ts`: backup dry-run validation and guarded restore.
-- `src/utils/dbHealth.ts`: read-only health report plus narrowly scoped guarded repairs.
-- `src/utils/transferPairs.ts`: transfer-pair edit and write invariants.
-- `src/utils/budgetSnapshots.ts`: budget snapshot helper logic.
-
-## Current Constraints
-
-- SQLite authority state is an operational asset, not disposable. Use verified checkpoints and supported backup/restore workflows; do not delete or recreate it casually.
-- Use disposable SQLite copies for tests and rehearsals, never as a replacement for authority checkpoints.
-- Budget snapshots preserve occurrence details and should not be casually rewritten.
-- The budget model is functional but due for a future model-v2 review.
-- Transfer exchange-rate and transaction-cost handling has known complexity and should be changed carefully.
-
-## Privacy
-
-- Local-first authoritative storage in SQLite through the local API; Dexie/IndexedDB is legacy compatibility only.
-- No required cloud account.
-- The local API is the trusted write boundary and is not exposed as a network service.
-- Backup files can contain complete financial history and should be stored carefully.
-
-## License
-
-Released under the MIT License. See [LICENSE](LICENSE).
+See [Project State](docs/PROJECT_STATE.md) for the operating model and safety
+constraints.

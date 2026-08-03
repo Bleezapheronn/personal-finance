@@ -41,13 +41,12 @@ import {
 import { AddRecipientModal } from "../components/AddRecipientModal";
 import { AddCategoryModal } from "../components/AddCategoryModal";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import {
   getRepositoryBackend,
   isHttpSelectedReadRepositoryBackend,
-  isSqliteAuthorityControlledBackend,
+  isLocalSqliteBackend,
 } from "../repositories/adapterSelection";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
+import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import {
   budgetDefinitionWriteErrorCode,
@@ -146,8 +145,8 @@ const AddBudget: React.FC = () => {
   const isEditMode = Boolean(id);
   const isFromTransaction = Boolean(transactionId);
   const repositoryBackend = getRepositoryBackend();
-  const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityControlledBackend(repositoryBackend);
+  const rehearsal = useLocalSqliteRuntime();
+  const rehearsalSelected = isLocalSqliteBackend(repositoryBackend);
   const budgetDefinitionHttpMode =
     isHttpSelectedReadRepositoryBackend(repositoryBackend);
   const budgetDefinitionWriteExperimentActive =
@@ -1127,7 +1126,6 @@ const AddBudget: React.FC = () => {
                 ? "Create Budget from Transaction"
                 : "Add Budget"}
           </IonTitle>
-          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 

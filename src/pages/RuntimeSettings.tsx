@@ -112,7 +112,7 @@ const inputStyle: React.CSSProperties = {
   minWidth: "14rem",
 };
 
-const SqliteAuthoritySettings: React.FC = () => {
+const RuntimeSettings: React.FC = () => {
   const [state, setState] = useState<AutomaticBackupsState | null>(null);
   const [destinationDirectoryDraft, setDestinationDirectoryDraft] = useState("");
   const [dailyLocalTime, setDailyLocalTime] = useState("02:30");
@@ -622,4 +622,4 @@ const SqliteAuthoritySettings: React.FC = () => {
   );
 };
 
-export default SqliteAuthoritySettings;
+export default RuntimeSettings;

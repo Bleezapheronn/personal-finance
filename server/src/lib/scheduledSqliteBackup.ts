@@ -27,8 +27,8 @@ export interface ScheduledBackupManifest {
   createdAt: string; normalizedLocalDay: string; classification: "daily" | "monthly";
   sourceDatabaseIdentityFingerprint: string; backupDatabaseIdentityFingerprint: string;
   schemaVersion: number; logicalVerification: SqliteLogicalVerification; sqliteSha256: string;
-  sqliteSizeBytes: number; verificationStatus: "pass"; sourceCheckpointSequence?: number;
-  sourceCheckpointId?: string; sourceCommit?: string; recoveryNotes: string[];
+  sqliteSizeBytes: number; verificationStatus: "pass"; sourceCommit?: string;
+  recoveryNotes: string[];
 }
 export interface BackupStatusRecord {
   statusVersion: 1; lastAttemptedAt?: string; lastSuccessfulAt?: string; lastResultCode?: string;
@@ -45,10 +45,6 @@ const assertOutsideRepo = (candidate: string, code: string, allow = false): void
 const runtimeDirectory = (runtimeConfigPath: string): string => path.dirname(path.resolve(runtimeConfigPath));
 export const backupConfigPathForRuntime = (runtimeConfigPath: string): string => path.join(runtimeDirectory(runtimeConfigPath), "backup-settings.json");
 export const backupStatusPathForRuntime = (runtimeConfigPath: string): string => path.join(runtimeDirectory(runtimeConfigPath), "backup-status.json");
-// Compatibility exports keep the retired CLI compiling until it is removed in
-// the final cleanup stage. They accept runtime-config paths, never profiles.
-export const backupConfigPathForProfile = backupConfigPathForRuntime;
-export const backupStatusPathForProfile = backupStatusPathForRuntime;
 const defaultDestination = (): string => path.join(process.env.OneDrive || path.join(os.homedir(), "OneDrive"), "Documents", "Personal Finance Backups");
 const defaultStaging = (runtimeConfigPath: string): string => path.join(runtimeDirectory(runtimeConfigPath), "backup-staging");
 const atomicJson = (target: string, value: unknown, backupExisting = false): void => {

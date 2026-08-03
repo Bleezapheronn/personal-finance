@@ -52,7 +52,6 @@ import {
   type CategoryFormValues,
 } from "../components/AddCategoryModal";
 import { SmsImportModal } from "../components/SmsImportModal";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import { ParsedSmsData } from "../hooks/useSmsParser";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import { SelectableDropdown } from "../components/SelectableDropdown";
@@ -71,9 +70,9 @@ import {
 import {
   getRepositoryBackend,
   isHttpSelectedReadRepositoryBackend,
-  isSqliteAuthorityControlledBackend,
+  isLocalSqliteBackend,
 } from "../repositories/adapterSelection";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
+import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import type {
   AccountDto,
@@ -333,8 +332,8 @@ const AddTransaction: React.FC = () => {
   const isEditMode = Boolean(id);
   const duplicatePrefill = location.state?.duplicatePrefill;
   const selectedBackend = getRepositoryBackend();
-  const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
+  const rehearsal = useLocalSqliteRuntime();
+  const rehearsalSelected = isLocalSqliteBackend(selectedBackend);
   const transactionsBasicWriteExperimentEnabled =
     isTransactionsBasicWriteExperimentEnabled();
   const transactionsCostBudgetWriteExperimentEnabled =
@@ -1738,7 +1737,6 @@ const AddTransaction: React.FC = () => {
           <IonTitle>
             {isEditMode ? "Edit Transaction" : "Add Transaction"}
           </IonTitle>
-          <SqliteAuthorityToolbarStatus />
           <IonButtons slot="end">
             <IonButton
               onClick={() => setShowSmsImportModal(true)}

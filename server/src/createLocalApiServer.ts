@@ -6,15 +6,7 @@ import {
   readKnownTableRowCounts,
   readPaginatedKnownTable,
 } from "./lib/sqlite.js";
-import {
-  evaluateSqliteAuthorityReadiness,
-  type SqliteAuthorityReadiness,
-} from "./lib/sqliteAuthorityCutover.js";
-import {
-  RUNTIME_FRONTEND_REQUIRED_CAPABILITY_KEYS,
-  unsupportedOperationsForCapabilities,
-  type WriteCapabilities,
-} from "./lib/writeCapabilities.js";
+import { buildWriteCapabilitiesResponse } from "./lib/writeCapabilities.js";
 import {
   getLookupConfig,
   getAccountImageById,
@@ -243,64 +235,42 @@ import {
   SmsTemplateWriteRequestError,
   validateSmsTemplateWritePayload,
 } from "./lib/smsTemplateWrite.js";
-import { buildWriteCapabilitiesResponse } from "./lib/writeCapabilities.js";
-import {
-  AuthorityMutationTracker,
-  mutationDomainsForPath,
-  type AuthoritySessionContext,
-} from "./lib/authorityOpsSession.js";
-import {
-  AuthorityApiLifecycle,
-  type AuthorityApiLifecycleDependencies,
-  type AuthorityShutdownMode,
-} from "./lib/authorityApiLifecycle.js";
-import {
-  AuthorityMutationExecutor,
-  type AuthorityMutationExecutorDependencies,
-  type AuthorityMutationFence,
-} from "./lib/authorityMutationExecutor.js";
-import { isAuthoritativeMutationPath } from "./lib/authorityMutationRequest.js";
-import { productionAuthenticatedCommittedWriteRoutes } from "./lib/authorityProductionWriteRouteRegistry.js";
-
-export interface AuthorityApiServerOptions {
+export interface LocalApiServerOptions {
   readonly apiVersion: string;
   readonly serviceName: string;
   readonly serviceMode: string;
-  readonly readonlyMode: boolean;
   readonly getSqlitePath: () => string | undefined;
-  readonly getSqliteCutoverManifestPath: () => string | undefined;
-  readonly isSqliteAuthorityEnabled: () => boolean;
-  readonly writeCapabilities: Readonly<Record<string, () => boolean>>;
-  readonly readWriteCapabilities: () => WriteCapabilities;
-  readonly authoritySessionContext?: AuthoritySessionContext;
-  readonly authoritySessionSecret?: string;
-  readonly authorityLifecycle?: AuthorityApiLifecycleDependencies;
-  readonly authorityMutationExecutor?: AuthorityMutationExecutorDependencies;
   readonly registerAuthentication: (server: FastifyInstance) => void;
   readonly registerAutomaticBackups: (server: FastifyInstance) => void;
 }
 
-export const createAuthorityApiServer = (options: AuthorityApiServerOptions): FastifyInstance => {
+export const createLocalApiServer = (options: LocalApiServerOptions): FastifyInstance => {
 const API_VERSION = options.apiVersion;
 const SERVICE_NAME = options.serviceName;
 const SERVICE_MODE = options.serviceMode;
-const READONLY_MODE = options.readonlyMode;
+const READONLY_MODE = false;
 const getSqlitePath = options.getSqlitePath;
-const getSqliteCutoverManifestPath = options.getSqliteCutoverManifestPath;
-const isSqliteAuthorityEnabled = options.isSqliteAuthorityEnabled;
-const readWriteCapabilities = options.readWriteCapabilities;
-const {
-  areAccountDeleteMergeWritesEnabled, areAccountWritesEnabled,
-  areCategoryDeleteMergeWritesEnabled, areBucketDeleteMergeWritesEnabled,
-  areLookupActiveStateWritesEnabled, areBucketReorderWritesEnabled,
-  areBudgetDefinitionWritesEnabled, areBudgetDeleteWritesEnabled,
-  areBudgetLifecycleWritesEnabled, areBudgetSnapshotGenerationWritesEnabled,
-  areBudgetSnapshotOccurrenceWritesEnabled, areBucketCategoryWritesEnabled,
-  areRecipientActiveStateWritesEnabled, areRecipientCreateUpdateWritesEnabled,
-  areRecipientDeleteMergeWritesEnabled, areSmsTemplateWritesEnabled,
-  areTransactionBasicWritesEnabled, areTransactionCostBudgetWritesEnabled,
-  areTransactionDeleteWritesEnabled, areTransactionTransferWritesEnabled,
-} = options.writeCapabilities;
+const writesEnabled = (): true => true;
+const areAccountDeleteMergeWritesEnabled = writesEnabled;
+const areAccountWritesEnabled = writesEnabled;
+const areCategoryDeleteMergeWritesEnabled = writesEnabled;
+const areBucketDeleteMergeWritesEnabled = writesEnabled;
+const areLookupActiveStateWritesEnabled = writesEnabled;
+const areBucketReorderWritesEnabled = writesEnabled;
+const areBudgetDefinitionWritesEnabled = writesEnabled;
+const areBudgetDeleteWritesEnabled = writesEnabled;
+const areBudgetLifecycleWritesEnabled = writesEnabled;
+const areBudgetSnapshotGenerationWritesEnabled = writesEnabled;
+const areBudgetSnapshotOccurrenceWritesEnabled = writesEnabled;
+const areBucketCategoryWritesEnabled = writesEnabled;
+const areRecipientActiveStateWritesEnabled = writesEnabled;
+const areRecipientCreateUpdateWritesEnabled = writesEnabled;
+const areRecipientDeleteMergeWritesEnabled = writesEnabled;
+const areSmsTemplateWritesEnabled = writesEnabled;
+const areTransactionBasicWritesEnabled = writesEnabled;
+const areTransactionCostBudgetWritesEnabled = writesEnabled;
+const areTransactionDeleteWritesEnabled = writesEnabled;
+const areTransactionTransferWritesEnabled = writesEnabled;
 
 const server = Fastify({
   logger: {
@@ -526,25 +496,8 @@ const sqliteUnavailableStatusCode = (error: unknown): 503 | 500 => {
     : 500;
 };
 
-const openDatabases = new Set<{ close: () => void }>();
 const trackDatabase = <T extends { close: () => void }>(db: T): T => {
-  const originalClose = db.close.bind(db);
-  let closed = false;
-  db.close = () => {
-    if (closed) return;
-    closed = true;
-    openDatabases.delete(db);
-    return originalClose();
-  };
-  openDatabases.add(db);
   return db;
-};
-const closeBuilderDatabases = (): void => {
-  let failure = false;
-  for (const db of [...openDatabases]) {
-    try { db.close(); } catch { failure = true; }
-  }
-  if (failure || openDatabases.size > 0) throw new Error("database_close_failed");
 };
 
 const openConfiguredReadOnlyDatabase = ():
@@ -559,177 +512,16 @@ const openConfiguredReadOnlyDatabase = ():
 };
 
 const openConfiguredWritableDatabase = ():
-  | { ok: true; db: AuthorityMutationFence["database"] }
+  | { ok: true; db: Database.Database }
   | { ok: false; code: "sqlite_not_configured" } => {
   const sqlitePath = getSqlitePath();
   if (!sqlitePath) {
     return { ok: false, code: "sqlite_not_configured" };
   }
-  const context = currentMutationContext;
-  if (context && !context.fence.finalized) {
-    return { ok: true, db: context.fence.database };
-  }
-  // Ordinary local runtime writes use the route's own validated transaction.
-  // No checkpoint/session fence participates in normal application use.
   return { ok: true, db: trackDatabase(new Database(sqlitePath)) };
 };
 
 options.registerAuthentication(server);
-
-// Keep the completion gate tied to Fastify's actual structured registrations.
-// This catches a production write route added without updating the canonical
-// route registry, without relying on source-text scans.
-const registeredProductionWriteRoutes = new Set<string>();
-server.addHook("onRoute", (route) => {
-  const methods = Array.isArray(route.method) ? route.method : [route.method];
-  if (methods.includes("POST") && route.url.startsWith("/prototype/") && isAuthoritativeMutationPath(route.url)) registeredProductionWriteRoutes.add(route.url);
-});
-server.addHook("onReady", async () => {
-  const expected = new Set<string>(productionAuthenticatedCommittedWriteRoutes);
-  const missing = productionAuthenticatedCommittedWriteRoutes.filter((route) => !registeredProductionWriteRoutes.has(route));
-  const extra = [...registeredProductionWriteRoutes].filter((route) => !expected.has(route));
-  if (missing.length || extra.length) throw new Error(`production_write_route_registry_mismatch:missing=${missing.join(",")}:extra=${extra.join(",")}`);
-});
-
-const authoritySessionContext = options.authoritySessionContext;
-const authoritySessionSecret = options.authoritySessionSecret;
-const authorityMutationTracker = authoritySessionContext && authoritySessionSecret
-  ? new AuthorityMutationTracker()
-  : undefined;
-const authorityMutationExecutor = (() => {
-  const sqlitePath = getSqlitePath();
-  return authoritySessionContext && authoritySessionSecret && sqlitePath
-    ? new AuthorityMutationExecutor(
-        sqlitePath,
-        authoritySessionContext.startingLogicalFingerprint,
-        options.authorityMutationExecutor,
-      )
-    : undefined;
-})();
-const authorityLifecycle = (() => {
-  const sqlitePath = getSqlitePath();
-  return authorityMutationTracker && authorityMutationExecutor && authoritySessionContext && authoritySessionSecret && sqlitePath
-    ? new AuthorityApiLifecycle(
-        server,
-        authorityMutationTracker,
-        authoritySessionContext,
-        authoritySessionSecret,
-        sqlitePath,
-        () => authorityMutationExecutor.finalizeSealProof(),
-        closeBuilderDatabases,
-        options.authorityLifecycle,
-      )
-    : undefined;
-})();
-const isAuthoritativeMutationRequest = isAuthoritativeMutationPath;
-const isContaminatedSessionControlRequest = (url: string) => {
-  const path = url.split("?", 1)[0];
-  return path === "/health" || path === "/authority/session/shutdown";
-};
-interface MutationRequestContext {
-  domains: ReturnType<typeof mutationDomainsForPath>;
-  fence: AuthorityMutationFence;
-  finalized: boolean;
-  trackerEnded: boolean;
-}
-const mutationRequests = new WeakMap<object, MutationRequestContext>();
-let currentMutationContext: MutationRequestContext | undefined;
-const finishTrackedMutation = (context: MutationRequestContext) => {
-  if (!context.finalized) {
-    context.finalized = true;
-    authorityMutationExecutor?.rollback(context.fence);
-  }
-  if (!context.trackerEnded) {
-    context.trackerEnded = true;
-    authorityMutationTracker?.end();
-  }
-};
-
-server.addHook("preHandler", async (request, reply) => {
-  if (
-    authorityMutationExecutor?.isContaminated() &&
-    !isContaminatedSessionControlRequest(request.url)
-  ) {
-    return reply.code(503).send({
-      ok: false,
-      code: "untracked_database_change",
-    });
-  }
-  if (!isAuthoritativeMutationRequest(request.url)) return;
-  if (!authorityMutationTracker || !authorityMutationExecutor) return;
-  if (!authorityMutationTracker.isAccepting()) {
-    return reply.code(503).send({ ok: false, code: "authority_shutdown_in_progress" });
-  }
-  const domains = mutationDomainsForPath(request.url);
-  let fence: AuthorityMutationFence | undefined;
-  try {
-    fence = await authorityMutationExecutor.begin(domains);
-    authorityMutationTracker.begin();
-  } catch (error) {
-    if (fence) authorityMutationExecutor.rollback(fence);
-    const message = error instanceof Error ? error.message : "mutation_fingerprint_failed";
-    const contaminated = message === "mutation_prestate_mismatch" || message === "untracked_database_change";
-    return reply.code(contaminated ? 409 : 503).send({
-      ok: false,
-      code: contaminated ? "untracked_database_change" : message,
-    });
-  }
-  const context = { domains, fence, finalized: false, trackerEnded: false };
-  mutationRequests.set(request, context);
-  currentMutationContext = context;
-});
-server.addHook("onSend", async (request, reply, payload) => {
-  const context = mutationRequests.get(request);
-  if (!authorityMutationTracker || !context) return payload;
-  if (context.finalized || context.fence.finalized) return payload;
-  if (reply.statusCode >= 400) {
-    finishTrackedMutation(context);
-    return payload;
-  }
-  try {
-    const { changed, changedDomains } = authorityMutationExecutor!.commit(context.fence);
-    if (changed) authorityMutationTracker.confirm(changedDomains);
-    context.finalized = true;
-    return payload;
-  } catch (error) {
-    context.finalized = true;
-    const message = error instanceof Error ? error.message : "mutation_commit_failed";
-    reply.code(500);
-    return JSON.stringify({ ok: false, code: message });
-  }
-});
-server.addHook("onError", async (request) => {
-  const context = mutationRequests.get(request);
-  if (context) finishTrackedMutation(context);
-});
-server.addHook("onResponse", async (request) => {
-  const context = mutationRequests.get(request);
-  if (!context) return;
-  finishTrackedMutation(context);
-  if (currentMutationContext === context) currentMutationContext = undefined;
-  mutationRequests.delete(request);
-});
-
-server.post("/authority/session/shutdown", async (request, reply) => {
-  if (!authorityLifecycle || !authoritySessionSecret) {
-    return reply.code(404).send({ ok: false, code: "authority_session_unavailable" });
-  }
-  if (request.headers["x-personal-finance-session-secret"] !== authoritySessionSecret) {
-    return reply.code(403).send({ ok: false, code: "authority_session_forbidden" });
-  }
-  const mode = request.headers["x-personal-finance-shutdown-mode"];
-  if (mode !== "seal" && mode !== "abort") {
-    return reply.code(400).send({ ok: false, code: "authority_shutdown_mode_invalid" });
-  }
-  const transition = authorityLifecycle.request(mode as AuthorityShutdownMode);
-  reply.raw.once("finish", () => { void authorityLifecycle.start(); });
-  return reply.code(202).send({
-    ok: true,
-    accepted: transition.accepted,
-    mode: transition.mode,
-    state: transition.state,
-  });
-});
 
 server.get("/health", async () => {
   return {
@@ -739,12 +531,6 @@ server.get("/health", async () => {
   };
 });
 
-const normalRuntimeMetadata = () => ({
-  readonly: false,
-  storageMode: "sqlite" as const,
-  authoritative: true,
-});
-
 options.registerAutomaticBackups(server);
 
 server.get("/metadata", async () => {
@@ -752,7 +538,8 @@ server.get("/metadata", async () => {
     service: SERVICE_NAME,
     mode: SERVICE_MODE,
     apiVersion: API_VERSION,
-    ...normalRuntimeMetadata(),
+    readonly: false,
+    storageMode: "sqlite",
   };
 });
 
@@ -772,15 +559,7 @@ server.get("/prototype/write-capabilities", async () => {
     database?.close();
   }
 
-  return buildWriteCapabilitiesResponse(sqliteAvailable, {
-    authorityEnabled: false,
-    storageMode: "sqlite-authoritative",
-    authoritative: true,
-    cutoverVerified: true,
-    backupVerified: true,
-    rollbackAvailable: false,
-    missingRequirements: [],
-  });
+  return buildWriteCapabilitiesResponse(sqliteAvailable);
 });
 
 server.get("/prototype/sqlite/row-counts", async (_request, reply) => {

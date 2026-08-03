@@ -25,7 +25,6 @@ import {
   barChart,
   calendar,
   settingsOutline,
-  flaskOutline,
 } from "ionicons/icons";
 
 import Transactions from "./pages/Transactions";
@@ -40,15 +39,12 @@ import RecipientsManagement from "./pages/RecipientsManagement";
 import SmsImportTemplatesManagement from "./pages/SmsImportTemplatesManagement";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings"; // NEW
-import SqliteAuthoritySettings from "./pages/SqliteAuthoritySettings";
-import LocalApiDiagnostics, {
-  isLocalApiDiagnosticsEnabled,
-} from "./pages/LocalApiDiagnostics";
+import RuntimeSettings from "./pages/RuntimeSettings";
 import {
-  SqliteAuthorityRehearsalProvider,
-  useSqliteAuthorityRehearsal,
-} from "./contexts/SqliteAuthorityRehearsalContext";
-import { isSqliteAuthorityControlledBackend } from "./repositories/adapterSelection";
+  LocalSqliteRuntimeProvider,
+  useLocalSqliteRuntime,
+} from "./contexts/LocalSqliteRuntimeContext";
+import { isLocalSqliteBackend } from "./repositories/adapterSelection";
 
 import {
   migrateBudgetSnapshots,
@@ -84,8 +80,7 @@ setupIonicReact();
 
 const InnerApp: React.FC = () => {
   const location = useLocation();
-  const showLocalApiDiagnostics = isLocalApiDiagnosticsEnabled();
-  const rehearsal = useSqliteAuthorityRehearsal();
+  const localRuntime = useLocalSqliteRuntime();
 
   return (
     <IonApp>
@@ -127,16 +122,6 @@ const InnerApp: React.FC = () => {
                     />
                     <IonLabel>Settings & Debug</IonLabel>
                 </IonItem>
-                {showLocalApiDiagnostics && (
-                  <IonItem button routerLink="/local-api-diagnostics">
-                    <IonIcon
-                      aria-hidden="true"
-                      icon={flaskOutline}
-                      slot="start"
-                    />
-                    <IonLabel>Local API Diagnostics</IonLabel>
-                  </IonItem>
-                )}
               </IonMenuToggle>
             </IonList>
           </IonContent>
@@ -192,10 +177,7 @@ const InnerApp: React.FC = () => {
             </Route>
             {/* NEW: Settings route */}
             <Route path="/settings">
-              {rehearsal.selected ? <SqliteAuthoritySettings /> : <Settings />}
-            </Route>
-            <Route path="/local-api-diagnostics">
-              {rehearsal.authoritativeMode ? <SqliteAuthoritySettings /> : <LocalApiDiagnostics />}
+              {localRuntime.selected ? <RuntimeSettings /> : <Settings />}
             </Route>
             <Route exact path="/">
               <Redirect to="/transactions" />
@@ -224,8 +206,8 @@ const InnerApp: React.FC = () => {
 const App: React.FC = () => {
   // Run migrations on app startup
   useEffect(() => {
-    if (isSqliteAuthorityControlledBackend()) {
-      console.info("SQLite HTTP authority mode selected; Dexie startup migrations skipped.");
+    if (isLocalSqliteBackend()) {
+      console.info("SQLite local API selected; Dexie startup migrations skipped.");
       return;
     }
 
@@ -256,13 +238,13 @@ const App: React.FC = () => {
   }, []); // Run once on mount
 
   return (
-    <SqliteAuthorityRehearsalProvider>
+    <LocalSqliteRuntimeProvider>
       <IonApp>
         <IonReactRouter>
           <InnerApp />
         </IonReactRouter>
       </IonApp>
-    </SqliteAuthorityRehearsalProvider>
+    </LocalSqliteRuntimeProvider>
   );
 };
 

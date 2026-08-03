@@ -42,15 +42,14 @@ import {
 import { reportRepository } from "../repositories";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityControlledBackend,
+  isLocalSqliteBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import BucketCategoryPieModal from "../components/BucketCategoryPieModal";
 import SpendingChart from "../components/SpendingChart";
 import type { SpendingChartDataSource } from "../components/SpendingChart";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
+import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import "./Reports.css";
 
 const REPORTS_READ_EXPERIMENT_FLAG =
@@ -239,8 +238,8 @@ const Reports: React.FC = () => {
   } | null>(null);
   const reportsExperimentEnabled = isReportsReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
-  const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityControlledBackend(repositoryBackend);
+  const rehearsal = useLocalSqliteRuntime();
+  const rehearsalSelected = isLocalSqliteBackend(repositoryBackend);
   const reportsHttpReadonlyExperimentActive =
     rehearsalSelected ||
     (reportsExperimentEnabled && repositoryBackend === "http-readonly");
@@ -516,7 +515,6 @@ const Reports: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Reports</IonTitle>
-          <SqliteAuthorityToolbarStatus />
         </IonToolbar>
       </IonHeader>
 

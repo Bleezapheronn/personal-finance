@@ -50,7 +50,6 @@ import { db, Transaction, Category, Recipient, Bucket, Account } from "../db";
 import { SearchableFilterSelect } from "../components/SearchableFilterSelect";
 import { exportTransactionsToCSV, downloadCSV } from "../utils/csvExport";
 import { ImportModal } from "../components/ImportModal";
-import { SqliteAuthorityToolbarStatus } from "../components/SqliteAuthorityRehearsalBanner";
 import {
   accountRepository,
   categoryRepository,
@@ -71,10 +70,10 @@ import {
 } from "../utils/devPreview";
 import {
   getRepositoryBackend,
-  isSqliteAuthorityControlledBackend,
+  isLocalSqliteBackend,
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
-import { useSqliteAuthorityRehearsal } from "../contexts/SqliteAuthorityRehearsalContext";
+import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import {
   isBasicTransactionWriteEligible,
@@ -491,8 +490,8 @@ const Transactions: React.FC = () => {
   const history = useHistory();
   const showSelectedReadPreview = isSelectedReadPreviewsEnabled();
   const selectedBackend = getRepositoryBackend();
-  const rehearsal = useSqliteAuthorityRehearsal();
-  const rehearsalSelected = isSqliteAuthorityControlledBackend(selectedBackend);
+  const rehearsal = useLocalSqliteRuntime();
+  const rehearsalSelected = isLocalSqliteBackend(selectedBackend);
   const transactionsReadExperimentEnabled =
     isTransactionsReadExperimentEnabled();
   const transactionsBasicWriteExperimentEnabled =
@@ -1568,7 +1567,6 @@ const Transactions: React.FC = () => {
             <IonMenuButton />
           </IonButtons>
           <IonTitle>Transactions</IonTitle>
-          <SqliteAuthorityToolbarStatus />
           <IonButtons slot="end">
             {!transactionsHttpSelectedReadActive && (
               <>

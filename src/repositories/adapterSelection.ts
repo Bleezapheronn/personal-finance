@@ -1,40 +1,19 @@
-export type RepositoryBackend =
-  | "dexie"
-  | "http-readonly"
-  | "http-sqlite"
-  | "http-sqlite-rehearsal"
-  | "http-sqlite-authoritative";
+export type RepositoryBackend = "dexie" | "http-readonly" | "http-sqlite";
 
 const REPOSITORY_BACKEND_ENV_VAR = "VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND";
-const DEFAULT_REPOSITORY_BACKEND: RepositoryBackend = "dexie";
-
-const repositoryBackendValues = new Set<RepositoryBackend>([
-  "dexie",
-  "http-readonly",
-  "http-sqlite",
-  "http-sqlite-rehearsal",
-  "http-sqlite-authoritative",
-]);
 
 const getEnvValue = (key: string): string | undefined => {
-  const env = import.meta.env as Record<string, string | undefined>;
-  const value = env[key]?.trim();
-  return value ? value : undefined;
+  const value = (import.meta.env as Record<string, string | undefined>)[key]?.trim();
+  return value || undefined;
 };
 
 export const resolveRepositoryBackend = (
   configuredBackend: string | undefined,
 ): RepositoryBackend => {
-  const normalizedBackend = configuredBackend?.trim();
-  if (!normalizedBackend) {
-    return DEFAULT_REPOSITORY_BACKEND;
+  if (configuredBackend === "http-sqlite" || configuredBackend === "http-readonly") {
+    return configuredBackend;
   }
-
-  if (repositoryBackendValues.has(normalizedBackend as RepositoryBackend)) {
-    return normalizedBackend as RepositoryBackend;
-  }
-
-  return DEFAULT_REPOSITORY_BACKEND;
+  return "dexie";
 };
 
 export const getRepositoryBackend = (): RepositoryBackend =>
@@ -46,20 +25,9 @@ export const isDexieRepositoryBackend = (): boolean =>
 export const isHttpReadonlyRepositoryBackend = (): boolean =>
   getRepositoryBackend() === "http-readonly";
 
-export const isSqliteAuthorityRehearsalBackend = (
+export const isLocalSqliteBackend = (
   backend: RepositoryBackend = getRepositoryBackend(),
-): boolean => backend === "http-sqlite-rehearsal";
-
-export const isSqliteAuthoritativeBackend = (
-  backend: RepositoryBackend = getRepositoryBackend(),
-): boolean => backend === "http-sqlite-authoritative";
-
-export const isSqliteAuthorityControlledBackend = (
-  backend: RepositoryBackend = getRepositoryBackend(),
-): boolean =>
-  backend === "http-sqlite" ||
-  isSqliteAuthorityRehearsalBackend(backend) ||
-  isSqliteAuthoritativeBackend(backend);
+): boolean => backend === "http-sqlite";
 
 export const isHttpSelectedReadRepositoryBackend = (
   backend: RepositoryBackend = getRepositoryBackend(),

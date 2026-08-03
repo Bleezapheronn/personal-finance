@@ -18,7 +18,7 @@ import {
   readSqliteLogicalVerification,
 } from "./lib/sqliteLogicalVerification.js";
 import { repoRoot, serverRoot } from "./lib/paths.js";
-import { parseRestoreSqliteArgs } from "./restoreSqliteRehearsal.js";
+import { parseRestoreSqliteArgs } from "./restoreSqlite.js";
 
 interface CheckResult {
   name: string;
