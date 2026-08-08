@@ -58,7 +58,6 @@ import {
 import {
   budgetLifecycleWriteErrorCode,
   dryRunBudgetLifecycle,
-  isBudgetLifecycleWriteExperimentEnabled,
   writeBudgetLifecycle,
 } from "../repositories/http/budgetLifecycleWriteExperiment";
 import {
@@ -155,8 +154,7 @@ const AddBudget: React.FC = () => {
   const budgetLifecycleWriteExperimentActive =
     rehearsalSelected &&
     rehearsal.ready &&
-    rehearsal.budgetLifecycleWritesAvailable &&
-    isBudgetLifecycleWriteExperimentEnabled();
+    rehearsal.budgetLifecycleWritesAvailable;
   const budgetFromTransactionWriteActive =
     budgetDefinitionHttpMode &&
     rehearsal.ready &&

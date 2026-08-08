@@ -85,6 +85,10 @@ import {
   dryRunBudgetSnapshotOccurrence,
   writeBudgetSnapshotOccurrence,
 } from "../repositories/http/budgetSnapshotOccurrenceWrite";
+import {
+  dryRunBudgetLifecycle,
+  writeBudgetLifecycle,
+} from "../repositories/http/budgetLifecycleWriteExperiment";
 import { createBasicTransactionInDisposableSqlite } from "../repositories/http/transactionBasicWriteExperiment";
 import "./Budget.css";
 
@@ -522,6 +526,10 @@ const BudgetHistory: React.FC = () => {
     budgetHistoryHttpReadonlyExperimentActive &&
     authority.ready &&
     authority.budgetSnapshotOccurrenceWritesAvailable;
+  const lifecycleWritesActive =
+    budgetHistoryHttpReadonlyExperimentActive &&
+    authority.ready &&
+    authority.budgetLifecycleWritesAvailable;
   const showBudgetHistoryDiagnostics =
     !authority.authoritativeMode || !authority.ready;
 
@@ -1500,22 +1508,53 @@ const BudgetHistory: React.FC = () => {
   };
 
   const handleToggleBudgetActive = async (budget: Budget) => {
-    if (budgetHistoryHttpReadonlyExperimentActive) {
-      setError(
-        "Budget History read experiment is read-only. Activate/deactivate is disabled.",
-      );
-      return;
-    }
-
-    if (!budget.id) {
+    if (!budget.id || !budget.accountId) {
+      setError("Budget lifecycle update requires a valid Budget and Account.");
       return;
     }
 
     try {
+      if (budgetHistoryHttpReadonlyExperimentActive) {
+        if (!lifecycleWritesActive) {
+          setError("Budget lifecycle changes are currently unavailable.");
+          return;
+        }
+        const now = new Date();
+        const asOf = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+        const input = {
+          id: budget.id,
+          description: budget.description,
+          categoryId: budget.categoryId,
+          accountId: budget.accountId,
+          recipientId: budget.recipientId ?? null,
+          amount: budget.amount,
+          transactionCost: budget.transactionCost ?? null,
+          frequency: budget.frequency,
+          frequencyDetails: budget.frequencyDetails ?? null,
+          isGoal: budget.isGoal,
+          isFlexible: budget.isFlexible ?? false,
+          goalPercentage: budget.goalPercentage ?? null,
+          goalDirection: budget.goalDirection ?? null,
+          remainingCyclesTotal: budget.remainingCyclesTotal ?? null,
+          dueDate: budget.dueDate.toISOString(),
+          isActive: !budget.isActive,
+          asOf,
+        };
+        const dryRun = await dryRunBudgetLifecycle("update", input);
+        const confirmed = window.confirm(
+          `${budget.isActive ? "Deactivate" : "Reactivate"} this Budget?\n\n` +
+            `Unlinked current/future occurrences to remove: ${dryRun.unlinkedFutureSnapshotsProposedForCleanup}\n` +
+            `Linked occurrences retained: ${dryRun.linkedSnapshotsProtected}\n\n` +
+            "Historical and linked occurrences will remain unchanged.",
+        );
+        if (!confirmed) return;
+        await writeBudgetLifecycle("update", input, dryRun.planFingerprint!);
+      } else {
       await db.budgets.update(budget.id, {
         isActive: !budget.isActive,
         updatedAt: new Date(),
       });
+      }
 
       setSuccessMsg(
         `Budget ${budget.isActive ? "deactivated" : "activated"} successfully`,
@@ -2794,7 +2833,8 @@ const BudgetHistory: React.FC = () => {
                                   >
                                     <IonIcon icon={linkOutline} slot="end" />
                                   </IonButton>
-                                  {!budgetHistoryHttpReadonlyExperimentActive && (
+                                  {(!budgetHistoryHttpReadonlyExperimentActive ||
+                                    lifecycleWritesActive) && (
                                     <>
                                       <IonButton
                                         fill="clear"

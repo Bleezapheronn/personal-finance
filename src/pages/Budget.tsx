@@ -77,7 +77,6 @@ import { isBudgetsWriteExperimentEnabled } from "../repositories/http/budgetDefi
 import {
   budgetDeleteWriteErrorCode,
   dryRunBudgetDelete,
-  isBudgetDeleteWriteExperimentEnabled,
   type BudgetDeleteWriteResponse,
   writeBudgetDelete,
 } from "../repositories/http/budgetDeleteWriteExperiment";
@@ -85,13 +84,16 @@ import {
   budgetDeleteBlockedMessage,
   budgetDeleteConfirmationMessage,
   budgetDeleteRefreshFailureMessage,
-  shouldShowBudgetDeleteControl,
 } from "../repositories/http/budgetDeleteControl";
 import { createBasicTransactionInDisposableSqlite } from "../repositories/http/transactionBasicWriteExperiment";
 import {
   dryRunBudgetSnapshotOccurrence,
   writeBudgetSnapshotOccurrence,
 } from "../repositories/http/budgetSnapshotOccurrenceWrite";
+import {
+  dryRunBudgetLifecycle,
+  writeBudgetLifecycle,
+} from "../repositories/http/budgetLifecycleWriteExperiment";
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
 import "./Budget.css";
 
@@ -611,8 +613,11 @@ const BudgetPage: React.FC = () => {
   const budgetDeleteWriteExperimentActive =
     rehearsalSelected &&
     rehearsal.ready &&
-    rehearsal.budgetDeleteWritesAvailable &&
-    isBudgetDeleteWriteExperimentEnabled();
+    rehearsal.budgetDeleteWritesAvailable;
+  const budgetOccurrenceWritesActive =
+    rehearsalSelected &&
+    rehearsal.ready &&
+    rehearsal.budgetSnapshotOccurrenceWritesAvailable;
 
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [budgetSnapshots, setBudgetSnapshots] = useState<BudgetSnapshot[]>([]);
@@ -1558,6 +1563,56 @@ const BudgetPage: React.FC = () => {
     };
   };
 
+  const handleSetBudgetActiveInSqlite = async (
+    budget: Budget,
+    isActive: boolean,
+  ) => {
+    if (!budget.id || !budget.accountId) {
+      setError("Budget lifecycle update requires a valid Budget and Account.");
+      return;
+    }
+
+    const now = new Date();
+    const asOf = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const input = {
+      id: budget.id,
+      description: budget.description,
+      categoryId: budget.categoryId,
+      accountId: budget.accountId,
+      recipientId: budget.recipientId ?? null,
+      amount: budget.amount,
+      transactionCost: budget.transactionCost ?? null,
+      frequency: budget.frequency,
+      frequencyDetails: budget.frequencyDetails ?? null,
+      isGoal: budget.isGoal,
+      isFlexible: budget.isFlexible ?? false,
+      goalPercentage: budget.goalPercentage ?? null,
+      goalDirection: budget.goalDirection ?? null,
+      remainingCyclesTotal: budget.remainingCyclesTotal ?? null,
+      dueDate: budget.dueDate.toISOString(),
+      isActive,
+      asOf,
+    };
+
+    try {
+      const dryRun = await dryRunBudgetLifecycle("update", input);
+      const confirmed = window.confirm(
+        `${isActive ? "Reactivate" : "Deactivate"} this Budget?\n\n` +
+          `Unlinked current/future occurrences to remove: ${dryRun.unlinkedFutureSnapshotsProposedForCleanup}\n` +
+          `Linked occurrences retained: ${dryRun.linkedSnapshotsProtected}\n\n` +
+          "Historical and linked occurrences will remain unchanged.",
+      );
+      if (!confirmed) return;
+      await writeBudgetLifecycle("update", input, dryRun.planFingerprint!);
+      setSuccessMsg(`Budget ${isActive ? "reactivated" : "deactivated"}.`);
+      setShowSuccessToast(true);
+      await loadData();
+    } catch (err) {
+      console.error("Error updating Budget active state:", err);
+      setError("Failed to update Budget lifecycle.");
+    }
+  };
+
   // Handle delete click - run preflight analysis
   const handleDeleteClick = async (budgetId: number) => {
     if (budgetDeleteWriteExperimentActive) {
@@ -1566,7 +1621,12 @@ const BudgetPage: React.FC = () => {
       try {
         const plan = await dryRunBudgetDelete(budgetId);
         if (!plan.eligible || !plan.planFingerprint) {
-          setError(budgetDeleteBlockedMessage(plan));
+          const budget = budgets.find((candidate) => candidate.id === budgetId);
+          if (plan.transactionDependencyCount > 0 && budget) {
+            await handleSetBudgetActiveInSqlite(budget, false);
+          } else {
+            setError(budgetDeleteBlockedMessage(plan));
+          }
           return;
         }
         setSqliteDeletePlan(plan);
@@ -1682,9 +1742,12 @@ const BudgetPage: React.FC = () => {
 
   // Handle link past transactions
   const handleOpenLinkModal = (budgetOccurrence: BudgetOccurrence) => {
-    if (budgetHttpReadonlyExperimentActive) {
+    if (
+      budgetHttpReadonlyExperimentActive &&
+      (!rehearsal.ready || !rehearsal.budgetSnapshotOccurrenceWritesAvailable)
+    ) {
       setError(
-        "Budget read experiment is read-only. Transaction linking is disabled.",
+        "Budget occurrence transaction linking is currently unavailable.",
       );
       return;
     }
@@ -1714,19 +1777,72 @@ const BudgetPage: React.FC = () => {
     transactionIds: number[],
     occurrenceDate: Date,
   ) => {
-    if (budgetHttpReadonlyExperimentActive) {
-      setError(
-        "Budget read experiment is read-only. Transaction linking is disabled.",
-      );
-      return;
-    }
-
     if (budgetIdForLinking === undefined) return;
 
     try {
       const budget = budgets.find((b) => b.id === budgetIdForLinking);
       if (!budget) {
         setError("Budget was not found");
+        return;
+      }
+
+      if (budgetHttpReadonlyExperimentActive) {
+        let targetSnapshotId = budgetSnapshotIdForLinking;
+        const reviewed: Array<{
+          action: "link" | "createAndLink";
+          input: {
+            transactionId: number;
+            snapshotId?: number;
+            budgetId?: number;
+            occurrenceDate?: Date;
+          };
+        }> = [];
+        for (const transactionId of transactionIds) {
+          const action = targetSnapshotId ? "link" : "createAndLink";
+          const input = targetSnapshotId
+            ? { transactionId, snapshotId: targetSnapshotId }
+            : { transactionId, budgetId: budgetIdForLinking, occurrenceDate };
+          const dryRun = await dryRunBudgetSnapshotOccurrence(action, input);
+          reviewed.push({ action, input });
+          if (!targetSnapshotId && dryRun.target.snapshotId) {
+            targetSnapshotId = dryRun.target.snapshotId;
+          }
+        }
+        const confirmed = window.confirm(
+          `Link ${transactionIds.length} transaction${
+            transactionIds.length === 1 ? "" : "s"
+          } to this Budget occurrence?\n\nOnly the selected transaction linkage fields will change.`,
+        );
+        if (!confirmed) return;
+        for (const item of reviewed) {
+          const input =
+            targetSnapshotId && item.action === "createAndLink"
+              ? { transactionId: item.input.transactionId, snapshotId: targetSnapshotId }
+              : item.input;
+          const action =
+            targetSnapshotId && item.action === "createAndLink"
+              ? "link"
+              : item.action;
+          const dryRun = await dryRunBudgetSnapshotOccurrence(action, input);
+          const result = await writeBudgetSnapshotOccurrence(
+            action,
+            input,
+            dryRun.planFingerprint!,
+          );
+          targetSnapshotId = result.target.snapshotId ?? targetSnapshotId;
+        }
+        setSuccessMsg(
+          `Successfully linked ${transactionIds.length} transaction${
+            transactionIds.length !== 1 ? "s" : ""
+          } to budget`,
+        );
+        setShowSuccessToast(true);
+        setShowLinkModal(false);
+        setBudgetIdForLinking(undefined);
+        setBudgetSnapshotIdForLinking(undefined);
+        setBudgetOccurrenceDateForLinking(undefined);
+        setMatchingTransactionsForLink([]);
+        await loadData();
         return;
       }
 
@@ -2747,11 +2863,8 @@ const BudgetPage: React.FC = () => {
                               <IonCol
                                 style={{ paddingRight: 0, textAlign: "right" }}
                               >
-                                {shouldShowBudgetDeleteControl(
-                                  currentGoal.budget.id,
-                                  budgetHttpReadonlyExperimentActive,
-                                  budgetDeleteWriteExperimentActive,
-                                ) && (
+                                {(!budgetHttpReadonlyExperimentActive ||
+                                  budgetOccurrenceWritesActive) && (
                                   <IonButton
                                     fill="clear"
                                     size="small"
@@ -3036,11 +3149,8 @@ const BudgetPage: React.FC = () => {
                                   budgetDefinitionWriteExperimentActive) && (
                                   <IonRow className="item-actions">
                                     <IonCol className="item-actions-container">
-                                      {shouldShowBudgetDeleteControl(
-                                        occ.budget.id,
-                                        budgetHttpReadonlyExperimentActive,
-                                        budgetDeleteWriteExperimentActive,
-                                      ) && (
+                                      {(!budgetHttpReadonlyExperimentActive ||
+                                        budgetOccurrenceWritesActive) && (
                                         <IonButton
                                           fill="clear"
                                           size="small"
@@ -3184,7 +3294,8 @@ const BudgetPage: React.FC = () => {
       )}
 
       {/* Link Past Transactions Modal */}
-      {!budgetHttpReadonlyExperimentActive && (
+      {(!budgetHttpReadonlyExperimentActive ||
+        budgetOccurrenceWritesActive) && (
         <LinkPastTransactionsModal
           isOpen={showLinkModal}
           onClose={() => {
