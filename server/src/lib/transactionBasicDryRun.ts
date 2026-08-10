@@ -462,7 +462,6 @@ const targetBudgetLinkageReasons = (
   const snapshotId =
     typeof row.budgetSnapshotId === "number" ? row.budgetSnapshotId : null;
   const budgetId = typeof row.budgetId === "number" ? row.budgetId : null;
-  const occurrenceDate = normalizedStoredDate(row.occurrenceDate);
 
   if (snapshotId === null) {
     return budgetId !== null || row.occurrenceDate != null
@@ -477,13 +476,8 @@ const targetBudgetLinkageReasons = (
   if (!present(db, "budgets", snapshot.budgetId)) {
     return ["target_snapshot_parent_budget_not_found"];
   }
-  if (budgetId !== snapshot.budgetId) {
-    return ["target_budget_snapshot_budget_mismatch"];
-  }
-  const snapshotDueDate = normalizedStoredDate(snapshot.dueDate);
-  if (!occurrenceDate || !snapshotDueDate || occurrenceDate !== snapshotDueDate) {
-    return ["target_budget_occurrence_mismatch"];
-  }
+  // Once canonical linkage exists, legacy budgetId/occurrenceDate describe an
+  // older compatibility representation and are not relationship invariants.
   return [];
 };
 
@@ -608,19 +602,8 @@ const resolveBudgetLinkage = (
   if (!budgetPresent) {
     validationErrors.push("snapshot_parent_budget_not_found");
   }
-  if (
-    normalized.budgetId !== null &&
-    normalized.budgetId !== snapshot.budgetId
-  ) {
-    validationErrors.push("budget_snapshot_budget_mismatch");
-  }
   if (!dueDate) {
     validationErrors.push("snapshot_due_date_invalid");
-  } else if (
-    normalized.occurrenceDate !== null &&
-    normalized.occurrenceDate !== dueDate
-  ) {
-    validationErrors.push("budget_snapshot_occurrence_mismatch");
   }
 
   return {

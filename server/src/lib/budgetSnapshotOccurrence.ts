@@ -8,6 +8,7 @@ import {
   type BudgetGenerationDefinition,
   type BudgetSnapshotGenerationValues,
 } from "../../shared/budgetSnapshotGeneration.js";
+import { occurrenceFrozen } from "./budgetOccurrenceModel.js";
 
 export type BudgetSnapshotOccurrenceAction =
   | "delete"
@@ -15,7 +16,9 @@ export type BudgetSnapshotOccurrenceAction =
   | "link"
   | "changeLink"
   | "unlink"
-  | "createAndLink";
+  | "createAndLink"
+  | "setActive"
+  | "correct";
 
 type Row = Record<string, unknown>;
 
@@ -27,6 +30,10 @@ interface NormalizedInput {
   occurrenceDate?: Date;
   expectedPlanFingerprint?: string;
   expectedCurrentSnapshotId?: number;
+  isActive?: boolean;
+  amount?: number;
+  transactionCost?: number | null;
+  isFlexible?: boolean;
 }
 
 interface Plan {
@@ -105,6 +112,8 @@ export const BUDGET_SNAPSHOT_OCCURRENCE_CONFIRMATIONS = {
   unlink: "unlink one transaction from its budget occurrence in sqlite",
   createAndLink:
     "create one budget occurrence and link one transaction in sqlite",
+  setActive: "change one historical budget occurrence active state in sqlite",
+  correct: "correct one historical budget occurrence in sqlite",
 } as const;
 
 const ACTION_FIELDS: Record<BudgetSnapshotOccurrenceAction, Set<string>> = {
@@ -118,6 +127,8 @@ const ACTION_FIELDS: Record<BudgetSnapshotOccurrenceAction, Set<string>> = {
   ]),
   unlink: new Set(["transactionId", "snapshotId"]),
   createAndLink: new Set(["budgetId", "occurrenceDate", "transactionId"]),
+  setActive: new Set(["snapshotId", "isActive"]),
+  correct: new Set(["snapshotId", "amount", "transactionCost", "isFlexible"]),
 };
 
 const CONTROL_FIELDS = new Set([
@@ -217,6 +228,27 @@ const normalizePayload = (
   if (allowed.has("occurrenceDate")) {
     normalized.occurrenceDate = occurrenceDate(payload.occurrenceDate);
   }
+  if (allowed.has("isActive")) {
+    if (typeof payload.isActive !== "boolean") {
+      throw new BudgetSnapshotOccurrenceRequestError("occurrence_active_invalid");
+    }
+    normalized.isActive = payload.isActive;
+  }
+  if (allowed.has("amount")) {
+    if (typeof payload.amount !== "number" || !Number.isFinite(payload.amount) || payload.amount === 0) {
+      throw new BudgetSnapshotOccurrenceRequestError("occurrence_amount_invalid");
+    }
+    normalized.amount = payload.amount;
+    if (payload.transactionCost !== null && payload.transactionCost !== undefined &&
+      (typeof payload.transactionCost !== "number" || !Number.isFinite(payload.transactionCost))) {
+      throw new BudgetSnapshotOccurrenceRequestError("occurrence_transaction_cost_invalid");
+    }
+    normalized.transactionCost = payload.transactionCost == null ? null : Number(payload.transactionCost);
+    if (typeof payload.isFlexible !== "boolean") {
+      throw new BudgetSnapshotOccurrenceRequestError("occurrence_flexible_invalid");
+    }
+    normalized.isFlexible = payload.isFlexible;
+  }
   return normalized;
 };
 
@@ -272,21 +304,21 @@ const storedBudget = (row: Row): BudgetGenerationDefinition => ({
 const sameNullableId = (left: unknown, right: unknown): boolean =>
   left == null || Number(left) === Number(right);
 
-const compatible = (transaction: Row, snapshot: Row): string[] => {
-  const errors: string[] = [];
+const compatibilityWarnings = (transaction: Row, snapshot: Row): string[] => {
+  const warnings: string[] = [];
   if (Number(transaction.isTransfer ?? 0) === 1) {
-    errors.push("transfer_transaction_not_supported");
+    warnings.push("transfer_transaction_not_supported");
   }
   if (Number(transaction.categoryId) !== Number(snapshot.categoryId)) {
-    errors.push("snapshot_category_mismatch");
+    warnings.push("snapshot_category_differs");
   }
   if (!sameNullableId(snapshot.accountId, transaction.accountId)) {
-    errors.push("snapshot_account_mismatch");
+    warnings.push("snapshot_account_differs");
   }
   if (!sameNullableId(snapshot.recipientId, transaction.recipientId)) {
-    errors.push("snapshot_recipient_mismatch");
+    warnings.push("snapshot_recipient_differs");
   }
-  return errors;
+  return warnings;
 };
 
 const fingerprint = (value: unknown): string =>
@@ -355,11 +387,23 @@ const buildPlan = (
     ).filter((row) => localDayKey(row.occurrenceDate) === snapshotDay).length;
   }
 
+  if (snapshot && (input.action === "link" || input.action === "changeLink") &&
+      Number(snapshot.isActive ?? 1) !== 1) {
+    validationErrors.push("occurrence_inactive");
+  }
+
   if (input.action === "delete") {
-    if (linkedTransactionCount > 0) validationErrors.push("snapshot_linked");
-    if (ambiguousLegacyReferenceCount > 0) {
-      validationErrors.push("ambiguous_legacy_snapshot_reference");
+    validationErrors.push("occurrence_delete_retired");
+  }
+  if (input.action === "setActive") {
+    if (!snapshot) validationErrors.push("snapshot_not_found");
+    else if (!occurrenceFrozen(String(snapshot.dueDate))) {
+      validationErrors.push("occurrence_not_frozen");
     }
+  }
+  if (input.action === "correct") {
+    if (!snapshot) validationErrors.push("snapshot_not_found");
+    else if (!occurrenceFrozen(String(snapshot.dueDate))) validationErrors.push("occurrence_not_frozen");
   }
 
   if (input.action === "unlink" && transaction) {
@@ -381,7 +425,11 @@ const buildPlan = (
     transaction &&
     snapshot
   ) {
-    validationErrors.push(...compatible(transaction, snapshot));
+    const compatibility = compatibilityWarnings(transaction, snapshot);
+    if (compatibility.includes("transfer_transaction_not_supported")) {
+      validationErrors.push("transfer_transaction_not_supported");
+    }
+    warnings.push(...compatibility.filter((code) => code !== "transfer_transaction_not_supported"));
     if (input.action === "changeLink") {
       if (
         input.expectedCurrentSnapshotId === undefined ||
@@ -472,7 +520,16 @@ const buildPlan = (
     }
     if (input.action === "createAndLink" && transaction) {
       const comparable = existingOccurrence ?? candidate;
-      if (comparable) validationErrors.push(...compatible(transaction, comparable as Row));
+      if (comparable) {
+        const compatibility = compatibilityWarnings(transaction, comparable as Row);
+        if (compatibility.includes("transfer_transaction_not_supported")) {
+          validationErrors.push("transfer_transaction_not_supported");
+        }
+        warnings.push(...compatibility.filter((code) => code !== "transfer_transaction_not_supported"));
+      }
+      if (existingOccurrence && Number(existingOccurrence.isActive ?? 1) !== 1) {
+        validationErrors.push("occurrence_inactive");
+      }
       if (transaction.budgetSnapshotId != null) {
         validationErrors.push("transaction_already_linked");
       } else if (
@@ -703,6 +760,15 @@ export const budgetSnapshotOccurrenceRealWrite = (
       snapshotRows = db
         .prepare("DELETE FROM budgetSnapshots WHERE id = ?")
         .run(snapshotId).changes;
+    } else if (action === "setActive") {
+      snapshotRows = db.prepare("UPDATE budgetSnapshots SET isActive = @isActive, updatedAt = @updatedAt WHERE id = @id")
+        .run({ id: snapshotId, isActive: plan.input.isActive ? 1 : 0, updatedAt: new Date().toISOString() }).changes;
+    } else if (action === "correct") {
+      snapshotRows = db.prepare(`UPDATE budgetSnapshots SET amount=@amount, transactionCost=@transactionCost,
+        isFlexible=@isFlexible, updatedAt=@updatedAt WHERE id=@id`).run({
+        id: snapshotId, amount: plan.input.amount, transactionCost: plan.input.transactionCost,
+        isFlexible: plan.input.isFlexible ? 1 : 0, updatedAt: new Date().toISOString(),
+      }).changes;
     } else if (action === "create" || action === "createAndLink") {
       if (!snapshotId && plan.candidate) {
         snapshotId = insertSnapshot(db, plan.candidate);
@@ -713,15 +779,11 @@ export const budgetSnapshotOccurrenceRealWrite = (
         transactionRows = db
           .prepare(
             `UPDATE transactions
-             SET budgetSnapshotId = @snapshotId,
-                 budgetId = @budgetId,
-                 occurrenceDate = @occurrenceDate
+             SET budgetSnapshotId = @snapshotId
              WHERE id = @transactionId`,
           )
           .run({
             snapshotId,
-            budgetId: plan.budget!.id,
-            occurrenceDate: plan.input.occurrenceDate!.toISOString(),
             transactionId: plan.input.transactionId,
           }).changes;
       }
@@ -731,15 +793,11 @@ export const budgetSnapshotOccurrenceRealWrite = (
         : db
             .prepare(
               `UPDATE transactions
-               SET budgetSnapshotId = @snapshotId,
-                   budgetId = @budgetId,
-                   occurrenceDate = @occurrenceDate
+               SET budgetSnapshotId = @snapshotId
                WHERE id = @transactionId`,
             )
             .run({
               snapshotId,
-              budgetId: plan.snapshot!.budgetId,
-              occurrenceDate: plan.snapshot!.occurrenceDate,
               transactionId: plan.input.transactionId,
             }).changes;
     } else {
@@ -748,13 +806,13 @@ export const budgetSnapshotOccurrenceRealWrite = (
         : db
             .prepare(
               `UPDATE transactions
-               SET budgetSnapshotId = NULL, budgetId = NULL, occurrenceDate = NULL
+               SET budgetSnapshotId = NULL
                WHERE id = @transactionId`,
             )
             .run({ transactionId: plan.input.transactionId }).changes;
     }
     const expectedSnapshotRows =
-      action === "delete"
+      action === "delete" || action === "setActive" || action === "correct"
         ? 1
         : (action === "create" || action === "createAndLink") &&
             !snapshotExistedBefore

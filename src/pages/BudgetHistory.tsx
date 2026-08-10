@@ -48,7 +48,6 @@ import {
   Recipient,
   Transaction,
   db,
-  migrateBudgetSnapshots,
   ensureBudgetSnapshotForOccurrence,
 } from "../db";
 import { CompleteBudgetModal } from "../components/CompleteBudgetModal";
@@ -85,10 +84,6 @@ import {
   dryRunBudgetSnapshotOccurrence,
   writeBudgetSnapshotOccurrence,
 } from "../repositories/http/budgetSnapshotOccurrenceWrite";
-import {
-  dryRunBudgetLifecycle,
-  writeBudgetLifecycle,
-} from "../repositories/http/budgetLifecycleWriteExperiment";
 import { createBasicTransactionInDisposableSqlite } from "../repositories/http/transactionBasicWriteExperiment";
 import "./Budget.css";
 
@@ -99,6 +94,8 @@ interface BudgetOccurrence {
   dueDate: Date;
   amountPaid: number;
   isCompleted: boolean;
+  isActive: boolean;
+  occurrenceStateSupported: boolean;
   timeGroup: string;
   linkedTransactions: Transaction[];
 }
@@ -413,6 +410,7 @@ const normalizeBudgetSnapshotRow = (row: unknown): BudgetSnapshot | undefined =>
         ? null
         : nullableNumberValue(source.remainingCyclesTotal),
     isHistorical,
+    isActive: booleanValue(source.isActive) ?? undefined,
     sourceBudgetUpdatedAt,
     createdAt,
     updatedAt,
@@ -526,10 +524,6 @@ const BudgetHistory: React.FC = () => {
     budgetHistoryHttpReadonlyExperimentActive &&
     authority.ready &&
     authority.budgetSnapshotOccurrenceWritesAvailable;
-  const lifecycleWritesActive =
-    budgetHistoryHttpReadonlyExperimentActive &&
-    authority.ready &&
-    authority.budgetLifecycleWritesAvailable;
   const showBudgetHistoryDiagnostics =
     !authority.authoritativeMode || !authority.ready;
 
@@ -793,8 +787,6 @@ const BudgetHistory: React.FC = () => {
         return;
       }
 
-      await migrateBudgetSnapshots();
-
       const [
         allSnapshots,
         allBudgets,
@@ -874,12 +866,23 @@ const BudgetHistory: React.FC = () => {
     });
   }, []);
 
+  const transactionsBySnapshotId = useMemo(() => {
+    const indexed = new Map<number, Transaction[]>();
+    transactions.forEach((transaction) => {
+      if (transaction.budgetSnapshotId == null) return;
+      const snapshotId = Number(transaction.budgetSnapshotId);
+      if (!Number.isFinite(snapshotId)) return;
+      const linked = indexed.get(snapshotId) ?? [];
+      linked.push(transaction);
+      indexed.set(snapshotId, linked);
+    });
+    return indexed;
+  }, [transactions]);
+
   const getLinkedTransactions = useCallback(
     (snapshotId: number | undefined, _budgetId: number, targetDate: Date) => {
       if (snapshotId !== undefined) {
-        return transactions.filter(
-          (txn) => Number(txn.budgetSnapshotId) === snapshotId,
-        );
+        return transactionsBySnapshotId.get(Number(snapshotId)) ?? [];
       }
 
       // Legacy fallback: rows without snapshot linkage, matched by occurrence date.
@@ -891,7 +894,7 @@ const BudgetHistory: React.FC = () => {
           normalizeToLocalDay(txn.occurrenceDate).getTime() === targetTime,
       );
     },
-    [transactions],
+    [transactions, transactionsBySnapshotId],
   );
 
   const isExpenseBudget = (
@@ -1203,13 +1206,14 @@ const BudgetHistory: React.FC = () => {
             isCompleted: isExpense
               ? amountPaid <= -effectiveTarget
               : amountPaid >= effectiveTarget,
+            isActive: snapshot.isActive !== false,
+            occurrenceStateSupported: snapshot.isActive !== undefined,
             timeGroup: getTimeGroup(dueDate),
             linkedTransactions,
           };
         },
       )
       .filter((occ): occ is BudgetOccurrence => occ !== null)
-      .filter((occ) => occ.budget.isActive || occ.amountPaid !== 0)
       .sort((a, b) => b.dueDate.getTime() - a.dueDate.getTime());
   }, [snapshots, budgets, getLinkedTransactions, getTimeGroup]);
 
@@ -1507,66 +1511,6 @@ const BudgetHistory: React.FC = () => {
     setShowDeleteConfirm(true);
   };
 
-  const handleToggleBudgetActive = async (budget: Budget) => {
-    if (!budget.id || !budget.accountId) {
-      setError("Budget lifecycle update requires a valid Budget and Account.");
-      return;
-    }
-
-    try {
-      if (budgetHistoryHttpReadonlyExperimentActive) {
-        if (!lifecycleWritesActive) {
-          setError("Budget lifecycle changes are currently unavailable.");
-          return;
-        }
-        const now = new Date();
-        const asOf = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-        const input = {
-          id: budget.id,
-          description: budget.description,
-          categoryId: budget.categoryId,
-          accountId: budget.accountId,
-          recipientId: budget.recipientId ?? null,
-          amount: budget.amount,
-          transactionCost: budget.transactionCost ?? null,
-          frequency: budget.frequency,
-          frequencyDetails: budget.frequencyDetails ?? null,
-          isGoal: budget.isGoal,
-          isFlexible: budget.isFlexible ?? false,
-          goalPercentage: budget.goalPercentage ?? null,
-          goalDirection: budget.goalDirection ?? null,
-          remainingCyclesTotal: budget.remainingCyclesTotal ?? null,
-          dueDate: budget.dueDate.toISOString(),
-          isActive: !budget.isActive,
-          asOf,
-        };
-        const dryRun = await dryRunBudgetLifecycle("update", input);
-        const confirmed = window.confirm(
-          `${budget.isActive ? "Deactivate" : "Reactivate"} this Budget?\n\n` +
-            `Unlinked current/future occurrences to remove: ${dryRun.unlinkedFutureSnapshotsProposedForCleanup}\n` +
-            `Linked occurrences retained: ${dryRun.linkedSnapshotsProtected}\n\n` +
-            "Historical and linked occurrences will remain unchanged.",
-        );
-        if (!confirmed) return;
-        await writeBudgetLifecycle("update", input, dryRun.planFingerprint!);
-      } else {
-      await db.budgets.update(budget.id, {
-        isActive: !budget.isActive,
-        updatedAt: new Date(),
-      });
-      }
-
-      setSuccessMsg(
-        `Budget ${budget.isActive ? "deactivated" : "activated"} successfully`,
-      );
-      setShowSuccessToast(true);
-      await loadData();
-    } catch (err) {
-      console.error("Error toggling budget active state:", err);
-      setError("Failed to update budget active state");
-    }
-  };
-
   const handleConfirmDelete = async () => {
     if (budgetHistoryHttpReadonlyExperimentActive) {
       setError("Budget History read experiment is read-only. Delete is disabled.");
@@ -1618,21 +1562,21 @@ const BudgetHistory: React.FC = () => {
           setError("Budget occurrence changes are currently unavailable.");
           return;
         }
-        const input = { snapshotId: snapshotToDeleteId };
-        const dryRun = await dryRunBudgetSnapshotOccurrence("delete", input);
+        const input = { snapshotId: snapshotToDeleteId, isActive: false };
+        const dryRun = await dryRunBudgetSnapshotOccurrence("setActive", input);
         const confirmed = window.confirm(
-          `Delete this Budget occurrence?\n\n` +
+          `Deactivate this Budget occurrence?\n\n` +
             `Linked transactions: ${dryRun.linkedTransactionCount}\n` +
             `Ambiguous legacy references: ${dryRun.ambiguousLegacyReferenceCount}\n` +
             "The Budget definition and all Transactions will remain unchanged.",
         );
         if (!confirmed) return;
         await writeBudgetSnapshotOccurrence(
-          "delete",
+          "setActive",
           input,
           dryRun.planFingerprint!,
         );
-        setSuccessMsg("Budget occurrence deleted successfully");
+        setSuccessMsg("Budget occurrence deactivated successfully");
         setShowSuccessToast(true);
         setShowDeleteConfirm(false);
         setSnapshotToDeleteId(undefined);
@@ -1641,8 +1585,11 @@ const BudgetHistory: React.FC = () => {
         await loadData();
         return;
       }
-      await db.budgetSnapshots.delete(snapshotToDeleteId);
-      setSuccessMsg("Budget occurrence deleted successfully");
+      await db.budgetSnapshots.update(snapshotToDeleteId, {
+        isActive: false,
+        updatedAt: new Date(),
+      });
+      setSuccessMsg("Budget occurrence deactivated successfully");
       setShowSuccessToast(true);
       setShowDeleteConfirm(false);
       setSnapshotToDeleteId(undefined);
@@ -1655,7 +1602,56 @@ const BudgetHistory: React.FC = () => {
     }
   };
 
+  const handleToggleOccurrenceActive = async (occurrence: BudgetOccurrence) => {
+    if (occurrence.budgetSnapshotId === undefined) {
+      setError("This runtime projection must be linked before it can be managed as an occurrence.");
+      return;
+    }
+
+    try {
+      if (budgetHistoryHttpReadonlyExperimentActive) {
+        if (!occurrenceWritesActive) {
+          setError("Budget occurrence changes are currently unavailable.");
+          return;
+        }
+        const input = {
+          snapshotId: occurrence.budgetSnapshotId,
+          isActive: !occurrence.isActive,
+        };
+        const dryRun = await dryRunBudgetSnapshotOccurrence("setActive", input);
+        const confirmed = window.confirm(
+          `${occurrence.isActive ? "Deactivate" : "Reactivate"} this Budget occurrence?\n\n` +
+            `Linked transactions: ${dryRun.linkedTransactionCount}\n` +
+            "The Budget definition and existing Transactions will remain unchanged.",
+        );
+        if (!confirmed) return;
+        await writeBudgetSnapshotOccurrence(
+          "setActive",
+          input,
+          dryRun.planFingerprint!,
+        );
+      } else {
+        await db.budgetSnapshots.update(occurrence.budgetSnapshotId, {
+          isActive: !occurrence.isActive,
+          updatedAt: new Date(),
+        });
+      }
+      setSuccessMsg(
+        `Budget occurrence ${occurrence.isActive ? "deactivated" : "reactivated"} successfully`,
+      );
+      setShowSuccessToast(true);
+      await loadData();
+    } catch (err) {
+      console.error("Error changing Budget occurrence state:", err);
+      setError("Failed to update Budget occurrence state");
+    }
+  };
+
   const handleOpenLinkModal = (budgetOccurrence: BudgetOccurrence) => {
+    if (!budgetOccurrence.isActive) {
+      setError("Reactivate this Budget occurrence before linking a Transaction.");
+      return;
+    }
     if (budgetHistoryHttpReadonlyExperimentActive && !occurrenceWritesActive) {
       setError("Budget occurrence transaction linking is currently unavailable.");
       return;
@@ -2833,74 +2829,60 @@ const BudgetHistory: React.FC = () => {
                                   >
                                     <IonIcon icon={linkOutline} slot="end" />
                                   </IonButton>
-                                  {(!budgetHistoryHttpReadonlyExperimentActive ||
-                                    lifecycleWritesActive) && (
-                                    <>
-                                      <IonButton
-                                        fill="clear"
-                                        size="small"
-                                        style={{ marginRight: "0" }}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          const snap = snapshots.find(
-                                            (s) => s.id === occ.budgetSnapshotId,
-                                          );
-                                          if (snap) {
-                                            const liveBudget = budgets.find(
-                                              (b) => b.id === occ.budgetId,
-                                            );
-                                            setSnapshotToEdit(snap);
-                                            setBudgetDueDateForEdit(
-                                              liveBudget?.dueDate,
-                                            );
-                                            setShowEditSnapshotModal(true);
-                                          }
-                                        }}
-                                        title="Edit This Occurrence"
-                                      >
-                                        <IonIcon icon={createOutline} slot="end" />
-                                      </IonButton>
-                                      <IonButton
-                                        fill="clear"
-                                        size="small"
-                                        style={{ marginRight: "0" }}
-                                        color={
-                                          occ.budget.isActive ? "success" : "medium"
-                                        }
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleToggleBudgetActive(occ.budget);
-                                        }}
-                                        title={
-                                          occ.budget.isActive
-                                            ? "Active (click to deactivate)"
-                                            : "Inactive (click to activate)"
-                                        }
-                                      >
-                                        <IonIcon
-                                          icon={
-                                            occ.budget.isActive
-                                              ? checkmarkCircleOutline
-                                              : closeCircleOutline
-                                          }
-                                          slot="end"
-                                        />
-                                      </IonButton>
-                                    </>
-                                  )}
                                   <IonButton
                                     fill="clear"
                                     size="small"
                                     style={{ marginRight: "0" }}
-                                    color="danger"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleDeleteClick(occ);
+                                      const snap = snapshots.find(
+                                        (s) => s.id === occ.budgetSnapshotId,
+                                      );
+                                      if (snap) {
+                                        const liveBudget = budgets.find(
+                                          (b) => b.id === occ.budgetId,
+                                        );
+                                        setSnapshotToEdit(snap);
+                                        setBudgetDueDateForEdit(liveBudget?.dueDate);
+                                        setShowEditSnapshotModal(true);
+                                      }
                                     }}
-                                    title="Delete Budget Item"
+                                    title="Edit This Occurrence"
+                                    aria-label="Edit this Budget occurrence"
                                   >
-                                    <IonIcon icon={trashOutline} slot="end" />
+                                    <IonIcon icon={createOutline} slot="end" />
                                   </IonButton>
+                                  {occ.occurrenceStateSupported && (
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    style={{ marginRight: "0" }}
+                                    color={occ.isActive ? "success" : "medium"}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleOccurrenceActive(occ);
+                                    }}
+                                    title={
+                                      occ.isActive
+                                        ? "Occurrence active (click to deactivate)"
+                                        : "Occurrence inactive (click to reactivate)"
+                                    }
+                                    aria-label={
+                                      occ.isActive
+                                        ? "Deactivate this Budget occurrence"
+                                        : "Reactivate this Budget occurrence"
+                                    }
+                                  >
+                                    <IonIcon
+                                      icon={
+                                        occ.isActive
+                                          ? checkmarkCircleOutline
+                                          : closeCircleOutline
+                                      }
+                                      slot="end"
+                                    />
+                                  </IonButton>
+                                  )}
                                 </IonCol>
                               </IonRow>
                             )}
@@ -2932,6 +2914,21 @@ const BudgetHistory: React.FC = () => {
               setBudgetDueDateForEdit(undefined);
               loadData();
             }}
+            onSaveInSqlite={
+              budgetHistoryHttpReadonlyExperimentActive
+                ? async (input) => {
+                    if (!occurrenceWritesActive) {
+                      throw new Error("Budget occurrence changes are currently unavailable.");
+                    }
+                    const dryRun = await dryRunBudgetSnapshotOccurrence("correct", input);
+                    await writeBudgetSnapshotOccurrence(
+                      "correct",
+                      input,
+                      dryRun.planFingerprint!,
+                    );
+                  }
+                : undefined
+            }
           />
         )}
 

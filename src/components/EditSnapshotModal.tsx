@@ -22,6 +22,12 @@ interface Props {
   isOpen: boolean;
   onDismiss: () => void;
   onSaved: () => void;
+  onSaveInSqlite?: (input: {
+    snapshotId: number;
+    amount: number;
+    transactionCost: number | null;
+    isFlexible: boolean;
+  }) => Promise<void>;
 }
 
 export const EditSnapshotModal: React.FC<Props> = ({
@@ -30,6 +36,7 @@ export const EditSnapshotModal: React.FC<Props> = ({
   isOpen,
   onDismiss,
   onSaved,
+  onSaveInSqlite,
 }) => {
   const [amount, setAmount] = useState("");
   const [transactionCost, setTransactionCost] = useState("");
@@ -77,12 +84,21 @@ export const EditSnapshotModal: React.FC<Props> = ({
           : Math.abs(parsedCost)
         : undefined;
 
-    await db.budgetSnapshots.update(snapshot.id, {
-      amount: signedAmount,
-      transactionCost: signedCost,
-      isFlexible,
-      updatedAt: new Date(),
-    });
+    if (onSaveInSqlite) {
+      await onSaveInSqlite({
+        snapshotId: snapshot.id,
+        amount: signedAmount,
+        transactionCost: signedCost ?? null,
+        isFlexible,
+      });
+    } else {
+      await db.budgetSnapshots.update(snapshot.id, {
+        amount: signedAmount,
+        transactionCost: signedCost,
+        isFlexible,
+        updatedAt: new Date(),
+      });
+    }
 
     onSaved();
   };

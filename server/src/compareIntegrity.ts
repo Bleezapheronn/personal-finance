@@ -334,12 +334,6 @@ const summarizeIntegrity = (data: IntegrityData): IntegritySummary => {
       const snapshot = budgetSnapshotById.get(transaction.budgetSnapshotId);
       if (!snapshot) {
         increment(summary, "transaction_missing_budget_snapshot");
-      } else if (
-        transaction.budgetId !== undefined &&
-        snapshot.budgetId !== undefined &&
-        snapshot.budgetId !== transaction.budgetId
-      ) {
-        increment(summary, "transaction_budget_snapshot_budget_mismatch");
       }
     }
   }

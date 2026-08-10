@@ -86,22 +86,6 @@ export interface TransactionBudgetReference {
   id?: number;
 }
 
-const sameInstant = (
-  left: Date | string | null | undefined,
-  right: Date | string | null | undefined,
-): boolean => {
-  if (left == null || right == null) {
-    return false;
-  }
-  const leftTime = new Date(left).getTime();
-  const rightTime = new Date(right).getTime();
-  return (
-    Number.isFinite(leftTime) &&
-    Number.isFinite(rightTime) &&
-    leftTime === rightTime
-  );
-};
-
 export const transactionCostBudgetBaseEligibilityReason = (
   transaction: BasicTransactionEligibilityInput,
 ): string | undefined => {
@@ -154,9 +138,6 @@ export const transactionCostBudgetEligibilityReason = (
       ? "legacy_only_budget_link_not_supported"
       : undefined;
   }
-  if (!hasLegacyBudget || !hasOccurrence) {
-    return "budget_linkage_incomplete";
-  }
 
   const snapshot = snapshots.find(
     (candidate) => candidate.id === transaction.budgetSnapshotId,
@@ -166,13 +147,9 @@ export const transactionCostBudgetEligibilityReason = (
   }
   if (
     typeof snapshot.budgetId !== "number" ||
-    snapshot.budgetId !== transaction.budgetId ||
     !budgets.some((budget) => budget.id === snapshot.budgetId)
   ) {
     return "budget_snapshot_budget_mismatch";
-  }
-  if (!sameInstant(transaction.occurrenceDate, snapshot.dueDate)) {
-    return "budget_snapshot_occurrence_mismatch";
   }
   return undefined;
 };

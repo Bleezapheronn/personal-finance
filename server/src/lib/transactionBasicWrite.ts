@@ -321,7 +321,7 @@ const createTransaction = (
       ) VALUES (
         @categoryId, NULL, @accountId, @recipientId, @date, @amount,
         @originalAmount, @originalCurrency, @exchangeRate, @transactionReference,
-        @transactionCost, @description, NULL, 0, @budgetId, @occurrenceDate,
+        @transactionCost, @description, NULL, 0, NULL, NULL,
         @budgetSnapshotId
       )`,
     )
@@ -384,8 +384,6 @@ const updateTransaction = (
            transactionReference = @transactionReference,
            description = @description,
            transactionCost = @transactionCost,
-           budgetId = @budgetId,
-           occurrenceDate = @occurrenceDate,
            budgetSnapshotId = @budgetSnapshotId
        WHERE id = @id`
     : `UPDATE transactions

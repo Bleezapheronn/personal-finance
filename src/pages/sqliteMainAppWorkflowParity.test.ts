@@ -63,6 +63,35 @@ describe("SQLite main-app workflow parity cleanup", () => {
     );
   });
 
+  it("keeps Budget reads free of snapshot generation and makes History occurrence-only", () => {
+    const budget = source("src/pages/Budget.tsx");
+    const history = source("src/pages/BudgetHistory.tsx");
+    expect(budget).not.toContain("migrateBudgetSnapshots()");
+    expect(history).not.toContain("migrateBudgetSnapshots()");
+    expect(history).not.toContain("handleToggleBudgetActive");
+    expect(history).toContain("occurrenceStateSupported");
+  });
+
+  it("uses a snapshot linkage index instead of scanning all Transactions per occurrence", () => {
+    const budget = source("src/pages/Budget.tsx");
+    const history = source("src/pages/BudgetHistory.tsx");
+    expect(budget).toContain("transactionsBySnapshotId");
+    expect(history).toContain("transactionsBySnapshotId");
+    expect(budget).toContain("transactionsBySnapshotId.get(numericSnapshotId)");
+    expect(history).toContain("transactionsBySnapshotId.get(Number(snapshotId))");
+  });
+
+  it("initializes Add Payment once per open occurrence", () => {
+    const modal = source("src/components/CompleteBudgetModal.tsx");
+    const budget = source("src/pages/Budget.tsx");
+    const history = source("src/pages/BudgetHistory.tsx");
+    expect(modal).toContain("initializedOccurrenceRef");
+    expect(modal).toContain("if (initializedOccurrenceRef.current === occurrenceKey) return;");
+    expect(modal).toContain("so lookup renders cannot overwrite values the user can see");
+    expect(budget).toContain("<CompleteBudgetModal");
+    expect(history).toContain("<CompleteBudgetModal");
+  });
+
   it("does not expose snapshot selection in Add Transaction", () => {
     const addTransaction = source("src/pages/AddTransaction.tsx");
     expect(addTransaction).not.toContain("Existing Budget Snapshot (optional)");

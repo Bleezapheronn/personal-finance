@@ -153,6 +153,14 @@ import {
   validateBudgetLifecyclePayload,
 } from "./lib/budgetLifecycle.js";
 import {
+  budgetScheduleSuccessorDryRun,
+  budgetScheduleSuccessorWrite,
+} from "./lib/budgetScheduleSuccessor.js";
+import {
+  budgetOccurrenceSchemaMigrationDryRun,
+  budgetOccurrenceSchemaMigrationWrite,
+} from "./lib/budgetOccurrenceSchemaMigration.js";
+import {
   budgetDeleteDisabledResponse,
   budgetDeleteDryRun,
   budgetDeleteRealWrite,
@@ -2001,6 +2009,51 @@ for (const action of ["create", "update"] as const) {
   );
 }
 
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/budgets/schedule-successor/dry-run",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try { opened = openConfiguredReadOnlyDatabase(); } catch { return reply.code(503).send({ ok: false, code: "sqlite_unavailable" }); }
+    if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+    try {
+      const result = budgetScheduleSuccessorDryRun(opened.db, request.body);
+      return result.ok ? result : reply.code(409).send(result);
+    } catch (error) {
+      return reply.code(400).send({ ok: false, code: error instanceof Error ? error.message : "schedule_successor_invalid" });
+    } finally { opened.db.close(); }
+  },
+);
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/budgets/schedule-successor/write",
+  async (request, reply) => {
+    if (!areBudgetLifecycleWritesEnabled()) return reply.code(403).send({ ok: false, code: "budget_lifecycle_writes_disabled" });
+    let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+    try { opened = openConfiguredWritableDatabase(); } catch { return reply.code(503).send({ ok: false, code: "sqlite_unavailable" }); }
+    if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+    try {
+      const result = budgetScheduleSuccessorWrite(opened.db, request.body);
+      return result.ok ? result : reply.code(409).send(result);
+    } catch (error) {
+      return reply.code(400).send({ ok: false, code: error instanceof Error ? error.message : "schedule_successor_write_failed" });
+    } finally { opened.db.close(); }
+  },
+);
+
+server.post("/prototype/repositories/budget-occurrences/schema-migration/dry-run", async (_request, reply) => {
+  let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+  try { opened = openConfiguredReadOnlyDatabase(); } catch { return reply.code(503).send({ ok: false, code: "sqlite_unavailable" }); }
+  if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+  try { return budgetOccurrenceSchemaMigrationDryRun(opened.db); } finally { opened.db.close(); }
+});
+server.post<{ Body: unknown }>("/prototype/repositories/budget-occurrences/schema-migration/write", async (request, reply) => {
+  let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+  try { opened = openConfiguredWritableDatabase(); } catch { return reply.code(503).send({ ok: false, code: "sqlite_unavailable" }); }
+  if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+  try { return budgetOccurrenceSchemaMigrationWrite(opened.db, request.body); }
+  catch (error) { return reply.code(400).send({ ok: false, code: error instanceof Error ? error.message : "budget_occurrence_schema_migration_failed" }); }
+  finally { opened.db.close(); }
+});
+
 for (const action of [
   "delete",
   "create",
@@ -2008,6 +2061,8 @@ for (const action of [
   "changeLink",
   "unlink",
   "createAndLink",
+  "setActive",
+  "correct",
 ] as const satisfies readonly BudgetSnapshotOccurrenceAction[]) {
   server.post<{ Body: unknown }>(
     `/prototype/repositories/budget-snapshot-occurrences/dry-run/${action}`,

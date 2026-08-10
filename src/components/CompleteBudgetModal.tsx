@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   IonModal,
   IonHeader,
@@ -77,6 +77,7 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const initializedOccurrenceRef = useRef<string | null>(null);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
@@ -207,36 +208,38 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
 
   // Reset form when modal opens
   useEffect(() => {
-    if (isOpen) {
-      setTransactionReference("");
-      setTransactionTime("");
-      // Remaining target includes amount + cost; split them for field prefill.
-      const remainingBudget = Math.abs(getRemainingTargetAmount());
-      const defaultCost = getDefaultTransactionCostAbs();
-
-      if (
-        remainingBudget > 0 &&
-        defaultCost > 0 &&
-        remainingBudget > defaultCost
-      ) {
-        setTransactionAmount(
-          toCurrencyInputValue(remainingBudget - defaultCost),
-        );
-        setTransactionCost(toCurrencyInputValue(defaultCost));
-      } else if (remainingBudget > 0) {
-        setTransactionAmount(toCurrencyInputValue(remainingBudget));
-        setTransactionCost("");
-      } else {
-        setTransactionAmount("");
-        setTransactionCost(
-          defaultCost > 0 ? toCurrencyInputValue(defaultCost) : "",
-        );
-      }
-      setErrorMsg("");
-      setSuccessMsg("");
+    if (!isOpen) {
+      initializedOccurrenceRef.current = null;
+      return;
     }
+
+    const occurrenceKey = `${budgetOccurrence.budgetId}:${budgetOccurrence.dueDate.getTime()}`;
+    // Lookup data arrives asynchronously. Initialize only once for this open
+    // occurrence so lookup renders cannot overwrite values the user can see.
+    if (initializedOccurrenceRef.current === occurrenceKey) return;
+    initializedOccurrenceRef.current = occurrenceKey;
+
+    setTransactionReference("");
+    setTransactionTime("");
+    const remainingBudget = Math.abs(getRemainingTargetAmount());
+    const defaultCost = getDefaultTransactionCostAbs();
+
+    if (remainingBudget > 0 && defaultCost > 0 && remainingBudget > defaultCost) {
+      setTransactionAmount(toCurrencyInputValue(remainingBudget - defaultCost));
+      setTransactionCost(toCurrencyInputValue(defaultCost));
+    } else if (remainingBudget > 0) {
+      setTransactionAmount(toCurrencyInputValue(remainingBudget));
+      setTransactionCost("");
+    } else {
+      setTransactionAmount("");
+      setTransactionCost(defaultCost > 0 ? toCurrencyInputValue(defaultCost) : "");
+    }
+    setErrorMsg("");
+    setSuccessMsg("");
   }, [
     isOpen,
+    budgetOccurrence.budgetId,
+    budgetOccurrence.dueDate,
     getRemainingTargetAmount,
     getDefaultTransactionCostAbs,
     toCurrencyInputValue,

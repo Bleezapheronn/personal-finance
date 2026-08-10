@@ -61,6 +61,10 @@ import {
   writeBudgetLifecycle,
 } from "../repositories/http/budgetLifecycleWriteExperiment";
 import {
+  createBudgetScheduleSuccessor,
+  dryRunBudgetScheduleSuccessor,
+} from "../repositories/http/budgetScheduleSuccessorWrite";
+import {
   budgetActiveStateForEdit,
   budgetActiveStateForSubmission,
   shouldShowBudgetLifecycleActiveControl,
@@ -914,6 +918,16 @@ const AddBudget: React.FC = () => {
         const now = new Date();
         const pad = (value: number) => String(value).padStart(2, "0");
         const localAsOf = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        const reactivationRequested = action === "update" &&
+          editingBudget?.isActive === false && budgetData.isActive;
+        const reactivationResponse = reactivationRequested
+          ? window.prompt("Reactivate Budget: type RESUME to begin today, or BACKFILL to materialize the inactive interval.")?.trim().toLowerCase()
+          : undefined;
+        if (reactivationRequested && reactivationResponse !== "resume" && reactivationResponse !== "backfill") {
+          setErrorMsg("Choose RESUME or BACKFILL to reactivate this Budget.");
+          return;
+        }
+        const reactivationMode = reactivationResponse as "resume" | "backfill" | undefined;
         const lifecycleInput = {
           ...(action === "update" ? { id: Number(id) } : {}),
           description: budgetData.description,
@@ -932,11 +946,44 @@ const AddBudget: React.FC = () => {
           dueDate: budgetData.dueDate.toISOString(),
           isActive: budgetData.isActive,
           asOf: localAsOf,
+          ...(reactivationMode ? { reactivationMode } : {}),
         };
+        const scheduleChanged = Boolean(
+          action === "update" &&
+          editingBudget &&
+          editingBudget.frequency !== budgetData.frequency ||
+          action === "update" && editingBudget &&
+          new Date(editingBudget.dueDate).toDateString() !== budgetData.dueDate.toDateString() ||
+          action === "update" && editingBudget &&
+          JSON.stringify(editingBudget.frequencyDetails ?? null) !== JSON.stringify(budgetData.frequencyDetails ?? null),
+        );
+        if (scheduleChanged && editingBudget?.frequency !== "once") {
+          const successorInput = {
+            budgetId: Number(id),
+            asOf: localAsOf,
+            definition: { ...lifecycleInput, dueDate: budgetData.dueDate.toISOString() },
+          };
+          delete (successorInput.definition as { id?: number }).id;
+          delete (successorInput.definition as { isActive?: boolean }).isActive;
+          delete (successorInput.definition as { asOf?: string }).asOf;
+          const dryRun = await dryRunBudgetScheduleSuccessor(successorInput);
+          if (!window.confirm(`Create a successor Budget for this schedule change?\n\n` +
+            `Prepaid occurrences to transfer: ${dryRun.transferredOccurrenceCount ?? 0}\n` +
+            `Remaining cycles: ${dryRun.remainingCyclesTotal ?? "unlimited"}\n\n` +
+            "The previous Budget will stop projecting future occurrences.")) return;
+          const writeResponse = await createBudgetScheduleSuccessor(successorInput);
+          sqliteWriteConfirmed = true;
+          const successorId = Number(writeResponse.successorId);
+          const refreshed = await getSelectedReadRepositories(repositoryBackend).budgets.getById(successorId);
+          if (!refreshed) throw new Error("budget_schedule_successor_refresh_failed");
+          setSuccessToastMessage("Budget schedule updated through a successor Budget.");
+          setShowSuccessToast(true);
+          setTimeout(() => history.push("/budget"), 500);
+          return;
+        }
         const dryRun = await dryRunBudgetLifecycle(action, lifecycleInput);
         const confirmed = window.confirm(
           `Apply safer SQLite Budget lifecycle?\n\n` +
-            `Unlinked current/future snapshots to remove: ${dryRun.unlinkedFutureSnapshotsProposedForCleanup}\n` +
             `Linked snapshots protected: ${dryRun.linkedSnapshotsProtected}\n` +
             `Out-of-schedule linked snapshots retained: ${dryRun.outOfScheduleLinkedSnapshotsRetained}\n` +
             `Snapshots to generate: ${dryRun.snapshotsProposedForGeneration}\n\n` +

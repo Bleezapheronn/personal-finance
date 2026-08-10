@@ -8,6 +8,10 @@ import {
   type BudgetSnapshotGenerationCandidate,
 } from "../../shared/budgetSnapshotGeneration.js";
 import {
+  catchUpHistoricalOccurrences,
+  syncMutableOccurrenceValues,
+} from "./budgetOccurrenceModel.js";
+import {
   budgetDefinitionDryRun,
   BudgetDefinitionDryRunRequestError,
   normalizeBudgetDefinitionPayload,
@@ -41,6 +45,7 @@ interface NormalizedLifecycleInput {
   definition: NormalizedBudgetDefinitionInput;
   isActive: boolean;
   asOf: Date;
+  reactivationMode?: "resume" | "backfill";
 }
 
 interface LifecyclePlan {
@@ -124,7 +129,7 @@ const definitionPayload = (payload: Row, action: Action): Row =>
 const allowedFields = (action: Action, write: boolean): Set<string> => new Set([
   ...DEFINITION_FIELDS,
   ...(action === "update" ? ["id"] : []),
-  "isActive", "asOf",
+  "isActive", "asOf", "reactivationMode",
   ...(write ? ["dryRunReviewed", "confirmation", "expectedPlanFingerprint"] : []),
 ]);
 
@@ -140,6 +145,10 @@ const normalizePayload = (
   if (payload.asOf === undefined) throw new BudgetLifecycleRequestError("asOf_required");
   if (typeof payload.isActive !== "boolean") {
     throw new BudgetLifecycleRequestError("isActive_invalid");
+  }
+  if (payload.reactivationMode !== undefined &&
+      payload.reactivationMode !== "resume" && payload.reactivationMode !== "backfill") {
+    throw new BudgetLifecycleRequestError("reactivation_mode_invalid");
   }
   if (write) {
     if (payload.dryRunReviewed !== true) {
@@ -159,6 +168,7 @@ const normalizePayload = (
       definition: normalizeBudgetDefinitionPayload(definitionPayload(payload, action), action),
       isActive: payload.isActive,
       asOf: normalizeBudgetSnapshotGenerationAsOf(payload.asOf),
+      ...(payload.reactivationMode ? { reactivationMode: payload.reactivationMode } : {}),
       ...(write ? { expectedPlanFingerprint: String(payload.expectedPlanFingerprint) } : {}),
     };
   } catch (error) {
@@ -288,34 +298,37 @@ const buildPlan = (db: Database.Database, input: NormalizedLifecycleInput): Life
     budgets: [budget], existingSnapshots: snapshotIdentities(targetSnapshots), asOf: input.asOf,
   });
   conflictsForPlan(conflictPlan, conflicts);
-  const generationPlan = input.isActive
-    ? calculateMissingBudgetSnapshotPlan({
-        budgets: [budget], existingSnapshots: snapshotIdentities(retainedSnapshots), asOf: input.asOf,
-      })
-    : undefined;
-  if (generationPlan) conflictsForPlan(generationPlan, conflicts);
+  // The authoritative model materializes only occurrences already frozen.
+  // Today/future unlinked occurrences are projections and never lifecycle coverage.
+  const generationPlan = undefined;
 
   let scheduleKeys = new Set<string>();
   try {
-    if (input.isActive) {
-      scheduleKeys = new Set(
-        calculateBudgetOccurrenceSchedule(budget, generationPlan!.activeHorizon)
-          .map((occurrence) => localDayKey(occurrence.occurrenceDate)),
-      );
-    }
+    if (input.isActive) scheduleKeys = new Set(
+      calculateBudgetOccurrenceSchedule(budget, input.asOf)
+        .map((occurrence) => localDayKey(occurrence.occurrenceDate)),
+    );
   } catch (error) {
     validationErrors.push(error instanceof Error ? error.message : "recurrence_invalid");
   }
   const outOfScheduleProtectedCount = protectedSnapshots.filter(
     (snapshot) => !scheduleKeys.has(localDayKey(String(snapshot.occurrenceDate))),
   ).length;
-  const generationCandidates = generationPlan?.candidates ?? [];
+  const generationCandidates: BudgetSnapshotGenerationCandidate[] = [];
+  if (currentBudget && Number(currentBudget.isActive) === 0 && input.isActive === false) {
+    validationErrors.push("inactive_budget_definition_edit_requires_reactivation");
+  }
+  if (currentBudget && Number(currentBudget.isActive) === 0 && input.isActive === true &&
+      !input.reactivationMode) {
+    validationErrors.push("reactivation_mode_required");
+  }
   const uniqueErrors = [...new Set(validationErrors)];
   const uniqueConflicts = [...conflicts].sort();
   const state = {
     action: input.action,
     definition: input.definition,
     isActive: input.isActive,
+    reactivationMode: input.reactivationMode ?? null,
     asOf: localDayKey(input.asOf),
     budgets: rows(db, "budgets"),
     targetSnapshots,
@@ -497,11 +510,14 @@ export const budgetLifecycleRealWrite = (
           : beforePlan.validationErrors[0] ?? beforePlan.conflicts[0],
       });
     }
-    const before = Object.fromEntries(
-      [...IMMUTABLE_TABLES, "budgets", "budgetSnapshots"].map(
-        (table) => [table, rows(db, table)],
-      ),
+    const immutableBefore = Object.fromEntries(
+      IMMUTABLE_TABLES.map((table) => [table, rows(db, table)]),
     ) as Record<string, Row[]>;
+    const budgetsBefore = rows(db, "budgets");
+    const snapshotsBefore = rows(db, "budgetSnapshots");
+    // Capture yesterday under the old definition before changing it.
+    let historicalInserted = 0;
+    if (action === "update") historicalInserted = catchUpHistoricalOccurrences(db, beforePlan.targetId, input.asOf);
     const definition = sqlDefinition(input);
     const timestamp = nextTimestamp(beforePlan.currentBudget?.updatedAt);
     let targetId = beforePlan.targetId;
@@ -510,14 +526,14 @@ export const budgetLifecycleRealWrite = (
       const result = db.prepare(`INSERT INTO budgets (
         description, categoryId, paymentChannelId, accountId, recipientId,
         amount, transactionCost, frequency, frequencyDetails, isGoal, isFlexible,
-        goalPercentage, goalDirection, isActive, remainingCyclesTotal, dueDate,
+        goalPercentage, goalDirection, isActive, remainingCyclesTotal, predecessorBudgetId, projectionStartsOn, dueDate,
         createdAt, updatedAt
       ) VALUES (
         @description, @categoryId, NULL, @accountId, @recipientId, @amount,
         @transactionCost, @frequency, @frequencyDetails, @isGoal, @isFlexible,
-        @goalPercentage, @goalDirection, @isActive, @remainingCyclesTotal,
+        @goalPercentage, @goalDirection, @isActive, @remainingCyclesTotal, NULL, @projectionStartsOn,
         @dueDate, @createdAt, @updatedAt
-      )`).run({ ...definition, createdAt: timestamp, updatedAt: timestamp });
+      )`).run({ ...definition, projectionStartsOn: input.definition.dueDate, createdAt: timestamp, updatedAt: timestamp });
       targetId = Number(result.lastInsertRowid);
       budgetChanges = result.changes;
       if (targetId !== beforePlan.targetId) throw new Error("budget_lifecycle_target_id_changed");
@@ -527,78 +543,48 @@ export const budgetLifecycleRealWrite = (
         recipientId=@recipientId, amount=@amount, transactionCost=@transactionCost,
         frequency=@frequency, frequencyDetails=@frequencyDetails, isGoal=@isGoal,
         isFlexible=@isFlexible, goalPercentage=@goalPercentage,
-        goalDirection=@goalDirection, isActive=@isActive,
-        remainingCyclesTotal=@remainingCyclesTotal, dueDate=@dueDate,
-        updatedAt=@updatedAt WHERE id=@id
-      `).run({ ...definition, id: targetId, updatedAt: timestamp }).changes;
+      goalDirection=@goalDirection, isActive=@isActive,
+      remainingCyclesTotal=@remainingCyclesTotal, dueDate=@dueDate,
+      projectionStartsOn=@projectionStartsOn,
+      updatedAt=@updatedAt WHERE id=@id
+      `).run({
+        ...definition,
+        id: targetId,
+        projectionStartsOn: Number(beforePlan.currentBudget?.isActive) === 0 &&
+          input.isActive && input.reactivationMode === "resume"
+          ? localDayKey(input.asOf)
+          : beforePlan.currentBudget?.projectionStartsOn ?? beforePlan.currentBudget?.dueDate,
+        updatedAt: timestamp,
+      }).changes;
     }
     if (budgetChanges !== 1) throw new Error("budget_lifecycle_definition_change_failed");
 
-    const deleteStatement = db.prepare("DELETE FROM budgetSnapshots WHERE id = @id");
-    let deleted = 0;
-    beforePlan.cleanupSnapshots.forEach((snapshot) => {
-      deleted += deleteStatement.run({ id: snapshot.id }).changes;
-    });
-    if (deleted !== beforePlan.cleanupSnapshots.length) {
-      throw new Error("budget_lifecycle_cleanup_count_mismatch");
-    }
-
-    const persistedBudget = rowById(db, "budgets", targetId);
-    if (!persistedBudget) throw new Error("budget_lifecycle_target_missing_after_write");
-    const retained = db.prepare(
-      "SELECT * FROM budgetSnapshots WHERE budgetId = @budgetId ORDER BY id ASC",
-    ).all({ budgetId: targetId }) as Row[];
-    const generationPlan = input.isActive
-      ? calculateMissingBudgetSnapshotPlan({
-          budgets: [storedBudget(persistedBudget)],
-          existingSnapshots: snapshotIdentities(retained),
-          asOf: input.asOf,
-        })
-      : undefined;
-    if (generationPlan &&
-        (generationPlan.conflictCount > 0 || generationPlan.validationErrors.length > 0)) {
-      throw new Error("budget_lifecycle_generation_conflict_after_write");
-    }
-    let inserted = 0;
-    for (const candidate of generationPlan?.candidates ?? []) {
-      inserted += insertSnapshot(db, candidate, timestamp).changes;
-    }
+    const inserted = action === "create" ? catchUpHistoricalOccurrences(db, targetId, input.asOf) : 0;
+    const backfilled = action === "update" && Number(beforePlan.currentBudget?.isActive) === 0 &&
+      input.isActive && input.reactivationMode === "backfill"
+      ? catchUpHistoricalOccurrences(db, targetId, input.asOf)
+      : 0;
+    const synchronized = input.isActive ? syncMutableOccurrenceValues(db, targetId, input.asOf) : 0;
 
     for (const table of IMMUTABLE_TABLES) {
-      if (serialized(rows(db, table)) !== serialized(before[table])) {
+      if (serialized(rows(db, table)) !== serialized(immutableBefore[table])) {
         throw new Error(`budget_lifecycle_changed_${table}`);
       }
     }
-    const otherBudgetsBefore = before.budgets.filter((row) => Number(row.id) !== targetId);
+    const otherBudgetsBefore = budgetsBefore.filter((row) => Number(row.id) !== targetId);
     const otherBudgetsAfter = rows(db, "budgets").filter((row) => Number(row.id) !== targetId);
-    if (serialized(otherBudgetsAfter) !== serialized(otherBudgetsBefore)) {
+    if (serialized(otherBudgetsBefore) !== serialized(otherBudgetsAfter)) {
       throw new Error("budget_lifecycle_changed_unrelated_budgets");
     }
-    const otherSnapshotsBefore = before.budgetSnapshots.filter((row) => Number(row.budgetId) !== targetId);
+    const otherSnapshotsBefore = snapshotsBefore.filter((row) => Number(row.budgetId) !== targetId);
     const otherSnapshotsAfter = rows(db, "budgetSnapshots").filter((row) => Number(row.budgetId) !== targetId);
-    if (serialized(otherSnapshotsAfter) !== serialized(otherSnapshotsBefore)) {
+    if (serialized(otherSnapshotsBefore) !== serialized(otherSnapshotsAfter)) {
       throw new Error("budget_lifecycle_changed_unrelated_snapshots");
-    }
-    const finalTarget = rows(db, "budgetSnapshots").filter((row) => Number(row.budgetId) === targetId);
-    for (const retainedRow of beforePlan.retainedSnapshots) {
-      const after = finalTarget.find((row) => Number(row.id) === Number(retainedRow.id));
-      if (serialized(after) !== serialized(retainedRow)) {
-        throw new Error("budget_lifecycle_changed_retained_snapshot");
-      }
-    }
-    const finalCheck = calculateMissingBudgetSnapshotPlan({
-      budgets: [storedBudget(persistedBudget)],
-      existingSnapshots: snapshotIdentities(finalTarget),
-      asOf: input.asOf,
-    });
-    if (finalCheck.conflictCount > 0 || finalCheck.validationErrors.length > 0 ||
-        (input.isActive && finalCheck.candidates.length > 0)) {
-      throw new Error("budget_lifecycle_final_state_invalid");
     }
     return buildResponse(beforePlan, {
       dryRun: false,
       sqliteMutated: true,
-      rowsChanged: budgetChanges + deleted + inserted,
+      rowsChanged: budgetChanges + historicalInserted + inserted + backfilled + synchronized,
     });
   });
   return execute.immediate();

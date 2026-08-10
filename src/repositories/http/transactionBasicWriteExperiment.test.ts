@@ -42,6 +42,16 @@ describe("transaction cost and Budget edit eligibility", () => {
     ).toBeUndefined();
   });
 
+  test("accepts a canonical snapshot link without legacy Budget fields", () => {
+    expect(
+      transactionCostBudgetEligibilityReason(
+        { ...transaction, budgetSnapshotId: 10 },
+        [{ id: 10, budgetId: 20, dueDate: "2026-07-23T00:00:00.000Z" }],
+        [{ id: 20 }],
+      ),
+    ).toBeUndefined();
+  });
+
   test("rejects a missing snapshot", () => {
     expect(
       transactionCostBudgetEligibilityReason(
@@ -57,7 +67,7 @@ describe("transaction cost and Budget edit eligibility", () => {
     ).toBe("budget_snapshot_not_found");
   });
 
-  test("rejects a Budget mismatch", () => {
+  test("does not treat legacy Budget/date parity as canonical linkage", () => {
     expect(
       transactionCostBudgetEligibilityReason(
         {
@@ -75,28 +85,7 @@ describe("transaction cost and Budget edit eligibility", () => {
         ],
         [{ id: 20 }],
       ),
-    ).toBe("budget_snapshot_budget_mismatch");
-  });
-
-  test("rejects an occurrence mismatch", () => {
-    expect(
-      transactionCostBudgetEligibilityReason(
-        {
-          ...transaction,
-          budgetId: 20,
-          budgetSnapshotId: 10,
-          occurrenceDate: "2026-07-24T00:00:00.000Z",
-        },
-        [
-          {
-            id: 10,
-            budgetId: 20,
-            dueDate: "2026-07-23T00:00:00.000Z",
-          },
-        ],
-        [{ id: 20 }],
-      ),
-    ).toBe("budget_snapshot_occurrence_mismatch");
+    ).toBeUndefined();
   });
 
   test("rejects legacy-only linkage", () => {

@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS budgets (
   goalDirection TEXT,
   isActive INTEGER NOT NULL,
   remainingCyclesTotal INTEGER,
+  predecessorBudgetId INTEGER,
+  projectionStartsOn TEXT,
   dueDate TEXT NOT NULL,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
@@ -81,6 +83,7 @@ CREATE TABLE IF NOT EXISTS budgetSnapshots (
   goalPercentage REAL,
   goalDirection TEXT,
   remainingCyclesTotal INTEGER,
+  isActive INTEGER NOT NULL DEFAULT 1,
   isHistorical INTEGER NOT NULL,
   sourceBudgetUpdatedAt TEXT NOT NULL,
   createdAt TEXT NOT NULL,
@@ -192,6 +195,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_transferPairId ON transactions(trans
 
 CREATE INDEX IF NOT EXISTS idx_budgetSnapshots_budgetId ON budgetSnapshots(budgetId);
 CREATE INDEX IF NOT EXISTS idx_budgetSnapshots_dueDate ON budgetSnapshots(dueDate);
+CREATE INDEX IF NOT EXISTS idx_budgets_predecessorBudgetId ON budgets(predecessorBudgetId);
 
 CREATE INDEX IF NOT EXISTS idx_categories_bucketId ON categories(bucketId);
 CREATE INDEX IF NOT EXISTS idx_smsImportTemplates_accountId ON smsImportTemplates(accountId);

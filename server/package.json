@@ -29,6 +29,7 @@
     "test:transaction-description-prefill": "tsx src/testTransactionDescriptionPrefill.ts",
     "test:budget-lifecycle": "tsx src/testBudgetLifecycle.ts",
     "test:budget-snapshot-occurrence": "tsx src/testBudgetSnapshotOccurrence.ts",
+    "test:budget-occurrence-model": "tsx src/testBudgetOccurrenceModel.ts",
     "test:budget-delete": "tsx src/testBudgetDelete.ts",
     "test:recipient-lifecycle": "tsx src/testRecipientLifecycle.ts",
     "test:account-lifecycle": "tsx src/testAccountLifecycle.ts",

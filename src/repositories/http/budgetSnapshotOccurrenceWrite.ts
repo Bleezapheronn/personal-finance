@@ -6,7 +6,9 @@ export type BudgetSnapshotOccurrenceAction =
   | "link"
   | "changeLink"
   | "unlink"
-  | "createAndLink";
+  | "createAndLink"
+  | "setActive"
+  | "correct";
 
 export interface BudgetSnapshotOccurrenceInput {
   snapshotId?: number;
@@ -14,6 +16,10 @@ export interface BudgetSnapshotOccurrenceInput {
   transactionId?: number;
   expectedCurrentSnapshotId?: number;
   occurrenceDate?: Date | string;
+  isActive?: boolean;
+  amount?: number;
+  transactionCost?: number | null;
+  isFlexible?: boolean;
 }
 
 export interface BudgetSnapshotOccurrenceResponse {
@@ -51,6 +57,8 @@ const CONFIRMATIONS: Record<BudgetSnapshotOccurrenceAction, string> = {
   unlink: "unlink one transaction from its budget occurrence in sqlite",
   createAndLink:
     "create one budget occurrence and link one transaction in sqlite",
+  setActive: "change one historical budget occurrence active state in sqlite",
+  correct: "correct one historical budget occurrence in sqlite",
 };
 
 const payload = (input: BudgetSnapshotOccurrenceInput) => ({

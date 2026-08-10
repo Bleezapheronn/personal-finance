@@ -79,6 +79,7 @@ export interface BudgetSnapshot {
   goalDirection?: "income" | "expense";
   remainingCyclesTotal?: number | null;
   isHistorical: boolean;
+  isActive?: boolean;
   sourceBudgetUpdatedAt: Date;
   createdAt: Date;
   updatedAt: Date;

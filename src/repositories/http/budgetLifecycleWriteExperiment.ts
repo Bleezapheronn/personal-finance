@@ -13,6 +13,7 @@ export type BudgetLifecycleAction = keyof typeof CONFIRMATIONS;
 export interface BudgetLifecycleInput extends BudgetDefinitionWriteInput {
   isActive: boolean;
   asOf: string;
+  reactivationMode?: "resume" | "backfill";
 }
 export interface BudgetLifecycleResponse {
   ok: boolean;

@@ -54,7 +54,6 @@ import {
   Recipient,
   Transaction,
   Account,
-  migrateBudgetSnapshots,
   ensureBudgetSnapshotForOccurrence,
 } from "../db";
 import { CompleteBudgetModal } from "../components/CompleteBudgetModal";
@@ -64,7 +63,6 @@ import {
   exportBudgetsToCSV,
   downloadBudgetsCSV,
 } from "../utils/budgetCsvExport";
-import { ensureBudgetSnapshotCoverage } from "../utils/budgetSnapshots";
 import { ImportModal } from "../components/ImportModal";
 import {
   getRepositoryBackend,
@@ -104,6 +102,7 @@ interface BudgetOccurrence {
   dueDate: Date;
   amountPaid: number;
   isCompleted: boolean;
+  isActive: boolean;
   timeGroup: string;
   linkedTransactions: Transaction[];
 }
@@ -382,6 +381,7 @@ const normalizeBudgetSnapshotRow = (
         ? null
         : nullableNumberValue(source.remainingCyclesTotal),
     isHistorical,
+    isActive: booleanValue(source.isActive),
     sourceBudgetUpdatedAt,
     createdAt,
     updatedAt,
@@ -853,9 +853,6 @@ const BudgetPage: React.FC = () => {
         return true;
       }
 
-      // Run snapshot migration and pre-generate upcoming snapshots
-      await migrateBudgetSnapshots();
-
       const [b, txns, cats, bkts, recs, accs] = await Promise.all([
         db.budgets.toArray(),
         db.transactions.toArray(),
@@ -887,121 +884,6 @@ const BudgetPage: React.FC = () => {
         }
       }
 
-      // Normalize one-time goal snapshots against the live budget due date.
-      // Keep the due-date-matching snapshot when possible and prune stale,
-      // unlinked duplicates left behind by past edits.
-      const oneTimeGoalBudgets = b.filter(
-        (budget) => budget.id && budget.isGoal && budget.frequency === "once",
-      );
-      const goalBudgetIds = new Set(
-        oneTimeGoalBudgets.map((budget) => budget.id),
-      );
-      if (goalBudgetIds.size > 0) {
-        const snapshots = await db.budgetSnapshots.toArray();
-        const oneTimeGoalSnapshots = snapshots.filter((snap) =>
-          goalBudgetIds.has(snap.budgetId),
-        );
-        const duplicatesByBudget = new Map<
-          number,
-          typeof oneTimeGoalSnapshots
-        >();
-        oneTimeGoalSnapshots.forEach((snap) => {
-          if (!duplicatesByBudget.has(snap.budgetId)) {
-            duplicatesByBudget.set(snap.budgetId, []);
-          }
-          duplicatesByBudget.get(snap.budgetId)!.push(snap);
-        });
-        for (const budget of oneTimeGoalBudgets) {
-          const budgetId = budget.id;
-          if (!budgetId) {
-            continue;
-          }
-
-          const snaps = duplicatesByBudget.get(budgetId) || [];
-          if (snaps.length <= 1) {
-            continue;
-          }
-
-          const matchingDueDateSnapshots = snaps.filter((snap) =>
-            isSameLocalDay(snap.dueDate, budget.dueDate),
-          );
-          const candidatePool =
-            matchingDueDateSnapshots.length > 0
-              ? matchingDueDateSnapshots
-              : snaps;
-          const sortedCandidates = [...candidatePool].sort((left, right) => {
-            const rightLinkedCount = right.id
-              ? getLinkedTransactionCountForSnapshot(txns, right.id)
-              : 0;
-            const leftLinkedCount = left.id
-              ? getLinkedTransactionCountForSnapshot(txns, left.id)
-              : 0;
-
-            if (rightLinkedCount !== leftLinkedCount) {
-              return rightLinkedCount - leftLinkedCount;
-            }
-
-            return (
-              new Date(right.updatedAt).getTime() -
-              new Date(left.updatedAt).getTime()
-            );
-          });
-
-          const keep = sortedCandidates[0];
-          if (!keep?.id) {
-            continue;
-          }
-
-          const deletedSnapshotIds: number[] = [];
-          const preservedLinkedSnapshotIds: number[] = [];
-
-          for (const snap of snaps) {
-            if (!snap.id || snap.id === keep.id) {
-              continue;
-            }
-
-            const linkedCount = getLinkedTransactionCountForSnapshot(
-              txns,
-              snap.id,
-            );
-            if (linkedCount === 0) {
-              await db.budgetSnapshots.delete(snap.id);
-              deletedSnapshotIds.push(snap.id);
-            } else {
-              preservedLinkedSnapshotIds.push(snap.id);
-            }
-          }
-
-          if (isDebugModeEnabled()) {
-            console.info("One-time goal snapshot normalization", {
-              budgetId,
-              budgetDescription: budget.description,
-              liveBudgetDueDate: normalizeToLocalDay(
-                budget.dueDate,
-              ).toISOString(),
-              keptSnapshotId: keep.id,
-              keptSnapshotDueDate: normalizeToLocalDay(
-                keep.dueDate,
-              ).toISOString(),
-              deletedSnapshotIds,
-              preservedLinkedSnapshotIds,
-            });
-          }
-        }
-      }
-
-      const oneYearFromNow = new Date();
-      oneYearFromNow.setHours(0, 0, 0, 0);
-      oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
-
-      await Promise.all(
-        b
-          .filter((budget) => budget.isActive)
-          .map((budget) =>
-            ensureBudgetSnapshotCoverage(budget, oneYearFromNow),
-          ),
-      );
-
       const snapshots = await db.budgetSnapshots.toArray();
 
       setBudgets(b);
@@ -1024,8 +906,20 @@ const BudgetPage: React.FC = () => {
     }
   };
 
-  // Calculate amount paid for a specific budget occurrence
-  // Coerce snapshot IDs to numeric type to handle type drift from imports/restores
+  const transactionsBySnapshotId = useMemo(() => {
+    const indexed = new Map<number, Transaction[]>();
+    transactions.forEach((transaction) => {
+      if (transaction.budgetSnapshotId == null) return;
+      const snapshotId = Number(transaction.budgetSnapshotId);
+      if (!Number.isFinite(snapshotId)) return;
+      const linked = indexed.get(snapshotId) ?? [];
+      linked.push(transaction);
+      indexed.set(snapshotId, linked);
+    });
+    return indexed;
+  }, [transactions]);
+
+  // Calculate amount paid for a specific budget occurrence.
   const getAmountPaidForOccurrence = (
     budgetSnapshotId: number | undefined,
     _budgetId: number,
@@ -1033,8 +927,7 @@ const BudgetPage: React.FC = () => {
   ): number => {
     if (budgetSnapshotId !== undefined) {
       const numericSnapshotId = Number(budgetSnapshotId);
-      return transactions
-        .filter((txn) => Number(txn.budgetSnapshotId) === numericSnapshotId)
+      return (transactionsBySnapshotId.get(numericSnapshotId) ?? [])
         .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
     }
 
@@ -1059,9 +952,7 @@ const BudgetPage: React.FC = () => {
   ): Transaction[] => {
     if (budgetSnapshotId !== undefined) {
       const numericSnapshotId = Number(budgetSnapshotId);
-      return transactions.filter(
-        (txn) => Number(txn.budgetSnapshotId) === numericSnapshotId,
-      );
+      return transactionsBySnapshotId.get(numericSnapshotId) ?? [];
     }
 
     // Legacy fallback: rows without snapshot linkage, matched by occurrence date.
@@ -1105,12 +996,8 @@ const BudgetPage: React.FC = () => {
 
       // Choose the most recently updated snapshot for this occurrence
       // Prefer ones with linked transactions when available
-      const existingHasLinks = transactions.some(
-        (txn) => Number(txn.budgetSnapshotId) === existing.id,
-      );
-      const candidateHasLinks = transactions.some(
-        (txn) => Number(txn.budgetSnapshotId) === snapshot.id,
-      );
+      const existingHasLinks = (transactionsBySnapshotId.get(Number(existing.id)) ?? []).length > 0;
+      const candidateHasLinks = (transactionsBySnapshotId.get(Number(snapshot.id)) ?? []).length > 0;
 
       if (candidateHasLinks && !existingHasLinks) {
         uniqueSnapshots.set(key, snapshot);
@@ -1180,6 +1067,7 @@ const BudgetPage: React.FC = () => {
           dueDate,
           amountPaid,
           isCompleted,
+          isActive: snapshot.isActive !== false,
           timeGroup: getTimeGroup(dueDate),
           linkedTransactions: getLinkedTransactionsForOccurrence(
             snapshot.id,
@@ -1191,27 +1079,29 @@ const BudgetPage: React.FC = () => {
 
     occurrences.push(...snapshotOccurrences);
 
-    const snapshotBudgetIdsInRange = new Set(
-      snapshotOccurrences.map((occurrence) => occurrence.budgetId),
+    const persistedOccurrenceKeys = new Set(
+      snapshotOccurrences.map(
+        (occurrence) => `${occurrence.budgetId}:${occurrence.dueDate.getTime()}`,
+      ),
     );
 
-    // Legacy fallback for active budgets with no snapshot rows yet.
+    // SQLite persists historical occurrences and linked prospective ones. Other
+    // active, prospective schedule dates are deliberately runtime projections.
     budgets
       .filter((budget) => budget.isActive)
       .forEach((budget) => {
         const budgetId = budget.id;
         if (!budgetId) return;
 
-        const hasSnapshots = snapshotBudgetIdsInRange.has(budgetId);
-        if (hasSnapshots) return;
-
         if (budget.frequency === "once") {
           const dueDate = new Date(budget.dueDate);
           dueDate.setHours(0, 0, 0, 0);
 
-          if (dueDate > horizonDate) {
+          if (dueDate < new Date(new Date().setHours(0, 0, 0, 0)) || dueDate > horizonDate) {
             return;
           }
+
+          if (persistedOccurrenceKeys.has(`${budgetId}:${dueDate.getTime()}`)) return;
 
           const amountPaid = getAmountPaidForOccurrence(
             undefined,
@@ -1230,6 +1120,7 @@ const BudgetPage: React.FC = () => {
             dueDate,
             amountPaid,
             isCompleted,
+            isActive: true,
             timeGroup: getTimeGroup(dueDate),
             linkedTransactions: getLinkedTransactionsForOccurrence(
               undefined,
@@ -1242,32 +1133,43 @@ const BudgetPage: React.FC = () => {
           currentDueDate.setHours(0, 0, 0, 0);
 
           let occurrenceCount = 0;
-          while (currentDueDate <= horizonDate) {
+          const maxCycles = budget.remainingCyclesTotal ?? Number.MAX_SAFE_INTEGER;
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          while (currentDueDate <= horizonDate && occurrenceCount < maxCycles) {
             occurrenceCount++;
 
-            const amountPaid = getAmountPaidForOccurrence(
-              undefined,
-              budgetId,
-              currentDueDate,
+            const alreadyPersisted = persistedOccurrenceKeys.has(
+              `${budgetId}:${currentDueDate.getTime()}`,
             );
-            const recurringTarget = getEffectiveBudgetTarget(budget);
-            const isCompleted = isExpenseBudget(budget)
-              ? amountPaid <= -recurringTarget
-              : amountPaid >= recurringTarget;
+            const isProspective = currentDueDate >= today;
 
-            occurrences.push({
-              budgetId,
-              budget,
-              dueDate: new Date(currentDueDate),
-              amountPaid,
-              isCompleted,
-              timeGroup: getTimeGroup(currentDueDate),
-              linkedTransactions: getLinkedTransactionsForOccurrence(
+            if (isProspective && !alreadyPersisted) {
+              const amountPaid = getAmountPaidForOccurrence(
                 undefined,
                 budgetId,
                 currentDueDate,
-              ),
-            });
+              );
+              const recurringTarget = getEffectiveBudgetTarget(budget);
+              const isCompleted = isExpenseBudget(budget)
+                ? amountPaid <= -recurringTarget
+                : amountPaid >= recurringTarget;
+
+              occurrences.push({
+                budgetId,
+                budget,
+                dueDate: new Date(currentDueDate),
+                amountPaid,
+                isCompleted,
+                isActive: true,
+                timeGroup: getTimeGroup(currentDueDate),
+                linkedTransactions: getLinkedTransactionsForOccurrence(
+                  undefined,
+                  budgetId,
+                  currentDueDate,
+                ),
+              });
+            }
 
             // Calculate next occurrence
             currentDueDate = getNextOccurrence(currentDueDate, budget);
@@ -1462,7 +1364,7 @@ const BudgetPage: React.FC = () => {
 
     occurrences.forEach((occ) => {
       // Keep inactive budgets in totals, but hide them from the list display.
-      if (!occ.budget.isActive) {
+      if (!occ.budget.isActive || !occ.isActive) {
         return;
       }
 

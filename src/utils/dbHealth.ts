@@ -281,7 +281,11 @@ const checkTransactionReferences = (
       });
     }
 
-    if (transaction.budgetId && !budgetIds.has(transaction.budgetId)) {
+    if (
+      !transaction.budgetSnapshotId &&
+      transaction.budgetId &&
+      !budgetIds.has(transaction.budgetId)
+    ) {
       addMissingReferenceIssue(report, {
         severity: "warning",
         table: "transactions",
@@ -293,26 +297,8 @@ const checkTransactionReferences = (
       });
     }
 
-    if (
-      transaction.budgetId &&
-      transaction.budgetSnapshotId &&
-      snapshot &&
-      snapshot.budgetId !== transaction.budgetId
-    ) {
-      addIssue(report, {
-        severity: "error",
-        code: "transaction_budget_snapshot_budget_mismatch",
-        table: "transactions",
-        recordId: transaction.id,
-        message:
-          "Transaction has budgetId and budgetSnapshotId, but the snapshot points to a different budgetId.",
-        details: {
-          budgetId: transaction.budgetId,
-          budgetSnapshotId: transaction.budgetSnapshotId,
-          snapshotBudgetId: snapshot.budgetId,
-        },
-      });
-    }
+    // Canonical snapshot linkage survives successor transfers. Legacy direct
+    // fields intentionally do not need to match once budgetSnapshotId exists.
   });
 };
 
