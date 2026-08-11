@@ -22,12 +22,19 @@ describe("SQLite main-app workflow parity cleanup", () => {
     expect(budgetHistory).not.toContain("placeholder=\"Budget ID\"");
   });
 
-  it("keeps authoritative Budget occurrences clickable with isolated controls", () => {
+  it("keeps authoritative Budget occurrences and goal titles clickable with isolated controls", () => {
     const budget = source("src/pages/Budget.tsx");
-    expect(budget).toContain("handleCompleteOccurrenceInSqlite");
+    const goalCarousel = budget.slice(
+      budget.indexOf("{/* Active Goals Section - Scrollable */}"),
+      budget.indexOf("{/* Budget Summary Card */}"),
+    );
+    expect(budget).toContain("handleOpenBudgetOccurrenceForPayment");
     expect(budget).toContain("onCompleteInSqlite");
     expect(budget).toContain("cursor: \"pointer\"");
-    expect(budget).not.toContain("if (budgetHttpReadonlyExperimentActive) {\n                              return;");
+    expect(goalCarousel).toContain(
+      "handleOpenBudgetOccurrenceForPayment(currentGoal)",
+    );
+    expect(goalCarousel).not.toContain("<IonCard\n                      onClick");
     expect(budget).toContain("e.stopPropagation();");
   });
 
@@ -86,8 +93,9 @@ describe("SQLite main-app workflow parity cleanup", () => {
     const budget = source("src/pages/Budget.tsx");
     const history = source("src/pages/BudgetHistory.tsx");
     expect(modal).toContain("initializedOccurrenceRef");
-    expect(modal).toContain("if (initializedOccurrenceRef.current === occurrenceKey) return;");
-    expect(modal).toContain("so lookup renders cannot overwrite values the user can see");
+    expect(modal).toContain("lookupDataOccurrenceKey");
+    expect(modal).toContain("userEditedOccurrenceRef");
+    expect(modal).toContain("shouldInitializeOccurrencePaymentForm");
     expect(budget).toContain("<CompleteBudgetModal");
     expect(history).toContain("<CompleteBudgetModal");
   });

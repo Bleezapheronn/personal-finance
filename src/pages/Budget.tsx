@@ -765,6 +765,23 @@ const BudgetPage: React.FC = () => {
     });
   };
 
+  const handleOpenBudgetOccurrenceForPayment = (
+    occurrence: BudgetOccurrence,
+  ) => {
+    if (
+      budgetHttpReadonlyExperimentActive &&
+      (!rehearsal.ready || !rehearsal.budgetSnapshotOccurrenceWritesAvailable)
+    ) {
+      setError(
+        "Budget occurrence completion requires the SQLite occurrence capability.",
+      );
+      return;
+    }
+
+    setSelectedBudgetForCompletion(occurrence);
+    setShowCompleteModal(true);
+  };
+
   const handleUnlinkPaymentInSqlite = async (
     transaction: Transaction,
   ): Promise<boolean> => {
@@ -2644,21 +2661,7 @@ const BudgetPage: React.FC = () => {
                   const currentGoal = allGoals[currentGoalIndex];
 
                   return (
-                    <IonCard
-                      onClick={() => {
-                        if (budgetHttpReadonlyExperimentActive) {
-                          return;
-                        }
-                        setSelectedBudgetForCompletion(currentGoal);
-                        setShowCompleteModal(true);
-                      }}
-                      style={{
-                        cursor: budgetHttpReadonlyExperimentActive
-                          ? "default"
-                          : "pointer",
-                        margin: "0",
-                      }}
-                    >
+                    <IonCard style={{ margin: "0" }}>
                       <IonCardContent>
                         {/* Goal Navigation Header */}
                         <div
@@ -2679,7 +2682,11 @@ const BudgetPage: React.FC = () => {
 
                           <div
                             className="period-label"
+                            onClick={() => {
+                              handleOpenBudgetOccurrenceForPayment(currentGoal);
+                            }}
                             style={{
+                              cursor: "pointer",
                               wordWrap: "break-word",
                               overflowWrap: "break-word",
                               whiteSpace: "normal",
@@ -2955,18 +2962,7 @@ const BudgetPage: React.FC = () => {
                         <IonItem
                           key={`${occ.budgetSnapshotId ?? "legacy"}-${occ.budgetId}-${occ.dueDate.getTime()}`}
                           onClick={() => {
-                            if (
-                              budgetHttpReadonlyExperimentActive &&
-                              (!rehearsal.ready ||
-                                !rehearsal.budgetSnapshotOccurrenceWritesAvailable)
-                            ) {
-                              setError(
-                                "Budget occurrence completion requires the SQLite occurrence capability.",
-                              );
-                              return;
-                            }
-                            setSelectedBudgetForCompletion(occ);
-                            setShowCompleteModal(true);
+                            handleOpenBudgetOccurrenceForPayment(occ);
                           }}
                           style={{
                             cursor: "pointer",

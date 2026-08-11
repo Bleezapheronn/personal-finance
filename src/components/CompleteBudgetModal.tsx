@@ -29,6 +29,10 @@ import {
   Transaction,
   ensureBudgetSnapshotForOccurrence,
 } from "../db";
+import {
+  shouldInitializeOccurrencePaymentForm,
+  unpaidOccurrenceTargetAmount,
+} from "../utils/budgetPaymentPrefill";
 
 interface BudgetOccurrence {
   budgetId: number;
@@ -78,27 +82,26 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
   const [successMsg, setSuccessMsg] = useState("");
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const initializedOccurrenceRef = useRef<string | null>(null);
+  const userEditedOccurrenceRef = useRef<string | null>(null);
+  const [lookupDataOccurrenceKey, setLookupDataOccurrenceKey] = useState<
+    string | null
+  >(null);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
-  // Load lookup data when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      loadLookupData();
-    }
-  }, [isOpen]);
+  const occurrenceKey = `${budgetOccurrence.budgetId}:${budgetOccurrence.dueDate.getTime()}`;
 
-  const loadLookupData = async () => {
+  const loadLookupData = useCallback(async (): Promise<boolean> => {
     try {
       if (lookupData) {
         setCategories(lookupData.categories);
         setBuckets(lookupData.buckets);
         setAccounts(lookupData.accounts);
         setTransactions(lookupData.transactions);
-        return;
+        return true;
       }
       const [cats, bkts, accts, txns] = await Promise.all([
         db.categories.toArray(),
@@ -111,10 +114,32 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
       setBuckets(bkts);
       setAccounts(accts);
       setTransactions(txns);
+      return true;
     } catch (err) {
       console.error("Failed to load lookup data:", err);
+      return false;
     }
-  };
+  }, [lookupData]);
+
+  // Resolve the target inputs before initializing form state for this occurrence.
+  useEffect(() => {
+    if (!isOpen) {
+      setLookupDataOccurrenceKey(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLookupDataOccurrenceKey(null);
+    void loadLookupData().then((loaded) => {
+      if (!cancelled && loaded) {
+        setLookupDataOccurrenceKey(occurrenceKey);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, loadLookupData, occurrenceKey]);
 
   const isExpenseBudget = useCallback((): boolean => {
     return (
@@ -186,16 +211,10 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
   }, [effectiveTarget, budgetOccurrence.amountPaid]);
 
   const getRemainingTargetAmount = useCallback((): number => {
-    // Pre-populate with remaining target amount so percentage-based budgets behave the same.
-    const targetAbsolute = Math.abs(effectiveTarget);
-    const amountPaid = budgetOccurrence.amountPaid;
-    const paidAbsAmount = Math.abs(amountPaid);
-
-    // Calculate remaining as positive value
-    const remainingAbs = targetAbsolute - paidAbsAmount;
-
-    // Return the remaining amount (positive means still need to pay)
-    return remainingAbs;
+    return unpaidOccurrenceTargetAmount(
+      effectiveTarget,
+      budgetOccurrence.amountPaid,
+    );
   }, [effectiveTarget, budgetOccurrence.amountPaid]);
 
   const getDefaultTransactionCostAbs = useCallback((): number => {
@@ -210,13 +229,22 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
   useEffect(() => {
     if (!isOpen) {
       initializedOccurrenceRef.current = null;
+      userEditedOccurrenceRef.current = null;
       return;
     }
 
-    const occurrenceKey = `${budgetOccurrence.budgetId}:${budgetOccurrence.dueDate.getTime()}`;
-    // Lookup data arrives asynchronously. Initialize only once for this open
-    // occurrence so lookup renders cannot overwrite values the user can see.
-    if (initializedOccurrenceRef.current === occurrenceKey) return;
+    // Lookup data arrives asynchronously. Wait for this occurrence's target,
+    // then initialize only once so lookup renders cannot overwrite user edits.
+    if (
+      !shouldInitializeOccurrencePaymentForm({
+        occurrenceKey,
+        lookupDataOccurrenceKey,
+        initializedOccurrenceKey: initializedOccurrenceRef.current,
+        userEditedOccurrenceKey: userEditedOccurrenceRef.current,
+      })
+    ) {
+      return;
+    }
     initializedOccurrenceRef.current = occurrenceKey;
 
     setTransactionReference("");
@@ -238,12 +266,16 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
     setSuccessMsg("");
   }, [
     isOpen,
-    budgetOccurrence.budgetId,
-    budgetOccurrence.dueDate,
+    occurrenceKey,
+    lookupDataOccurrenceKey,
     getRemainingTargetAmount,
     getDefaultTransactionCostAbs,
     toCurrencyInputValue,
   ]);
+
+  const markOccurrenceFormEdited = useCallback(() => {
+    userEditedOccurrenceRef.current = occurrenceKey;
+  }, [occurrenceKey]);
 
   const getBucketName = (categoryId: number) => {
     const cat = categories.find((c) => c.id === categoryId);
@@ -533,7 +565,10 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                   className="form-input"
                   type="datetime-local"
                   value={transactionTime}
-                  onIonChange={(e) => setTransactionTime(e.detail.value ?? "")}
+                  onIonChange={(e) => {
+                    markOccurrenceFormEdited();
+                    setTransactionTime(e.detail.value ?? "");
+                  }}
                   disabled={loading}
                 />
               </div>
@@ -550,9 +585,10 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                   type="text"
                   placeholder="e.g. M-Pesa Ref, Check #"
                   value={transactionReference}
-                  onIonChange={(e) =>
-                    setTransactionReference(e.detail.value ?? "")
-                  }
+                  onIonChange={(e) => {
+                    markOccurrenceFormEdited();
+                    setTransactionReference(e.detail.value ?? "");
+                  }}
                   disabled={loading}
                 />
               </div>
@@ -569,9 +605,10 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                   type="number"
                   placeholder="e.g. 1,000"
                   value={transactionAmount}
-                  onIonChange={(e) =>
-                    setTransactionAmount(e.detail.value ?? "")
-                  }
+                  onIonChange={(e) => {
+                    markOccurrenceFormEdited();
+                    setTransactionAmount(e.detail.value ?? "");
+                  }}
                   disabled={loading}
                   step="0.01"
                   inputMode="decimal"
@@ -590,7 +627,10 @@ export const CompleteBudgetModal: React.FC<CompleteBudgetModalProps> = ({
                   type="number"
                   placeholder="e.g. 13.00"
                   value={transactionCost}
-                  onIonChange={(e) => setTransactionCost(e.detail.value ?? "")}
+                  onIonChange={(e) => {
+                    markOccurrenceFormEdited();
+                    setTransactionCost(e.detail.value ?? "");
+                  }}
                   disabled={loading}
                   step="0.01"
                   inputMode="decimal"
