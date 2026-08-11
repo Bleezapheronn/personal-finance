@@ -77,6 +77,7 @@ export interface BudgetSnapshot {
   isFlexible: boolean;
   goalPercentage?: number;
   goalDirection?: "income" | "expense";
+  resolvedTarget?: number | null;
   remainingCyclesTotal?: number | null;
   isHistorical: boolean;
   isActive?: boolean;

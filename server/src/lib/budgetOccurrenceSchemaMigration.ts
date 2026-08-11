@@ -13,6 +13,7 @@ export const budgetOccurrenceSchemaMigrationDryRun = (db: Database.Database) => 
     ...(!budgetColumns.has("predecessorBudgetId") ? ["budgets.predecessorBudgetId"] : []),
     ...(!budgetColumns.has("projectionStartsOn") ? ["budgets.projectionStartsOn"] : []),
     ...(!snapshotColumns.has("isActive") ? ["budgetSnapshots.isActive"] : []),
+    ...(!snapshotColumns.has("resolvedTarget") ? ["budgetSnapshots.resolvedTarget"] : []),
   ];
   return { ok: true, dryRun: true, wouldMutate: additions.length > 0, additions };
 };
@@ -34,6 +35,7 @@ export const budgetOccurrenceSchemaMigrationWrite = (db: Database.Database, payl
       db.exec("UPDATE budgets SET projectionStartsOn = dueDate WHERE projectionStartsOn IS NULL");
     }
     if (!snapshotColumns.has("isActive")) db.exec("ALTER TABLE budgetSnapshots ADD COLUMN isActive INTEGER NOT NULL DEFAULT 1");
+    if (!snapshotColumns.has("resolvedTarget")) db.exec("ALTER TABLE budgetSnapshots ADD COLUMN resolvedTarget REAL");
     db.exec("CREATE INDEX IF NOT EXISTS idx_budgets_predecessorBudgetId ON budgets(predecessorBudgetId)");
     return { ok: true, dryRun: false, sqliteMutated: true, additions: before.additions };
   }).immediate();

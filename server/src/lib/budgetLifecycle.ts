@@ -9,6 +9,8 @@ import {
 } from "../../shared/budgetSnapshotGeneration.js";
 import {
   catchUpHistoricalOccurrences,
+  finalizeFrozenPercentageTargets,
+  occurrenceFrozen,
   syncMutableOccurrenceValues,
 } from "./budgetOccurrenceModel.js";
 import {
@@ -315,6 +317,25 @@ const buildPlan = (db: Database.Database, input: NormalizedLifecycleInput): Life
     (snapshot) => !scheduleKeys.has(localDayKey(String(snapshot.occurrenceDate))),
   ).length;
   const generationCandidates: BudgetSnapshotGenerationCandidate[] = [];
+  if (input.action === "update" && currentBudget && input.definition.frequency === "once") {
+    const targetDay = localDayKey(input.definition.dueDate);
+    const mutableSnapshots = targetSnapshots.filter(
+      (snapshot) => !occurrenceFrozen(String(snapshot.dueDate), input.asOf),
+    );
+    if (mutableSnapshots.length === 1) {
+      const collision = targetSnapshots.some(
+        (snapshot) => Number(snapshot.id) !== Number(mutableSnapshots[0].id) &&
+          localDayKey(String(snapshot.dueDate)) === targetDay,
+      );
+      if (collision) conflicts.add("one_time_occurrence_target_date_ambiguous");
+    } else if (mutableSnapshots.length > 1) {
+      if (targetSnapshots.some((snapshot) => localDayKey(String(snapshot.dueDate)) === targetDay)) {
+        conflicts.add("one_time_occurrence_target_date_ambiguous");
+      } else {
+        conflicts.add("one_time_occurrence_identity_ambiguous");
+      }
+    }
+  }
   if (currentBudget && Number(currentBudget.isActive) === 0 && input.isActive === false) {
     validationErrors.push("inactive_budget_definition_edit_requires_reactivation");
   }
@@ -565,6 +586,7 @@ export const budgetLifecycleRealWrite = (
       ? catchUpHistoricalOccurrences(db, targetId, input.asOf)
       : 0;
     const synchronized = input.isActive ? syncMutableOccurrenceValues(db, targetId, input.asOf) : 0;
+    const finalized = finalizeFrozenPercentageTargets(db, input.asOf, targetId);
 
     for (const table of IMMUTABLE_TABLES) {
       if (serialized(rows(db, table)) !== serialized(immutableBefore[table])) {
@@ -584,7 +606,7 @@ export const budgetLifecycleRealWrite = (
     return buildResponse(beforePlan, {
       dryRun: false,
       sqliteMutated: true,
-      rowsChanged: budgetChanges + historicalInserted + inserted + backfilled + synchronized,
+      rowsChanged: budgetChanges + historicalInserted + inserted + backfilled + synchronized + finalized,
     });
   });
   return execute.immediate();

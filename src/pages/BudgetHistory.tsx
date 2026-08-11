@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useHistory } from "react-router-dom";
 import {
   IonAccordion,
   IonAccordionGroup,
@@ -7,7 +8,7 @@ import {
   IonToolbar,
   IonTitle,
   IonButtons,
-  IonBackButton,
+  IonMenuButton,
   IonContent,
   IonSpinner,
   IonText,
@@ -38,6 +39,7 @@ import {
   checkmarkCircleOutline,
   closeCircle,
   closeCircleOutline,
+  bookOutline,
 } from "ionicons/icons";
 import {
   Account,
@@ -85,6 +87,7 @@ import {
   writeBudgetSnapshotOccurrence,
 } from "../repositories/http/budgetSnapshotOccurrenceWrite";
 import { createBasicTransactionInDisposableSqlite } from "../repositories/http/transactionBasicWriteExperiment";
+import { occurrenceDisplayTarget } from "../utils/budgetDisplayTarget";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -405,6 +408,7 @@ const normalizeBudgetSnapshotRow = (row: unknown): BudgetSnapshot | undefined =>
       source.goalDirection === "income" || source.goalDirection === "expense"
         ? source.goalDirection
         : undefined,
+    resolvedTarget: nullableNumberValue(source.resolvedTarget),
     remainingCyclesTotal:
       source.remainingCyclesTotal === null
         ? null
@@ -512,6 +516,7 @@ const amountSign = (
 };
 
 const BudgetHistory: React.FC = () => {
+  const history = useHistory();
   const budgetHistoryReadExperimentEnabled =
     isBudgetHistoryReadExperimentEnabled();
   const repositoryBackend = getRepositoryBackend();
@@ -983,8 +988,13 @@ const BudgetHistory: React.FC = () => {
     }
   };
 
-  const getEffectiveBudgetTarget = (budget: Budget): number => {
-    return Math.abs(budget.amount + (budget.transactionCost || 0));
+  const getEffectiveBudgetTarget = (budget: Budget & { resolvedTarget?: number | null }): number => {
+    const incomeBucketIds = new Set(buckets.filter((bucket) => bucket.excludeFromReports).map((bucket) => bucket.id));
+    const incomeCategoryIds = new Set(categories.filter((category) => incomeBucketIds.has(category.bucketId)).map((category) => category.id));
+    const income = transactions
+      .filter((transaction) => transaction.date.getFullYear() === budget.dueDate.getFullYear() && incomeCategoryIds.has(transaction.categoryId))
+      .reduce((total, transaction) => total + transaction.amount + (transaction.transactionCost ?? 0), 0);
+    return occurrenceDisplayTarget(budget, income) ?? 0;
   };
 
   const getProgressPercentage = (occ: BudgetOccurrence): number => {
@@ -1175,7 +1185,7 @@ const BudgetHistory: React.FC = () => {
             return null;
           }
 
-          const snapshotBudget: Budget = {
+          const snapshotBudget: Budget & { resolvedTarget?: number | null } = {
             ...liveBudget,
             description: snapshot.description,
             categoryId: snapshot.categoryId,
@@ -1190,6 +1200,7 @@ const BudgetHistory: React.FC = () => {
             goalPercentage: snapshot.goalPercentage,
             goalDirection: snapshot.goalDirection,
             remainingCyclesTotal: snapshot.remainingCyclesTotal,
+            resolvedTarget: snapshot.resolvedTarget,
             dueDate,
             updatedAt: snapshot.sourceBudgetUpdatedAt,
           };
@@ -1495,16 +1506,7 @@ const BudgetHistory: React.FC = () => {
       return;
     }
 
-    const hasSnapshotLinkedTransactions = transactions.some((txn) => {
-      if (txn.budgetSnapshotId === undefined) {
-        return false;
-      }
-      // Use type-safe numeric comparison to check if this transaction is linked
-      const snapshotId = Number(txn.budgetSnapshotId);
-      return snapshotBudgetIdBySnapshotId.get(snapshotId) === occ.budgetId;
-    });
-
-    setBudgetDeleteHasTransactions(hasSnapshotLinkedTransactions);
+    setBudgetDeleteHasTransactions(occ.linkedTransactions.length > 0);
     setBudgetToDelete(occ.budgetId);
     setSnapshotToDeleteId(occ.budgetSnapshotId);
     setOccurrenceHasLinkedTransactions(occ.linkedTransactions.length > 0);
@@ -1555,6 +1557,10 @@ const BudgetHistory: React.FC = () => {
       );
       return;
     }
+    if (budgets.find((budget) => budget.id === budgetToDelete)?.isActive !== false) {
+      setError("Deactivate the Budget definition before deleting this occurrence.");
+      return;
+    }
 
     try {
       if (budgetHistoryHttpReadonlyExperimentActive) {
@@ -1562,21 +1568,21 @@ const BudgetHistory: React.FC = () => {
           setError("Budget occurrence changes are currently unavailable.");
           return;
         }
-        const input = { snapshotId: snapshotToDeleteId, isActive: false };
-        const dryRun = await dryRunBudgetSnapshotOccurrence("setActive", input);
+        const input = { snapshotId: snapshotToDeleteId };
+        const dryRun = await dryRunBudgetSnapshotOccurrence("delete", input);
         const confirmed = window.confirm(
-          `Deactivate this Budget occurrence?\n\n` +
+          `Delete this Budget occurrence?\n\n` +
             `Linked transactions: ${dryRun.linkedTransactionCount}\n` +
             `Ambiguous legacy references: ${dryRun.ambiguousLegacyReferenceCount}\n` +
             "The Budget definition and all Transactions will remain unchanged.",
         );
         if (!confirmed) return;
         await writeBudgetSnapshotOccurrence(
-          "setActive",
+          "delete",
           input,
           dryRun.planFingerprint!,
         );
-        setSuccessMsg("Budget occurrence deactivated successfully");
+        setSuccessMsg("Budget occurrence deleted successfully");
         setShowSuccessToast(true);
         setShowDeleteConfirm(false);
         setSnapshotToDeleteId(undefined);
@@ -1585,11 +1591,8 @@ const BudgetHistory: React.FC = () => {
         await loadData();
         return;
       }
-      await db.budgetSnapshots.update(snapshotToDeleteId, {
-        isActive: false,
-        updatedAt: new Date(),
-      });
-      setSuccessMsg("Budget occurrence deactivated successfully");
+      await db.budgetSnapshots.delete(snapshotToDeleteId);
+      setSuccessMsg("Budget occurrence deleted successfully");
       setShowSuccessToast(true);
       setShowDeleteConfirm(false);
       setSnapshotToDeleteId(undefined);
@@ -1876,9 +1879,14 @@ const BudgetHistory: React.FC = () => {
       <IonHeader>
         <IonToolbar>
           <IonButtons slot="start">
-            <IonBackButton defaultHref="/budget" />
+            <IonMenuButton />
           </IonButtons>
           <IonTitle>Budget History</IonTitle>
+          <IonButtons slot="end">
+            <IonButton onClick={() => history.push("/budget/definitions")} title="Budget Definitions" aria-label="Budget Definitions">
+              <IonIcon icon={bookOutline} />
+            </IonButton>
+          </IonButtons>
         </IonToolbar>
       </IonHeader>
 
@@ -1894,10 +1902,10 @@ const BudgetHistory: React.FC = () => {
           header="Delete Options"
           message={
             occurrenceHasLinkedTransactions
-              ? "This occurrence has linked transactions. You can deactivate/delete the full budget below, or cancel."
-              : snapshotToDeleteId !== undefined
-                ? "Delete this occurrence only, or delete/deactivate the full budget?"
-                : "This occurrence has no snapshot row to delete. You can still delete/deactivate the full budget."
+              ? "This occurrence has linked Transactions and cannot be deleted."
+              : budgets.find((budget) => budget.id === budgetToDelete)?.isActive !== false
+                ? "Deactivate the parent Budget definition before deleting this occurrence."
+                : "Delete this Budget occurrence? The Budget definition and Transactions remain unchanged."
           }
           buttons={[
             {
@@ -1911,23 +1919,13 @@ const BudgetHistory: React.FC = () => {
               },
             },
             ...(!occurrenceHasLinkedTransactions &&
-            snapshotToDeleteId !== undefined
+            snapshotToDeleteId !== undefined &&
+            budgets.find((budget) => budget.id === budgetToDelete)?.isActive === false
               ? [
                   {
                     text: "Delete Occurrence",
                     role: "destructive" as const,
                     handler: handleConfirmDeleteOccurrence,
-                  },
-                ]
-              : []),
-            ...(!budgetHistoryHttpReadonlyExperimentActive
-              ? [
-                  {
-                    text: budgetDeleteHasTransactions
-                      ? "Deactivate Budget"
-                      : "Delete Budget",
-                    role: "destructive" as const,
-                    handler: handleConfirmDelete,
                   },
                 ]
               : []),
@@ -2883,6 +2881,19 @@ const BudgetHistory: React.FC = () => {
                                     />
                                   </IonButton>
                                   )}
+                                  <IonButton
+                                    fill="clear"
+                                    size="small"
+                                    color="danger"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteClick(occ);
+                                    }}
+                                    title="Delete Budget occurrence"
+                                    aria-label="Delete Budget occurrence"
+                                  >
+                                    <IonIcon icon={trashOutline} slot="end" />
+                                  </IonButton>
                                 </IonCol>
                               </IonRow>
                             )}

@@ -153,6 +153,7 @@ for (const [key, value] of Object.entries(beforeLink as Record<string, unknown>)
 }
 assert.equal(afterLink.budgetSnapshotId, snapshot.id);
 
+db.prepare("UPDATE budgets SET isActive = 0 WHERE id = 1").run();
 const linkedDelete = budgetSnapshotOccurrenceDryRun(
   db,
   { snapshotId: Number(snapshot.id) },
@@ -202,6 +203,7 @@ const beforeRollbackCount = (
     count: number;
   }
 ).count;
+db.prepare("UPDATE transactions SET isTransfer = 1 WHERE id = 101").run();
 const refusedAtomic = budgetSnapshotOccurrenceDryRun(
   db,
   {
@@ -213,7 +215,7 @@ const refusedAtomic = budgetSnapshotOccurrenceDryRun(
 );
 assert.equal(refusedAtomic.ok, false);
 assert.ok(
-  refusedAtomic.validationErrors.includes("snapshot_category_mismatch"),
+  refusedAtomic.validationErrors.includes("transfer_transaction_not_supported"),
 );
 assert.equal(
   (

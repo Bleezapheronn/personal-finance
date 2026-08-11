@@ -21,9 +21,7 @@ import {
   IonIcon,
   useIonViewWillEnter,
   IonToast,
-  IonCheckbox,
-  IonCard,
-  IonCardContent,
+  IonToggle,
 } from "@ionic/react";
 import { db, Budget, Category, Bucket, Account, Recipient } from "../db";
 import { addOutline } from "ionicons/icons";
@@ -70,6 +68,7 @@ import {
   shouldShowBudgetLifecycleActiveControl,
 } from "./budgetLifecycleForm";
 import { createBudgetFromTransactionInSqlite } from "../repositories/http/budgetFromTransactionWrite";
+import "./AddBudget.css";
 import {
   rankDescriptionSuggestions,
   visibleDescriptionSuggestions,
@@ -78,9 +77,8 @@ import {
 
 type BudgetType = "expense" | "income";
 
-const selectedRows = <Row,>(
-  result: Row[] | { rows: Row[] },
-): Row[] => (Array.isArray(result) ? result : result.rows);
+const selectedRows = <Row,>(result: Row[] | { rows: Row[] }): Row[] =>
+  Array.isArray(result) ? result : result.rows;
 
 const apiBoolean = (value: unknown, fallback = false): boolean =>
   typeof value === "boolean"
@@ -153,8 +151,7 @@ const AddBudget: React.FC = () => {
   const budgetDefinitionHttpMode =
     isHttpSelectedReadRepositoryBackend(repositoryBackend);
   const budgetDefinitionWriteExperimentActive =
-    (repositoryBackend === "http-readonly" &&
-      isBudgetsWriteExperimentEnabled());
+    repositoryBackend === "http-readonly" && isBudgetsWriteExperimentEnabled();
   const budgetLifecycleWriteExperimentActive =
     rehearsalSelected &&
     rehearsal.ready &&
@@ -234,14 +231,19 @@ const AddBudget: React.FC = () => {
 
       if (budgetDefinitionHttpMode) {
         const repositories = getSelectedReadRepositories(repositoryBackend);
-        const [bucketRows, categoryRows, accountRows, recipientRows, budgetRows] =
-          await Promise.all([
-            repositories.buckets.list({ limit: 500 }),
-            repositories.categories.list({ limit: 500 }),
-            repositories.accounts.list({ limit: 500 }),
-            repositories.recipients.list({ limit: 500 }),
-            repositories.budgets.list({ limit: 500 }),
-          ]);
+        const [
+          bucketRows,
+          categoryRows,
+          accountRows,
+          recipientRows,
+          budgetRows,
+        ] = await Promise.all([
+          repositories.buckets.list({ limit: 500 }),
+          repositories.categories.list({ limit: 500 }),
+          repositories.accounts.list({ limit: 500 }),
+          repositories.recipients.list({ limit: 500 }),
+          repositories.budgets.list({ limit: 500 }),
+        ]);
         b = selectedRows(
           bucketRows as unknown as Bucket[] | { rows: Bucket[] },
         ).map((row) => ({
@@ -357,7 +359,9 @@ const AddBudget: React.FC = () => {
         const sortedDescriptions = Array.from(descriptionCounts.entries())
           .map(([text, count]) => ({ text, count }))
           .sort((a, b) => b.count - a.count || a.text.localeCompare(b.text));
-        setDescriptionSuggestions(rankDescriptionSuggestions(sortedDescriptions));
+        setDescriptionSuggestions(
+          rankDescriptionSuggestions(sortedDescriptions),
+        );
       }
     } catch (err) {
       console.error("Failed to load lookup data:", err);
@@ -588,12 +592,13 @@ const AddBudget: React.FC = () => {
       const loadTransactionData = async () => {
         try {
           if (budgetDefinitionHttpMode) {
-            const transaction =
-              await getSelectedReadRepositories(
-                repositoryBackend,
-              ).transactions.getById(Number(transactionId));
+            const transaction = await getSelectedReadRepositories(
+              repositoryBackend,
+            ).transactions.getById(Number(transactionId));
             if (transaction) {
-              setBudgetType(Number(transaction.amount) < 0 ? "expense" : "income");
+              setBudgetType(
+                Number(transaction.amount) < 0 ? "expense" : "income",
+              );
               setDescription(transaction.description || "");
               setAmount(Math.abs(Number(transaction.amount)).toString());
               if (transaction.transactionCost) {
@@ -610,10 +615,10 @@ const AddBudget: React.FC = () => {
               setRecipientId(Number(transaction.recipientId));
               setFrequency("monthly");
               const transactionLocalDate = new Date(transaction.date);
-              setDueDate(`${transactionLocalDate.getFullYear()}-${String(transactionLocalDate.getMonth() + 1).padStart(2, "0")}-${String(transactionLocalDate.getDate()).padStart(2, "0")}`);
-              setDayOfMonth(
-                transactionLocalDate.getDate().toString(),
+              setDueDate(
+                `${transactionLocalDate.getFullYear()}-${String(transactionLocalDate.getMonth() + 1).padStart(2, "0")}-${String(transactionLocalDate.getDate()).padStart(2, "0")}`,
               );
+              setDayOfMonth(transactionLocalDate.getDate().toString());
               setIsGoal(false);
               setIsFlexible(false);
               setIsActive(true);
@@ -639,7 +644,9 @@ const AddBudget: React.FC = () => {
 
             setFrequency("monthly");
             const transactionLocalDate = new Date(transaction.date);
-            setDueDate(`${transactionLocalDate.getFullYear()}-${String(transactionLocalDate.getMonth() + 1).padStart(2, "0")}-${String(transactionLocalDate.getDate()).padStart(2, "0")}`);
+            setDueDate(
+              `${transactionLocalDate.getFullYear()}-${String(transactionLocalDate.getMonth() + 1).padStart(2, "0")}-${String(transactionLocalDate.getDate()).padStart(2, "0")}`,
+            );
 
             const dayOfMonthValue = transactionLocalDate.getDate();
             setDayOfMonth(dayOfMonthValue.toString());
@@ -667,14 +674,16 @@ const AddBudget: React.FC = () => {
         try {
           if (budgetDefinitionHttpMode) {
             const repositories = getSelectedReadRepositories(repositoryBackend);
-            const snapshotResult = await repositories.budgetSnapshots.listForBudget(
-              Number(id),
-              { limit: 500 },
-            );
+            const snapshotResult =
+              await repositories.budgetSnapshots.listForBudget(Number(id), {
+                limit: 500,
+              });
             const snapshots = selectedRows(
-              snapshotResult as unknown as Array<{ id?: number }> | {
-                rows: Array<{ id?: number }>;
-              },
+              snapshotResult as unknown as
+                | Array<{ id?: number }>
+                | {
+                    rows: Array<{ id?: number }>;
+                  },
             );
             const linkedCounts = await Promise.all(
               snapshots
@@ -918,16 +927,30 @@ const AddBudget: React.FC = () => {
         const now = new Date();
         const pad = (value: number) => String(value).padStart(2, "0");
         const localAsOf = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-        const reactivationRequested = action === "update" &&
-          editingBudget?.isActive === false && budgetData.isActive;
+        const reactivationRequested =
+          action === "update" &&
+          editingBudget?.isActive === false &&
+          budgetData.isActive;
         const reactivationResponse = reactivationRequested
-          ? window.prompt("Reactivate Budget: type RESUME to begin today, or BACKFILL to materialize the inactive interval.")?.trim().toLowerCase()
+          ? window
+              .prompt(
+                "Reactivate Budget: type RESUME to begin today, or BACKFILL to materialize the inactive interval.",
+              )
+              ?.trim()
+              .toLowerCase()
           : undefined;
-        if (reactivationRequested && reactivationResponse !== "resume" && reactivationResponse !== "backfill") {
+        if (
+          reactivationRequested &&
+          reactivationResponse !== "resume" &&
+          reactivationResponse !== "backfill"
+        ) {
           setErrorMsg("Choose RESUME or BACKFILL to reactivate this Budget.");
           return;
         }
-        const reactivationMode = reactivationResponse as "resume" | "backfill" | undefined;
+        const reactivationMode = reactivationResponse as
+          | "resume"
+          | "backfill"
+          | undefined;
         const lifecycleInput = {
           ...(action === "update" ? { id: Number(id) } : {}),
           description: budgetData.description,
@@ -949,34 +972,53 @@ const AddBudget: React.FC = () => {
           ...(reactivationMode ? { reactivationMode } : {}),
         };
         const scheduleChanged = Boolean(
-          action === "update" &&
-          editingBudget &&
-          editingBudget.frequency !== budgetData.frequency ||
-          action === "update" && editingBudget &&
-          new Date(editingBudget.dueDate).toDateString() !== budgetData.dueDate.toDateString() ||
-          action === "update" && editingBudget &&
-          JSON.stringify(editingBudget.frequencyDetails ?? null) !== JSON.stringify(budgetData.frequencyDetails ?? null),
+          (action === "update" &&
+            editingBudget &&
+            editingBudget.frequency !== budgetData.frequency) ||
+          (action === "update" &&
+            editingBudget &&
+            new Date(editingBudget.dueDate).toDateString() !==
+              budgetData.dueDate.toDateString()) ||
+          (action === "update" &&
+            editingBudget &&
+            JSON.stringify(editingBudget.frequencyDetails ?? null) !==
+              JSON.stringify(budgetData.frequencyDetails ?? null)),
         );
         if (scheduleChanged && editingBudget?.frequency !== "once") {
           const successorInput = {
             budgetId: Number(id),
             asOf: localAsOf,
-            definition: { ...lifecycleInput, dueDate: budgetData.dueDate.toISOString() },
+            definition: {
+              ...lifecycleInput,
+              dueDate: budgetData.dueDate.toISOString(),
+            },
           };
           delete (successorInput.definition as { id?: number }).id;
           delete (successorInput.definition as { isActive?: boolean }).isActive;
           delete (successorInput.definition as { asOf?: string }).asOf;
           const dryRun = await dryRunBudgetScheduleSuccessor(successorInput);
-          if (!window.confirm(`Create a successor Budget for this schedule change?\n\n` +
-            `Prepaid occurrences to transfer: ${dryRun.transferredOccurrenceCount ?? 0}\n` +
-            `Remaining cycles: ${dryRun.remainingCyclesTotal ?? "unlimited"}\n\n` +
-            "The previous Budget will stop projecting future occurrences.")) return;
-          const writeResponse = await createBudgetScheduleSuccessor(successorInput);
+          if (
+            !window.confirm(
+              `Create a successor Budget for this schedule change?\n\n` +
+                `Prepaid occurrences to transfer: ${dryRun.transferredOccurrenceCount ?? 0}\n` +
+                `Remaining cycles: ${dryRun.remainingCyclesTotal ?? "unlimited"}\n\n` +
+                "The previous Budget will stop projecting future occurrences.",
+            )
+          )
+            return;
+          const writeResponse =
+            await createBudgetScheduleSuccessor(successorInput);
           sqliteWriteConfirmed = true;
           const successorId = Number(writeResponse.successorId);
-          const refreshed = await getSelectedReadRepositories(repositoryBackend).budgets.getById(successorId);
-          if (!refreshed) throw new Error("budget_schedule_successor_refresh_failed");
-          setSuccessToastMessage("Budget schedule updated through a successor Budget.");
+          const refreshed =
+            await getSelectedReadRepositories(
+              repositoryBackend,
+            ).budgets.getById(successorId);
+          if (!refreshed)
+            throw new Error("budget_schedule_successor_refresh_failed");
+          setSuccessToastMessage(
+            "Budget schedule updated through a successor Budget.",
+          );
           setShowSuccessToast(true);
           setTimeout(() => history.push("/budget"), 500);
           return;
@@ -997,9 +1039,10 @@ const AddBudget: React.FC = () => {
         );
         sqliteWriteConfirmed = true;
         const writtenId = Number(writeResponse.targetId ?? id);
-        const refreshed = await getSelectedReadRepositories(
-          repositoryBackend,
-        ).budgets.getById(writtenId);
+        const refreshed =
+          await getSelectedReadRepositories(repositoryBackend).budgets.getById(
+            writtenId,
+          );
         if (!refreshed) throw new Error("budget_lifecycle_refresh_failed");
         setSuccessToastMessage(
           rehearsal.authoritativeMode
@@ -1033,8 +1076,7 @@ const AddBudget: React.FC = () => {
         };
         let writtenId: number;
         if (isEditMode && id) {
-          const writeResponse =
-            await updateBudgetDefinitionInDisposableSqlite(
+          const writeResponse = await updateBudgetDefinitionInDisposableSqlite(
             Number(id),
             writeInput,
           );
@@ -1056,9 +1098,10 @@ const AddBudget: React.FC = () => {
               : "Budget definition created in disposable SQLite. No snapshot or Budget History occurrence was generated.",
           );
         }
-        const refreshed = await getSelectedReadRepositories(
-          repositoryBackend,
-        ).budgets.getById(writtenId);
+        const refreshed =
+          await getSelectedReadRepositories(repositoryBackend).budgets.getById(
+            writtenId,
+          );
         if (!refreshed) {
           throw new Error("budget_definition_refresh_failed");
         }
@@ -1175,41 +1218,6 @@ const AddBudget: React.FC = () => {
       </IonHeader>
 
       <IonContent className="ion-padding">
-        {budgetDefinitionHttpMode && (
-          <IonCard color="warning">
-            <IonCardContent>
-              <IonText>
-                <h3>
-                  {rehearsalSelected
-                    ? "Budget lifecycle"
-                    : "Budget data source"}
-                </h3>
-                <p>
-                  {isFromTransaction && budgetFromTransactionWriteActive
-                    ? "Creating this Budget will also create the selected occurrence and link the originating Transaction in one reviewed operation."
-                    : budgetLifecycleWriteExperimentActive
-                    ? rehearsal.authoritativeMode
-                      ? "Create and update use the verified Budget lifecycle. Linked and historical occurrences remain unchanged."
-                      : "Writes use the safer disposable SQLite lifecycle policy. Dexie remains unchanged; linked and historical snapshots are preserved."
-                    : budgetDefinitionWriteExperimentActive
-                    ? rehearsal.authoritativeMode
-                      ? "SQLite authoritative mode is active. Supported Budget definition writes use the verified local SQLite database. This form does not generate, prune, delete, or relink Budget snapshots."
-                      : "Writes go to disposable local SQLite only. Dexie remains authoritative. Creating or editing a definition does not generate, update, prune, delete, or relink budget snapshots."
-                    : rehearsalSelected
-                      ? "Safe Budget lifecycle support is unavailable. Definition-only fallback is disabled."
-                      : "The HTTP backend is selected, but Budget definition writes are disabled. No write will be attempted."}
-                </p>
-                <p>
-                  {isFromTransaction && budgetFromTransactionWriteActive
-                    ? "Review and confirmation are required. No unrelated occurrence will be created or changed."
-                    : budgetLifecycleWriteExperimentActive
-                    ? "Dry-run and confirmation are required. No global pruning, repair, relinking, or automatic checkpoint is performed."
-                    : "Create/update definitions only. Existing Budget History remains unchanged, delete is unavailable, and SQLite must be re-imported before clean parity checks."}
-                </p>
-              </IonText>
-            </IonCardContent>
-          </IonCard>
-        )}
         <form onSubmit={handleSubmit}>
           <IonGrid>
             {/* Budget Type: Income/Expense */}
@@ -1245,7 +1253,8 @@ const AddBudget: React.FC = () => {
               <IonCol size="11">
                 <div
                   className={`form-input-wrapper${
-                    showDescriptionSuggestions && filteredDescriptions.length > 0
+                    showDescriptionSuggestions &&
+                    filteredDescriptions.length > 0
                       ? " autocomplete-open"
                       : ""
                   }`}
@@ -1745,43 +1754,68 @@ const AddBudget: React.FC = () => {
               )}
             </IonRow>
 
-            {/* Is Goal and Is Flexible Checkboxes */}
-            <IonRow>
-              <IonCol>
-                <IonCheckbox
-                  checked={isGoal}
-                  onIonChange={(e) => setIsGoal(e.detail.checked)}
-                  style={{ width: "18px", height: "18px" }}
-                />
-                <label style={{ cursor: "pointer", marginBottom: 0 }}>
-                  This is a Goal (long-term budget)
-                </label>
-              </IonCol>
-              <IonCol>
-                <IonCheckbox
-                  checked={isFlexible}
-                  onIonChange={(e) => setIsFlexible(e.detail.checked)}
-                  style={{ width: "18px", height: "18px" }}
-                />
-                <label style={{ cursor: "pointer", marginBottom: 0 }}>
-                  This is Flexible (partial payment acceptable)
-                </label>
-              </IonCol>
-              {shouldShowBudgetLifecycleActiveControl(
-                budgetLifecycleWriteExperimentActive,
-              ) && (
-                <IonCol>
-                  <IonCheckbox
-                    checked={isActive}
-                    onIonChange={(e) => setIsActive(e.detail.checked)}
-                    style={{ width: "18px", height: "18px" }}
+            {/* Definition options */}
+            <IonRow className="budget-option-toggles">
+              <IonCol size="11">
+                <IonItem lines="none" className="budget-option-toggle">
+                  <IonLabel>
+                    <h3>Goal</h3>
+                    <p>
+                      This is a long-term Budget that can accept multiple
+                      payments over time.
+                    </p>
+                  </IonLabel>
+                  <IonToggle
+                    slot="end"
+                    checked={isGoal}
+                    onIonChange={(e) => setIsGoal(e.detail.checked)}
+                    aria-label="Goal Budget"
                   />
-                  <label style={{ cursor: "pointer", marginBottom: 0 }}>
-                    Active (generate scheduled snapshots)
-                  </label>
-                </IonCol>
-              )}
+                </IonItem>
+              </IonCol>
             </IonRow>
+            <IonRow className="budget-option-toggles">
+              <IonCol size="11">
+                <IonItem lines="none" className="budget-option-toggle">
+                  <IonLabel>
+                    <h3>Flexible</h3>
+                    <p>
+                      Partial payment is acceptable; an unpaid remainder does
+                      not stay overdue.
+                    </p>
+                  </IonLabel>
+                  <IonToggle
+                    slot="end"
+                    checked={isFlexible}
+                    onIonChange={(e) => setIsFlexible(e.detail.checked)}
+                    aria-label="Flexible Budget"
+                  />
+                </IonItem>
+              </IonCol>
+            </IonRow>
+            {shouldShowBudgetLifecycleActiveControl(
+              budgetLifecycleWriteExperimentActive,
+            ) && (
+              <IonRow className="budget-option-toggles">
+                <IonCol size="11">
+                  <IonItem lines="none" className="budget-option-toggle">
+                    <IonLabel>
+                      <h3>Active</h3>
+                      <p>
+                        Include this Budget in current and upcoming runtime
+                        projections.
+                      </p>
+                    </IonLabel>
+                    <IonToggle
+                      slot="end"
+                      checked={isActive}
+                      onIonChange={(e) => setIsActive(e.detail.checked)}
+                      aria-label="Active Budget definition"
+                    />
+                  </IonItem>
+                </IonCol>
+              </IonRow>
+            )}
 
             {/* Submit Button */}
             <IonRow>

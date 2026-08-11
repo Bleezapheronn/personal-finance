@@ -13,6 +13,48 @@ const hasColumn = (db: Database.Database, table: string, column: string): boolea
   (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
     .some((row) => row.name === column);
 
+const percentageGoal = (row: Row): boolean =>
+  Number(row.goalPercentage ?? 0) > 0;
+
+const targetFloor = (row: Row): number =>
+  Math.abs(Number(row.amount) + Number(row.transactionCost ?? 0));
+
+/**
+ * The financial-report income period is the occurrence's calendar year, not
+ * "YTD today".  That distinction preserves a frozen 2026 target when a 2027
+ * successor is being displayed.
+ */
+export const incomeForOccurrenceYear = (
+  db: Database.Database,
+  occurrenceDueDate: string | Date,
+  asOf: Date,
+): number => {
+  const due = normalizeToLocalDay(occurrenceDueDate);
+  const asOfDay = normalizeToLocalDay(asOf);
+  const year = due.getFullYear();
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+  const through = asOfDay < start ? new Date(start.getTime() - 1) : asOfDay > end ? end : asOfDay;
+  if (through < start) return 0;
+  const row = db.prepare(`SELECT COALESCE(SUM(t.amount + COALESCE(t.transactionCost, 0)), 0) AS total
+    FROM transactions t
+    JOIN categories c ON c.id = t.categoryId
+    JOIN buckets b ON b.id = c.bucketId
+    WHERE b.excludeFromReports = 1
+      AND date(t.date) >= date(@start)
+      AND date(t.date) <= date(@through)`).get({ start: localDayKey(start), through: localDayKey(through) }) as { total: number };
+  return Number(row.total ?? 0);
+};
+
+export const resolvedPercentageTarget = (
+  db: Database.Database,
+  row: Row,
+  asOf: Date,
+): number => Math.max(
+  targetFloor(row),
+  (Number(row.goalPercentage) / 100) * incomeForOccurrenceYear(db, String(row.dueDate), asOf),
+);
+
 export const occurrenceFrozen = (dueDate: string | Date, asOf = new Date()): boolean =>
   normalizeToLocalDay(dueDate).getTime() < normalizeToLocalDay(asOf).getTime();
 
@@ -52,16 +94,20 @@ const insertSnapshot = (
   timestamp: string,
 ): number => {
   const value = buildBudgetSnapshotValues(budget, dueDate, cycleIndex, true);
+  const supportsResolvedTarget = hasColumn(db, "budgetSnapshots", "resolvedTarget");
+  const resolvedTarget = Number(value.goalPercentage ?? 0) > 0
+    ? resolvedPercentageTarget(db, { ...value, dueDate }, dueDate)
+    : null;
   const result = db.prepare(`INSERT INTO budgetSnapshots (
     budgetId, occurrenceDate, dueDate, cycleIndex, description, categoryId,
     accountId, recipientId, amount, transactionCost, frequency, frequencyDetails,
     isGoal, isFlexible, goalPercentage, goalDirection, remainingCyclesTotal,
-    isActive, isHistorical, sourceBudgetUpdatedAt, createdAt, updatedAt
+    isActive, isHistorical${supportsResolvedTarget ? ", resolvedTarget" : ""}, sourceBudgetUpdatedAt, createdAt, updatedAt
   ) VALUES (
     @budgetId, @occurrenceDate, @dueDate, @cycleIndex, @description, @categoryId,
     @accountId, @recipientId, @amount, @transactionCost, @frequency, @frequencyDetails,
     @isGoal, @isFlexible, @goalPercentage, @goalDirection, @remainingCyclesTotal,
-    1, 1, @sourceBudgetUpdatedAt, @createdAt, @updatedAt
+    1, 1${supportsResolvedTarget ? ", @resolvedTarget" : ""}, @sourceBudgetUpdatedAt, @createdAt, @updatedAt
   )`).run({
     ...value,
     occurrenceDate: dueDate.toISOString(),
@@ -75,11 +121,33 @@ const insertSnapshot = (
     goalPercentage: value.goalPercentage ?? null,
     goalDirection: value.goalDirection ?? null,
     remainingCyclesTotal: value.remainingCyclesTotal ?? null,
+    resolvedTarget,
     sourceBudgetUpdatedAt: String(value.sourceBudgetUpdatedAt),
     createdAt: timestamp,
     updatedAt: timestamp,
   });
   return Number(result.lastInsertRowid);
+};
+
+/** Finalizes percentage targets only after their local due day has passed. */
+export const finalizeFrozenPercentageTargets = (
+  db: Database.Database,
+  asOf = new Date(),
+  budgetId?: number,
+): number => {
+  if (!hasColumn(db, "budgetSnapshots", "resolvedTarget")) return 0;
+  const rows = db.prepare(`SELECT * FROM budgetSnapshots
+    WHERE goalPercentage > 0 AND resolvedTarget IS NULL${budgetId === undefined ? "" : " AND budgetId = @budgetId"}`)
+    .all(budgetId === undefined ? {} : { budgetId }) as Row[];
+  const update = db.prepare(`UPDATE budgetSnapshots
+    SET resolvedTarget = @resolvedTarget, updatedAt = @updatedAt
+    WHERE id = @id AND resolvedTarget IS NULL`);
+  let changed = 0;
+  for (const row of rows) {
+    if (!occurrenceFrozen(String(row.dueDate), asOf)) continue;
+    changed += update.run({ id: row.id, resolvedTarget: resolvedPercentageTarget(db, row, normalizeToLocalDay(String(row.dueDate))), updatedAt: new Date().toISOString() }).changes;
+  }
+  return changed;
 };
 
 /** Materializes only occurrences that are already frozen. Safe to call repeatedly. */
@@ -122,12 +190,15 @@ export const syncMutableOccurrenceValues = (
   let changed = 0;
   for (const snapshot of snapshots) {
     if (occurrenceFrozen(String(snapshot.dueDate), asOf)) continue;
+    const moveOneTimeOccurrence = budget.frequency === "once";
     changed += db.prepare(`UPDATE budgetSnapshots SET
       description=@description, categoryId=@categoryId, accountId=@accountId,
       recipientId=@recipientId, amount=@amount, transactionCost=@transactionCost,
       frequency=@frequency, frequencyDetails=@frequencyDetails, isGoal=@isGoal,
       isFlexible=@isFlexible, goalPercentage=@goalPercentage, goalDirection=@goalDirection,
       remainingCyclesTotal=@remainingCyclesTotal, sourceBudgetUpdatedAt=@sourceBudgetUpdatedAt,
+      occurrenceDate=CASE WHEN @moveOneTimeOccurrence = 1 THEN @dueDate ELSE occurrenceDate END,
+      dueDate=CASE WHEN @moveOneTimeOccurrence = 1 THEN @dueDate ELSE dueDate END,
       updatedAt=@updatedAt WHERE id=@id`).run({
       id: snapshot.id,
       description: budget.description,
@@ -143,6 +214,8 @@ export const syncMutableOccurrenceValues = (
       goalPercentage: budget.goalPercentage,
       goalDirection: budget.goalDirection,
       remainingCyclesTotal: budget.remainingCyclesTotal,
+      moveOneTimeOccurrence: moveOneTimeOccurrence ? 1 : 0,
+      dueDate: budget.dueDate,
       sourceBudgetUpdatedAt: budget.updatedAt,
       updatedAt: timestamp,
     }).changes;

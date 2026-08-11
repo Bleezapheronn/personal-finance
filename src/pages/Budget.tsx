@@ -44,6 +44,7 @@ import {
   downloadOutline,
   cloudUploadOutline,
   timeOutline,
+  bookOutline,
 } from "ionicons/icons";
 import {
   db,
@@ -93,6 +94,7 @@ import {
   writeBudgetLifecycle,
 } from "../repositories/http/budgetLifecycleWriteExperiment";
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
+import { occurrenceDisplayTarget } from "../utils/budgetDisplayTarget";
 import "./Budget.css";
 
 interface BudgetOccurrence {
@@ -147,7 +149,9 @@ const getEnvValue = (key: string): string | undefined => {
 const isBudgetReadExperimentEnabled = (): boolean =>
   getEnvValue(BUDGET_READ_EXPERIMENT_FLAG) === "true";
 
-const rowsFromListResult = <Row,>(result: ListResult<Row>): Row[] | undefined => {
+const rowsFromListResult = <Row,>(
+  result: ListResult<Row>,
+): Row[] | undefined => {
   if (Array.isArray(result)) {
     return result;
   }
@@ -176,7 +180,10 @@ const loadPagedRows = async <Row,>(
 
   while (rows.length < maxRows) {
     const limit = Math.min(SELECTED_READ_PAGE_SIZE, maxRows - rows.length);
-    const result = (await list({ limit, offset: rows.length })) as ListResult<Row>;
+    const result = (await list({
+      limit,
+      offset: rows.length,
+    })) as ListResult<Row>;
     const pageRows = rowsFromListResult(result);
 
     if (!pageRows) {
@@ -274,7 +281,9 @@ const normalizeBudgetRow = (row: unknown): Budget | undefined => {
   const source = row as Record<string, unknown>;
   const categoryId = numberValue(source.categoryId);
   const amount = numberValue(source.amount);
-  const frequency = stringValue(source.frequency) as Budget["frequency"] | undefined;
+  const frequency = stringValue(source.frequency) as
+    | Budget["frequency"]
+    | undefined;
   const dueDate = dateValue(source.dueDate);
   const createdAt = dateValue(source.createdAt);
   const updatedAt = dateValue(source.updatedAt);
@@ -332,7 +341,9 @@ const normalizeBudgetSnapshotRow = (
   const cycleIndex = numberValue(source.cycleIndex);
   const categoryId = numberValue(source.categoryId);
   const amount = numberValue(source.amount);
-  const frequency = stringValue(source.frequency) as Budget["frequency"] | undefined;
+  const frequency = stringValue(source.frequency) as
+    | Budget["frequency"]
+    | undefined;
   const isGoal = booleanValue(source.isGoal);
   const isHistorical = booleanValue(source.isHistorical);
   const sourceBudgetUpdatedAt = dateValue(source.sourceBudgetUpdatedAt);
@@ -376,6 +387,7 @@ const normalizeBudgetSnapshotRow = (
     goalDirection: stringValue(source.goalDirection) as
       | Budget["goalDirection"]
       | undefined,
+    resolvedTarget: nullableNumberValue(source.resolvedTarget),
     remainingCyclesTotal:
       source.remainingCyclesTotal === null
         ? null
@@ -677,6 +689,23 @@ const BudgetPage: React.FC = () => {
   const [isLoadingMoreBudgetOccurrences, setIsLoadingMoreBudgetOccurrences] =
     useState(false);
 
+  const definitionCanDelete = (budgetId: number): boolean => {
+    const snapshotIds = new Set(
+      budgetSnapshots
+        .filter((snapshot) => snapshot.budgetId === budgetId)
+        .map((snapshot) => snapshot.id),
+    );
+    return (
+      snapshotIds.size === 0 &&
+      !transactions.some(
+        (transaction) =>
+          transaction.budgetId === budgetId ||
+          (transaction.budgetSnapshotId !== undefined &&
+            snapshotIds.has(transaction.budgetSnapshotId)),
+      )
+    );
+  };
+
   const handleCompleteOccurrenceInSqlite = async (
     occurrence: BudgetOccurrence,
     input: {
@@ -686,17 +715,27 @@ const BudgetPage: React.FC = () => {
       transactionReference?: string;
     },
   ) => {
-    if (!rehearsal.ready || !rehearsal.budgetSnapshotOccurrenceWritesAvailable) {
+    if (
+      !rehearsal.ready ||
+      !rehearsal.budgetSnapshotOccurrenceWritesAvailable
+    ) {
       throw new Error("budget_snapshot_occurrence_writes_unavailable");
     }
-    if (!occurrence.budget.accountId || !occurrence.budget.categoryId || !occurrence.budget.recipientId) {
+    if (
+      !occurrence.budget.accountId ||
+      !occurrence.budget.categoryId ||
+      !occurrence.budget.recipientId
+    ) {
       throw new Error("budget_occurrence_transaction_fields_incomplete");
     }
     const occurrenceInput = {
       budgetId: occurrence.budgetId,
       occurrenceDate: occurrence.dueDate,
     };
-    const review = await dryRunBudgetSnapshotOccurrence("create", occurrenceInput);
+    const review = await dryRunBudgetSnapshotOccurrence(
+      "create",
+      occurrenceInput,
+    );
     const created = await writeBudgetSnapshotOccurrence(
       "create",
       occurrenceInput,
@@ -708,7 +747,8 @@ const BudgetPage: React.FC = () => {
     await createBasicTransactionInDisposableSqlite({
       classification:
         occurrence.budget.goalDirection === "expense" ||
-        (occurrence.budget.goalDirection === undefined && occurrence.budget.amount < 0)
+        (occurrence.budget.goalDirection === undefined &&
+          occurrence.budget.amount < 0)
           ? "expense"
           : "income",
       date: input.date.toISOString(),
@@ -725,14 +765,33 @@ const BudgetPage: React.FC = () => {
     });
   };
 
-  const handleUnlinkPaymentInSqlite = async (transaction: Transaction): Promise<boolean> => {
-    if (!rehearsal.ready || !rehearsal.budgetSnapshotOccurrenceWritesAvailable) {
+  const handleUnlinkPaymentInSqlite = async (
+    transaction: Transaction,
+  ): Promise<boolean> => {
+    if (
+      !rehearsal.ready ||
+      !rehearsal.budgetSnapshotOccurrenceWritesAvailable
+    ) {
       throw new Error("budget_snapshot_occurrence_writes_unavailable");
     }
-    const input = { transactionId: transaction.id!, ...(transaction.budgetSnapshotId != null ? { snapshotId: transaction.budgetSnapshotId } : {}) };
+    const input = {
+      transactionId: transaction.id!,
+      ...(transaction.budgetSnapshotId != null
+        ? { snapshotId: transaction.budgetSnapshotId }
+        : {}),
+    };
     const dryRun = await dryRunBudgetSnapshotOccurrence("unlink", input);
-    if (!window.confirm("Remove this Budget link? The Transaction and occurrence will remain.")) return false;
-    await writeBudgetSnapshotOccurrence("unlink", input, dryRun.planFingerprint!);
+    if (
+      !window.confirm(
+        "Remove this Budget link? The Transaction and occurrence will remain.",
+      )
+    )
+      return false;
+    await writeBudgetSnapshotOccurrence(
+      "unlink",
+      input,
+      dryRun.planFingerprint!,
+    );
     return true;
   };
 
@@ -927,8 +986,10 @@ const BudgetPage: React.FC = () => {
   ): number => {
     if (budgetSnapshotId !== undefined) {
       const numericSnapshotId = Number(budgetSnapshotId);
-      return (transactionsBySnapshotId.get(numericSnapshotId) ?? [])
-        .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
+      return (transactionsBySnapshotId.get(numericSnapshotId) ?? []).reduce(
+        (sum, txn) => sum + txn.amount + (txn.transactionCost || 0),
+        0,
+      );
     }
 
     // Legacy fallback: rows without snapshot linkage, matched by occurrence date.
@@ -996,8 +1057,10 @@ const BudgetPage: React.FC = () => {
 
       // Choose the most recently updated snapshot for this occurrence
       // Prefer ones with linked transactions when available
-      const existingHasLinks = (transactionsBySnapshotId.get(Number(existing.id)) ?? []).length > 0;
-      const candidateHasLinks = (transactionsBySnapshotId.get(Number(snapshot.id)) ?? []).length > 0;
+      const existingHasLinks =
+        (transactionsBySnapshotId.get(Number(existing.id)) ?? []).length > 0;
+      const candidateHasLinks =
+        (transactionsBySnapshotId.get(Number(snapshot.id)) ?? []).length > 0;
 
       if (candidateHasLinks && !existingHasLinks) {
         uniqueSnapshots.set(key, snapshot);
@@ -1029,7 +1092,7 @@ const BudgetPage: React.FC = () => {
         const dueDate = new Date(snapshot.dueDate);
         dueDate.setHours(0, 0, 0, 0);
 
-        const snapshotBudget: Budget = {
+        const snapshotBudget: Budget & { resolvedTarget?: number | null } = {
           ...liveBudget,
           description: snapshot.description,
           categoryId: snapshot.categoryId,
@@ -1044,6 +1107,7 @@ const BudgetPage: React.FC = () => {
           goalPercentage: snapshot.goalPercentage,
           goalDirection: snapshot.goalDirection,
           remainingCyclesTotal: snapshot.remainingCyclesTotal,
+          resolvedTarget: snapshot.resolvedTarget,
           dueDate,
           updatedAt: snapshot.sourceBudgetUpdatedAt,
         };
@@ -1081,7 +1145,8 @@ const BudgetPage: React.FC = () => {
 
     const persistedOccurrenceKeys = new Set(
       snapshotOccurrences.map(
-        (occurrence) => `${occurrence.budgetId}:${occurrence.dueDate.getTime()}`,
+        (occurrence) =>
+          `${occurrence.budgetId}:${occurrence.dueDate.getTime()}`,
       ),
     );
 
@@ -1097,11 +1162,15 @@ const BudgetPage: React.FC = () => {
           const dueDate = new Date(budget.dueDate);
           dueDate.setHours(0, 0, 0, 0);
 
-          if (dueDate < new Date(new Date().setHours(0, 0, 0, 0)) || dueDate > horizonDate) {
+          if (
+            dueDate < new Date(new Date().setHours(0, 0, 0, 0)) ||
+            dueDate > horizonDate
+          ) {
             return;
           }
 
-          if (persistedOccurrenceKeys.has(`${budgetId}:${dueDate.getTime()}`)) return;
+          if (persistedOccurrenceKeys.has(`${budgetId}:${dueDate.getTime()}`))
+            return;
 
           const amountPaid = getAmountPaidForOccurrence(
             undefined,
@@ -1133,7 +1202,8 @@ const BudgetPage: React.FC = () => {
           currentDueDate.setHours(0, 0, 0, 0);
 
           let occurrenceCount = 0;
-          const maxCycles = budget.remainingCyclesTotal ?? Number.MAX_SAFE_INTEGER;
+          const maxCycles =
+            budget.remainingCyclesTotal ?? Number.MAX_SAFE_INTEGER;
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           while (currentDueDate <= horizonDate && occurrenceCount < maxCycles) {
@@ -1522,9 +1592,9 @@ const BudgetPage: React.FC = () => {
       setError("");
       try {
         const plan = await dryRunBudgetDelete(budgetId);
-        if (!plan.eligible || !plan.planFingerprint) {
+        if (!plan.eligible || !plan.planFingerprint || plan.snapshotCount > 0) {
           const budget = budgets.find((candidate) => candidate.id === budgetId);
-          if (plan.transactionDependencyCount > 0 && budget) {
+          if (budget) {
             await handleSetBudgetActiveInSqlite(budget, false);
           } else {
             setError(budgetDeleteBlockedMessage(plan));
@@ -1583,9 +1653,7 @@ const BudgetPage: React.FC = () => {
           );
           return;
         }
-        setSuccessMsg(
-          "Budget and its unlinked snapshots deleted from SQLite.",
-        );
+        setSuccessMsg("Budget and its unlinked snapshots deleted from SQLite.");
         setShowSuccessToast(true);
         setShowDeleteConfirm(false);
         setBudgetToDelete(undefined);
@@ -1719,7 +1787,10 @@ const BudgetPage: React.FC = () => {
         for (const item of reviewed) {
           const input =
             targetSnapshotId && item.action === "createAndLink"
-              ? { transactionId: item.input.transactionId, snapshotId: targetSnapshotId }
+              ? {
+                  transactionId: item.input.transactionId,
+                  snapshotId: targetSnapshotId,
+                }
               : item.input;
           const action =
             targetSnapshotId && item.action === "createAndLink"
@@ -1817,42 +1888,43 @@ const BudgetPage: React.FC = () => {
 
   // Sum of actual income transactions from Jan 1 of this year to today.
   // Uses the bucket flagged as excludeFromReports to identify income categories.
-  const yearToDateIncome = useMemo(() => {
-    const incomeBucket = buckets.find((b) => b.excludeFromReports);
-    if (!incomeBucket) return 0;
-    const incomeCategoryIds = new Set(
-      categories
-        .filter((c) => c.bucketId === incomeBucket.id)
-        .map((c) => c.id!),
-    );
-    const jan1 = new Date(new Date().getFullYear(), 0, 1);
-    jan1.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-    return transactions
-      .filter((txn) => {
-        const d = new Date(txn.date);
-        return incomeCategoryIds.has(txn.categoryId) && d >= jan1 && d <= today;
-      })
-      .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
-  }, [transactions, categories, buckets]);
+  const incomeForYear = useCallback(
+    (year: number) => {
+      const incomeBucketIds = new Set(
+        buckets
+          .filter((bucket) => bucket.excludeFromReports)
+          .map((bucket) => bucket.id),
+      );
+      const incomeCategoryIds = new Set(
+        categories
+          .filter((category) => incomeBucketIds.has(category.bucketId))
+          .map((category) => category.id),
+      );
+      return transactions
+        .filter(
+          (txn) =>
+            txn.date.getFullYear() === year &&
+            incomeCategoryIds.has(txn.categoryId),
+        )
+        .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
+    },
+    [transactions, categories, buckets],
+  );
 
   // Returns the absolute effective target for a budget.
   // When goalPercentage is set: max(percentage × YTD income, optional floor).
   // Otherwise: abs(amount + transactionCost) as before.
   const getEffectiveBudgetTarget = useCallback(
-    (budget: Budget): number => {
-      if (budget.goalPercentage && budget.goalPercentage > 0) {
-        const percentageAmount =
-          (budget.goalPercentage / 100) * yearToDateIncome;
-        const floor = Math.abs(
-          (budget.amount || 0) + (budget.transactionCost || 0),
-        );
-        return Math.max(percentageAmount, floor);
-      }
-      return Math.abs(budget.amount + (budget.transactionCost || 0));
+    (budget: Budget & { resolvedTarget?: number | null }): number => {
+      const target = occurrenceDisplayTarget(
+        budget,
+        incomeForYear(budget.dueDate.getFullYear()),
+      );
+      // Legacy frozen percentage rows without a resolved target are deliberately
+      // not recalculated from today's income.  They render without progress.
+      return target ?? 0;
     },
-    [yearToDateIncome],
+    [incomeForYear],
   );
 
   const isExpenseBudget = (
@@ -2338,6 +2410,13 @@ const BudgetPage: React.FC = () => {
           <IonTitle>Budget</IonTitle>
           <IonButtons slot="end">
             <IonButton
+              onClick={() => history.push("/budget/definitions")}
+              title="Budget Definitions"
+              aria-label="Budget Definitions"
+            >
+              <IonIcon icon={bookOutline} />
+            </IonButton>
+            <IonButton
               onClick={() => history.push("/budget/history")}
               title="Budget History"
             >
@@ -2390,15 +2469,15 @@ const BudgetPage: React.FC = () => {
             sqliteDeletePlan
               ? budgetDeleteConfirmationMessage(sqliteDeletePlan)
               : deleteAnalysis
-              ? deleteAnalysis.totalSnapshots === 0
-                ? "This budget has no snapshots. Delete it?"
-                : deleteAnalysis.linkedSnapshots.length > 0 &&
-                    deleteAnalysis.unlinkedSnapshots.length > 0
-                  ? `This budget has ${deleteAnalysis.unlinkedSnapshots.length} snapshot(s) with no transactions and ${deleteAnalysis.linkedSnapshots.length} snapshot(s) with linked transactions. Choose an action below.`
-                  : deleteAnalysis.linkedSnapshots.length > 0
-                    ? `This budget has ${deleteAnalysis.linkedSnapshots.length} snapshot(s) with linked transactions. Deactivate to keep history.`
-                    : `This budget has ${deleteAnalysis.unlinkedSnapshots.length} snapshot(s) with no linked transactions. Delete them?`
-              : "Loading..."
+                ? deleteAnalysis.totalSnapshots === 0
+                  ? "This budget has no snapshots. Delete it?"
+                  : deleteAnalysis.linkedSnapshots.length > 0 &&
+                      deleteAnalysis.unlinkedSnapshots.length > 0
+                    ? `This budget has ${deleteAnalysis.unlinkedSnapshots.length} snapshot(s) with no transactions and ${deleteAnalysis.linkedSnapshots.length} snapshot(s) with linked transactions. Choose an action below.`
+                    : deleteAnalysis.linkedSnapshots.length > 0
+                      ? `This budget has ${deleteAnalysis.linkedSnapshots.length} snapshot(s) with linked transactions. Deactivate to keep history.`
+                      : `This budget has ${deleteAnalysis.unlinkedSnapshots.length} snapshot(s) with no linked transactions. Delete them?`
+                : "Loading..."
           }
           buttons={
             sqliteDeletePlan
@@ -2418,53 +2497,54 @@ const BudgetPage: React.FC = () => {
                   },
                 ]
               : deleteAnalysis
-              ? [
-                  {
-                    text: "Cancel",
-                    role: "cancel",
-                    handler: () => {
-                      setShowDeleteConfirm(false);
-                      setDeleteAnalysis(null);
+                ? [
+                    {
+                      text: "Cancel",
+                      role: "cancel",
+                      handler: () => {
+                        setShowDeleteConfirm(false);
+                        setDeleteAnalysis(null);
+                      },
                     },
-                  },
-                  // Option 1: Delete Budget (only if no snapshots)
-                  ...(deleteAnalysis.totalSnapshots === 0
-                    ? [
-                        {
-                          text: "Delete Budget",
-                          role: "destructive" as const,
-                          handler: () => handleConfirmDelete("delete"),
-                        },
-                      ]
-                    : []),
-                  // Option 2: Delete Unlinked Snapshots (only if unlinked exist)
-                  ...(deleteAnalysis.unlinkedSnapshots.length > 0
-                    ? [
-                        {
-                          text: `Delete Unlinked Snapshots (${deleteAnalysis.unlinkedSnapshots.length})`,
-                          role: "destructive" as const,
-                          handler: () => handleConfirmDelete("deleteUnlinked"),
-                        },
-                      ]
-                    : []),
-                  // Option 3: Deactivate Budget (if linked snapshots exist)
-                  ...(deleteAnalysis.linkedSnapshots.length > 0
-                    ? [
-                        {
-                          text: "Deactivate Budget",
-                          role: "destructive" as const,
-                          handler: () => handleConfirmDelete("deactivate"),
-                        },
-                      ]
-                    : []),
-                ]
-              : [
-                  {
-                    text: "Cancel",
-                    role: "cancel",
-                    handler: () => setShowDeleteConfirm(false),
-                  },
-                ]
+                    // Option 1: Delete Budget (only if no snapshots)
+                    ...(deleteAnalysis.totalSnapshots === 0
+                      ? [
+                          {
+                            text: "Delete Budget",
+                            role: "destructive" as const,
+                            handler: () => handleConfirmDelete("delete"),
+                          },
+                        ]
+                      : []),
+                    // Option 2: Delete Unlinked Snapshots (only if unlinked exist)
+                    ...(deleteAnalysis.unlinkedSnapshots.length > 0
+                      ? [
+                          {
+                            text: `Delete Unlinked Snapshots (${deleteAnalysis.unlinkedSnapshots.length})`,
+                            role: "destructive" as const,
+                            handler: () =>
+                              handleConfirmDelete("deleteUnlinked"),
+                          },
+                        ]
+                      : []),
+                    // Option 3: Deactivate Budget (if linked snapshots exist)
+                    ...(deleteAnalysis.linkedSnapshots.length > 0
+                      ? [
+                          {
+                            text: "Deactivate Budget",
+                            role: "destructive" as const,
+                            handler: () => handleConfirmDelete("deactivate"),
+                          },
+                        ]
+                      : []),
+                  ]
+                : [
+                    {
+                      text: "Cancel",
+                      role: "cancel",
+                      handler: () => setShowDeleteConfirm(false),
+                    },
+                  ]
           }
         />
 
@@ -2486,67 +2566,74 @@ const BudgetPage: React.FC = () => {
             {(budgetReadExperimentEnabled ||
               budgetDefinitionWriteExperimentActive) &&
               !(rehearsal.authoritativeMode && rehearsal.ready) && (
-              <IonCard color={budgetHttpReadonlyExperimentActive ? "warning" : undefined}>
-                <IonCardContent>
-                  <IonText>
-                    <h3>
-                      {budgetDefinitionWriteExperimentActive
-                        ? budgetDeleteWriteExperimentActive
-                          ? "Budget lifecycle SQLite write experiments are active"
-                          : "Budget Definitions SQLite write experiment is active"
-                        : "Budget read experiment is active"}
-                    </h3>
-                    <p>
-                      Backend: {repositoryBackend}.{" "}
-                      {budgetDefinitionWriteExperimentActive
-                        ? budgetDeleteWriteExperimentActive
-                          ? rehearsal.authoritativeMode
-                            ? "SQLite authoritative mode is active. Budget create/update remains available, and an eligible unused Budget plus all of its unlinked snapshots may be deleted only after a reviewed dry-run. Transaction dependencies block deletion; no unlinking or repair runs."
-                            : "Writes go to disposable local SQLite only. Dexie remains authoritative. Budget create/update remains available, and eligible unused Budget deletion is dry-run-first. Transaction dependencies block deletion; no unlinking or repair runs."
-                          : rehearsal.authoritativeMode
-                            ? "SQLite authoritative mode is active. Supported Budget definition create/update writes use the verified local SQLite database. Delete and automatic snapshot lifecycle actions remain unavailable."
-                            : "Writes go to disposable local SQLite only. Dexie remains authoritative. Create/update definitions only; existing snapshots, Budget History, and transaction links remain unchanged. Delete and snapshot lifecycle actions are unavailable."
-                        : budgetHttpReadonlyExperimentActive
-                        ? "Budget inputs are loaded through selected-read http-readonly; budget edits and snapshot lifecycle actions are disabled. Switch back to Dexie for normal Budget behavior."
-                        : "The experiment flag is on, but the selected backend is Dexie, so Budget uses the existing Dexie read and lifecycle path."}
-                    </p>
-                    {budgetDefinitionWriteExperimentActive && (
+                <IonCard
+                  color={
+                    budgetHttpReadonlyExperimentActive ? "warning" : undefined
+                  }
+                >
+                  <IonCardContent>
+                    <IonText>
+                      <h3>
+                        {budgetDefinitionWriteExperimentActive
+                          ? budgetDeleteWriteExperimentActive
+                            ? "Budget lifecycle SQLite write experiments are active"
+                            : "Budget Definitions SQLite write experiment is active"
+                          : "Budget read experiment is active"}
+                      </h3>
                       <p>
-                        Recurrence edits affect only the definition and may
-                        influence future snapshot generation when a separate
-                        lifecycle process later runs. Re-import SQLite before
-                        clean parity checks.
+                        Backend: {repositoryBackend}.{" "}
+                        {budgetDefinitionWriteExperimentActive
+                          ? budgetDeleteWriteExperimentActive
+                            ? rehearsal.authoritativeMode
+                              ? "SQLite authoritative mode is active. Budget create/update remains available, and an eligible unused Budget plus all of its unlinked snapshots may be deleted only after a reviewed dry-run. Transaction dependencies block deletion; no unlinking or repair runs."
+                              : "Writes go to disposable local SQLite only. Dexie remains authoritative. Budget create/update remains available, and eligible unused Budget deletion is dry-run-first. Transaction dependencies block deletion; no unlinking or repair runs."
+                            : rehearsal.authoritativeMode
+                              ? "SQLite authoritative mode is active. Supported Budget definition create/update writes use the verified local SQLite database. Delete and automatic snapshot lifecycle actions remain unavailable."
+                              : "Writes go to disposable local SQLite only. Dexie remains authoritative. Create/update definitions only; existing snapshots, Budget History, and transaction links remain unchanged. Delete and snapshot lifecycle actions are unavailable."
+                          : budgetHttpReadonlyExperimentActive
+                            ? "Budget inputs are loaded through selected-read http-readonly; budget edits and snapshot lifecycle actions are disabled. Switch back to Dexie for normal Budget behavior."
+                            : "The experiment flag is on, but the selected backend is Dexie, so Budget uses the existing Dexie read and lifecycle path."}
                       </p>
-                    )}
-                  </IonText>
-                </IonCardContent>
-              </IonCard>
-            )}
+                      {budgetDefinitionWriteExperimentActive && (
+                        <p>
+                          Recurrence edits affect only the definition and may
+                          influence future snapshot generation when a separate
+                          lifecycle process later runs. Re-import SQLite before
+                          clean parity checks.
+                        </p>
+                      )}
+                    </IonText>
+                  </IonCardContent>
+                </IonCard>
+              )}
 
             {budgetHttpReadonlyExperimentActive &&
               !(rehearsal.authoritativeMode && rehearsal.ready) &&
               selectedReadLoadMeta && (
-              <IonCard color={selectedReadInputsTruncated ? "danger" : "light"}>
-                <IonCardContent>
-                  <IonText>
-                    <p>
-                      Selected-read inputs: budgets{" "}
-                      {selectedReadLoadMeta.budgetLoadedCount}/
-                      {selectedReadLoadMeta.budgetReportedCount ?? "-"},
-                      snapshots{" "}
-                      {selectedReadLoadMeta.budgetSnapshotLoadedCount}/
-                      {selectedReadLoadMeta.budgetSnapshotReportedCount ?? "-"},
-                      transactions{" "}
-                      {selectedReadLoadMeta.transactionLoadedCount}/
-                      {selectedReadLoadMeta.transactionReportedCount ?? "-"}.
-                      {selectedReadInputsTruncated
-                        ? " Inputs are capped, so Budget results should not be treated as full-confidence."
-                        : " Inputs are not truncated."}
-                    </p>
-                  </IonText>
-                </IonCardContent>
-              </IonCard>
-            )}
+                <IonCard
+                  color={selectedReadInputsTruncated ? "danger" : "light"}
+                >
+                  <IonCardContent>
+                    <IonText>
+                      <p>
+                        Selected-read inputs: budgets{" "}
+                        {selectedReadLoadMeta.budgetLoadedCount}/
+                        {selectedReadLoadMeta.budgetReportedCount ?? "-"},
+                        snapshots{" "}
+                        {selectedReadLoadMeta.budgetSnapshotLoadedCount}/
+                        {selectedReadLoadMeta.budgetSnapshotReportedCount ??
+                          "-"}
+                        , transactions{" "}
+                        {selectedReadLoadMeta.transactionLoadedCount}/
+                        {selectedReadLoadMeta.transactionReportedCount ?? "-"}.
+                        {selectedReadInputsTruncated
+                          ? " Inputs are capped, so Budget results should not be treated as full-confidence."
+                          : " Inputs are not truncated."}
+                      </p>
+                    </IonText>
+                  </IonCardContent>
+                </IonCard>
+              )}
 
             {/* Active Goals Section - Scrollable */}
             {allGoals.length > 0 && (
@@ -2775,7 +2862,7 @@ const BudgetPage: React.FC = () => {
                                       e.stopPropagation();
                                       handleOpenLinkModal(currentGoal);
                                     }}
-                                    title="Link Transaction"
+                                    title="Link transactions to occurrence"
                                   >
                                     <IonIcon icon={linkOutline} slot="end" />
                                   </IonButton>
@@ -2790,7 +2877,7 @@ const BudgetPage: React.FC = () => {
                                       `/budget/edit/${currentGoal.budget.id}`,
                                     );
                                   }}
-                                  title="Edit Goal"
+                                  title="Edit Budget definition"
                                 >
                                   <IonIcon icon={createOutline} slot="end" />
                                 </IonButton>
@@ -2799,13 +2886,32 @@ const BudgetPage: React.FC = () => {
                                   <IonButton
                                     fill="clear"
                                     size="small"
-                                    color="danger"
+                                    color={
+                                      definitionCanDelete(
+                                        currentGoal.budget.id!,
+                                      )
+                                        ? "danger"
+                                        : "medium"
+                                    }
                                     style={{ marginRight: "0" }}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleDeleteClick(currentGoal.budget.id!);
                                     }}
-                                    title="Delete Goal"
+                                    title={
+                                      definitionCanDelete(
+                                        currentGoal.budget.id!,
+                                      )
+                                        ? "Delete Budget definition"
+                                        : "Deactivate Budget definition"
+                                    }
+                                    aria-label={
+                                      definitionCanDelete(
+                                        currentGoal.budget.id!,
+                                      )
+                                        ? "Delete Budget definition"
+                                        : "Deactivate Budget definition"
+                                    }
                                     disabled={budgetDeleteBusy}
                                   >
                                     <IonIcon icon={trashOutline} slot="end" />
@@ -3061,7 +3167,7 @@ const BudgetPage: React.FC = () => {
                                             e.stopPropagation();
                                             handleOpenLinkModal(occ);
                                           }}
-                                          title="Link Transaction"
+                                          title="Link transactions to occurrence"
                                         >
                                           <IonIcon
                                             icon={linkOutline}
@@ -3079,7 +3185,8 @@ const BudgetPage: React.FC = () => {
                                             `/budget/edit/${occ.budget.id}`,
                                           );
                                         }}
-                                        title="Edit Budget Item"
+                                        title="Edit Budget definition"
+                                        aria-label="Edit Budget definition"
                                       >
                                         <IonIcon
                                           icon={createOutline}
@@ -3092,12 +3199,25 @@ const BudgetPage: React.FC = () => {
                                           fill="clear"
                                           size="small"
                                           style={{ marginRight: "0" }}
-                                          color="danger"
+                                          color={
+                                            definitionCanDelete(occ.budget.id!)
+                                              ? "danger"
+                                              : "medium"
+                                          }
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             handleDeleteClick(occ.budget.id!);
                                           }}
-                                          title="Delete Budget Item"
+                                          title={
+                                            definitionCanDelete(occ.budget.id!)
+                                              ? "Delete Budget definition"
+                                              : "Deactivate Budget definition"
+                                          }
+                                          aria-label={
+                                            definitionCanDelete(occ.budget.id!)
+                                              ? "Delete Budget definition"
+                                              : "Deactivate Budget definition"
+                                          }
                                           disabled={budgetDeleteBusy}
                                         >
                                           <IonIcon

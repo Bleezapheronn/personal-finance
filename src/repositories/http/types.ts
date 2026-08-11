@@ -136,6 +136,10 @@ export interface BudgetDto {
   dueDate: string;
   createdAt: string;
   updatedAt: string;
+  definitionDependencySummary?: {
+    persistedOccurrenceCount: number;
+    transactionDependencyCount: number;
+  };
 }
 
 export interface BudgetSnapshotDto {
@@ -156,9 +160,15 @@ export interface BudgetSnapshotDto {
   isFlexible: number | boolean;
   goalPercentage?: number | null;
   goalDirection?: "income" | "expense" | null;
+  resolvedTarget?: number | null;
   remainingCyclesTotal?: number | null;
   isHistorical: number | boolean;
   sourceBudgetUpdatedAt: string;
   createdAt: string;
   updatedAt: string;
+  occurrenceDependencySummary?: {
+    linkedTransactionCount: number;
+    linkedTransactionTotal?: number;
+    ambiguousLegacyReferenceCount: number;
+  };
 }

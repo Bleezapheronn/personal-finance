@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS budgetSnapshots (
   isFlexible INTEGER NOT NULL,
   goalPercentage REAL,
   goalDirection TEXT,
+  -- Set only when a percentage-of-income occurrence becomes frozen.  A null
+  -- value on a current/future occurrence deliberately keeps its target live.
+  resolvedTarget REAL,
   remainingCyclesTotal INTEGER,
   isActive INTEGER NOT NULL DEFAULT 1,
   isHistorical INTEGER NOT NULL,

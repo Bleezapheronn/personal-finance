@@ -101,10 +101,41 @@ const staleWrite = budgetLifecycleRealWrite(staleDb, {
 check("stale plan is refused without mutation", staleWrite.code === "budget_lifecycle_plan_stale" &&
   beforeStaleWrite === JSON.stringify(staleDb.prepare("SELECT * FROM budgets WHERE id=@id").get({ id: staleId })));
 
+const pixelDb = createDb();
+const pixelCreate = write(pixelDb, "create", definition({
+  description: "One-time goal", frequency: "once", isGoal: true,
+  frequencyDetails: null, dueDate: "2026-08-31T00:00:00.000Z", asOf: "2026-08-10",
+}));
+const pixelId = Number(pixelCreate.targetId);
+pixelDb.prepare(`INSERT INTO budgetSnapshots (
+  id,budgetId,occurrenceDate,dueDate,cycleIndex,description,categoryId,accountId,recipientId,
+  amount,transactionCost,frequency,frequencyDetails,isGoal,isFlexible,goalPercentage,goalDirection,
+  remainingCyclesTotal,isActive,isHistorical,sourceBudgetUpdatedAt,createdAt,updatedAt
+) VALUES (100,@budgetId,'2026-08-31T00:00:00.000Z','2026-08-31T00:00:00.000Z',1,'One-time goal',1,1,1,
+  -100,NULL,'once',NULL,1,0,NULL,NULL,NULL,1,0,@now,@now,@now)`).run({ budgetId: pixelId, now: "2026-08-10T00:00:00.000Z" });
+pixelDb.prepare(`INSERT INTO transactions (id,categoryId,accountId,recipientId,date,amount,isTransfer,budgetSnapshotId)
+  VALUES (100,1,1,1,'2026-08-10T00:00:00.000Z',-10,0,100)`).run();
+const pixelUpdate = write(pixelDb, "update", definition({
+  id: pixelId, description: "One-time goal", frequency: "once", isGoal: true,
+  frequencyDetails: null, dueDate: "2026-09-30T00:00:00.000Z", asOf: "2026-08-10",
+}));
+const moved = pixelDb.prepare("SELECT id,budgetId,occurrenceDate,dueDate FROM budgetSnapshots WHERE id=100").get() as Record<string, unknown>;
+const linked = pixelDb.prepare("SELECT budgetSnapshotId FROM transactions WHERE id=100").get() as { budgetSnapshotId: number };
+check("one-time prospective date edit preserves Budget, snapshot, and Transaction linkage", pixelUpdate.ok &&
+  Number(moved.id) === 100 && Number(moved.budgetId) === pixelId &&
+  String(moved.occurrenceDate).startsWith("2026-09-30") && String(moved.dueDate).startsWith("2026-09-30") &&
+  linked.budgetSnapshotId === 100 &&
+  (pixelDb.prepare("SELECT COUNT(*) count FROM budgetSnapshots WHERE budgetId=?").get(pixelId) as { count: number }).count === 1);
+pixelDb.prepare(`INSERT INTO budgetSnapshots (id,budgetId,occurrenceDate,dueDate,cycleIndex,description,categoryId,accountId,recipientId,amount,frequency,isGoal,isFlexible,isActive,isHistorical,sourceBudgetUpdatedAt,createdAt,updatedAt)
+  VALUES (101,@budgetId,'2026-10-31T00:00:00.000Z','2026-10-31T00:00:00.000Z',2,'One-time goal',1,1,1,-100,'once',1,0,1,0,@now,@now,@now)`).run({ budgetId: pixelId, now: "2026-08-10T00:00:00.000Z" });
+const collision = budgetLifecycleDryRun(pixelDb, definition({ id: pixelId, description: "One-time goal", frequency: "once", isGoal: true, frequencyDetails: null, dueDate: "2026-10-31T00:00:00.000Z", asOf: "2026-08-10" }), "update");
+check("one-time target-date collision is refused without mutation", !collision.ok && collision.validationErrors.includes("one_time_occurrence_target_date_ambiguous"));
+
 db.close();
 inactiveDb.close();
 backfillDb.close();
 staleDb.close();
+pixelDb.close();
 for (const result of checks) console.log(`${result.ok ? "PASS" : "FAIL"} ${result.name}`);
 const failed = checks.filter((result) => !result.ok).length;
 console.log(`Budget lifecycle checks: ${checks.length - failed} passed, ${failed} failed`);

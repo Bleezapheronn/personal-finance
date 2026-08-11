@@ -18,6 +18,7 @@ export interface BudgetListOptions {
   recipientId?: number;
   frequency?: ApiBudgetFrequency;
   isGoal?: boolean;
+  includeDefinitionDependencies?: boolean;
 }
 
 export interface BudgetSnapshotListOptions {
@@ -30,6 +31,7 @@ export interface BudgetSnapshotListOptions {
   isHistorical?: boolean;
   dateFrom?: string;
   dateTo?: string;
+  includeOccurrenceDependencies?: boolean;
 }
 
 export const listBudgets = async (

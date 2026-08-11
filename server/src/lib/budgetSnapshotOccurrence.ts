@@ -393,13 +393,17 @@ const buildPlan = (
   }
 
   if (input.action === "delete") {
-    validationErrors.push("occurrence_delete_retired");
+    if (!snapshot) validationErrors.push("snapshot_not_found");
+    else if (!budget || Number(budget.isActive) !== 0) {
+      validationErrors.push("occurrence_delete_requires_inactive_budget_definition");
+    } else if (linkedTransactionCount > 0) {
+      validationErrors.push("snapshot_linked");
+    } else if (ambiguousLegacyReferenceCount > 0) {
+      validationErrors.push("ambiguous_legacy_snapshot_reference");
+    }
   }
   if (input.action === "setActive") {
     if (!snapshot) validationErrors.push("snapshot_not_found");
-    else if (!occurrenceFrozen(String(snapshot.dueDate))) {
-      validationErrors.push("occurrence_not_frozen");
-    }
   }
   if (input.action === "correct") {
     if (!snapshot) validationErrors.push("snapshot_not_found");

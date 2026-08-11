@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
-import { catchUpHistoricalOccurrences, syncMutableOccurrenceValues } from "./lib/budgetOccurrenceModel.js";
+import { catchUpHistoricalOccurrences, finalizeFrozenPercentageTargets, syncMutableOccurrenceValues } from "./lib/budgetOccurrenceModel.js";
 import { budgetScheduleSuccessorDryRun, budgetScheduleSuccessorWrite, BUDGET_SCHEDULE_SUCCESSOR_CONFIRMATION } from "./lib/budgetScheduleSuccessor.js";
 import { BUDGET_SNAPSHOT_OCCURRENCE_CONFIRMATIONS, budgetSnapshotOccurrenceDryRun, budgetSnapshotOccurrenceRealWrite } from "./lib/budgetSnapshotOccurrence.js";
 
@@ -12,6 +12,15 @@ db.exec(`INSERT INTO buckets (id,name,minPercentage,maxPercentage,isActive,displ
 INSERT INTO categories (id,name,bucketId,isActive,createdAt,updatedAt) VALUES (1,'x',1,1,'${now}','${now}');
 INSERT INTO accounts (id,name,isActive,isCredit,createdAt,updatedAt) VALUES (1,'x',1,0,'${now}','${now}');
 INSERT INTO recipients (id,name,isActive,createdAt,updatedAt) VALUES (1,'x',1,'${now}','${now}');`);
+db.exec(`INSERT INTO buckets (id,name,minPercentage,maxPercentage,isActive,displayOrder,excludeFromReports,createdAt,updatedAt) VALUES (2,'income',0,100,1,2,1,'${now}','${now}');
+INSERT INTO categories (id,name,bucketId,isActive,createdAt,updatedAt) VALUES (2,'income',2,1,'${now}','${now}');
+INSERT INTO transactions (id,categoryId,accountId,recipientId,date,amount,isTransfer) VALUES (20,2,1,1,'2026-07-15',2000,0);
+INSERT INTO budgets (id,description,categoryId,accountId,recipientId,amount,transactionCost,frequency,frequencyDetails,isGoal,isFlexible,goalPercentage,isActive,projectionStartsOn,dueDate,createdAt,updatedAt)
+VALUES (2,'Percentage',1,1,1,-100,-10,'once',NULL,1,0,10,1,'2026-07-15','2026-07-15','${now}','${now}');`);
+assert.equal(catchUpHistoricalOccurrences(db, 2, new Date("2026-08-10")), 1);
+assert.equal((db.prepare("SELECT resolvedTarget FROM budgetSnapshots WHERE budgetId=2").get() as { resolvedTarget: number }).resolvedTarget, 200, "frozen percentage target uses occurrence-year income through its due day");
+db.prepare("INSERT INTO transactions (id,categoryId,accountId,recipientId,date,amount,isTransfer) VALUES (21,2,1,1,'2027-01-01',9000,0)").run();
+assert.equal(finalizeFrozenPercentageTargets(db, new Date("2027-01-02"), 2), 0, "a resolved historical target is never recomputed");
 db.prepare(`INSERT INTO budgets (id,description,categoryId,accountId,recipientId,amount,transactionCost,frequency,frequencyDetails,isGoal,isFlexible,isActive,remainingCyclesTotal,projectionStartsOn,dueDate,createdAt,updatedAt)
 VALUES (1,'Groceries',1,1,1,-100,0,'weekly',NULL,0,0,1,9,'2026-07-01','2026-07-01',@now,@now)`).run({ now });
 

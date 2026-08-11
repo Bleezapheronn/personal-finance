@@ -33,6 +33,7 @@ import TransactionDetails from "./pages/TransactionDetails";
 import Budget from "./pages/Budget";
 import AddBudget from "./pages/AddBudget";
 import BudgetHistory from "./pages/BudgetHistory";
+import BudgetDefinitions from "./pages/BudgetDefinitions";
 import BucketsManagement from "./pages/BucketsManagement";
 import AccountsManagement from "./pages/AccountsManagement";
 import RecipientsManagement from "./pages/RecipientsManagement";
@@ -159,6 +160,9 @@ const InnerApp: React.FC = () => {
             </Route>
             <Route exact path="/budget/history">
               <BudgetHistory />
+            </Route>
+            <Route exact path="/budget/definitions">
+              <BudgetDefinitions />
             </Route>
             <Route path="/buckets-management">
               <BucketsManagement />

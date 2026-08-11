@@ -189,6 +189,10 @@ import {
   type BudgetSnapshotOccurrenceAction,
 } from "./lib/budgetSnapshotOccurrence.js";
 import {
+  budgetSnapshotOccurrenceBatchDryRun,
+  budgetSnapshotOccurrenceBatchWrite,
+} from "./lib/budgetSnapshotOccurrenceBatch.js";
+import {
   budgetFromTransactionDryRun,
   budgetFromTransactionRealWrite,
   budgetFromTransactionRequestErrorResponse,
@@ -275,7 +279,7 @@ const areBucketReorderWritesEnabled = writesEnabled;
 const areBudgetDefinitionWritesEnabled = writesEnabled;
 const areBudgetDeleteWritesEnabled = writesEnabled;
 const areBudgetLifecycleWritesEnabled = writesEnabled;
-const areBudgetSnapshotGenerationWritesEnabled = writesEnabled;
+const areBudgetSnapshotGenerationWritesEnabled = () => false;
 const areBudgetSnapshotOccurrenceWritesEnabled = writesEnabled;
 const areBucketCategoryWritesEnabled = writesEnabled;
 const areRecipientActiveStateWritesEnabled = writesEnabled;
@@ -369,7 +373,8 @@ const parseOptionalNonNegativeInteger = (
 
 const parseOptionalBoolean = (
   rawValue: unknown,
-  fieldName: "isTransfer" | "activeOnly" | "isGoal" | "isHistorical",
+  fieldName: "isTransfer" | "activeOnly" | "isGoal" | "isHistorical" |
+    "includeDefinitionDependencies" | "includeOccurrenceDependencies",
 ): boolean | undefined => {
   if (rawValue === undefined) {
     return undefined;
@@ -997,11 +1002,13 @@ server.get<{
     recipientId?: string;
     frequency?: string;
     isGoal?: string;
+    includeDefinitionDependencies?: string;
   };
 }>("/prototype/repositories/budgets", async (request, reply) => {
   let limit: number;
   let offset: number;
   let filters: BudgetFilters;
+  let includeDefinitionDependencies: boolean | undefined;
   try {
     limit = parsePaginationValue(
       request.query.limit,
@@ -1011,6 +1018,10 @@ server.get<{
     );
     offset = parsePaginationValue(request.query.offset, 0, "offset");
     filters = parseBudgetFilters(request.query);
+    includeDefinitionDependencies = parseOptionalBoolean(
+      request.query.includeDefinitionDependencies,
+      "includeDefinitionDependencies",
+    );
   } catch (error) {
     return reply.code(400).send({
       ok: false,
@@ -1037,7 +1048,12 @@ server.get<{
   }
 
   try {
-    const result = listBudgets(opened.db, { limit, offset, filters });
+    const result = listBudgets(opened.db, {
+      limit,
+      offset,
+      filters,
+      includeDefinitionDependencies,
+    });
     return {
       ok: true,
       mode: SERVICE_MODE,
@@ -1068,11 +1084,13 @@ server.get<{
     isHistorical?: string;
     dateFrom?: string;
     dateTo?: string;
+    includeOccurrenceDependencies?: string;
   };
 }>("/prototype/repositories/budget-snapshots", async (request, reply) => {
   let limit: number;
   let offset: number;
   let filters: BudgetSnapshotFilters;
+  let includeOccurrenceDependencies: boolean | undefined;
   try {
     limit = parsePaginationValue(
       request.query.limit,
@@ -1082,6 +1100,10 @@ server.get<{
     );
     offset = parsePaginationValue(request.query.offset, 0, "offset");
     filters = parseBudgetSnapshotFilters(request.query);
+    includeOccurrenceDependencies = parseOptionalBoolean(
+      request.query.includeOccurrenceDependencies,
+      "includeOccurrenceDependencies",
+    );
   } catch (error) {
     return reply.code(400).send({
       ok: false,
@@ -1108,7 +1130,12 @@ server.get<{
   }
 
   try {
-    const result = listBudgetSnapshots(opened.db, { limit, offset, filters });
+    const result = listBudgetSnapshots(opened.db, {
+      limit,
+      offset,
+      filters,
+      includeOccurrenceDependencies,
+    });
     return {
       ok: true,
       mode: SERVICE_MODE,
@@ -1129,12 +1156,13 @@ server.get<{
   }
 });
 
-server.get<{ Params: { id: string }; Querystring: { limit?: string; offset?: string } }>(
+server.get<{ Params: { id: string }; Querystring: { limit?: string; offset?: string; includeOccurrenceDependencies?: string } }>(
   "/prototype/repositories/budgets/:id/snapshots",
   async (request, reply) => {
     let id: number;
     let limit: number;
     let offset: number;
+    let includeOccurrenceDependencies: boolean | undefined;
     try {
       id = parsePositiveInteger(request.params.id, "budget_id");
       limit = parsePaginationValue(
@@ -1144,6 +1172,10 @@ server.get<{ Params: { id: string }; Querystring: { limit?: string; offset?: str
         MAX_BUDGET_READ_LIMIT,
       );
       offset = parsePaginationValue(request.query.offset, 0, "offset");
+      includeOccurrenceDependencies = parseOptionalBoolean(
+        request.query.includeOccurrenceDependencies,
+        "includeOccurrenceDependencies",
+      );
     } catch (error) {
       return reply.code(400).send({
         ok: false,
@@ -1174,6 +1206,7 @@ server.get<{ Params: { id: string }; Querystring: { limit?: string; offset?: str
         limit,
         offset,
         filters: { budgetId: id },
+        includeOccurrenceDependencies,
       });
       return {
         ok: true,
@@ -2173,6 +2206,37 @@ for (const action of [
 }
 
 server.post<{ Body: unknown }>(
+  "/prototype/repositories/budget-snapshot-occurrences/batch/dry-run",
+  async (request, reply) => {
+    let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
+    try { opened = openConfiguredReadOnlyDatabase(); } catch { return reply.code(503).send({ ok: false, code: "sqlite_unavailable" }); }
+    if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+    try {
+      const result = budgetSnapshotOccurrenceBatchDryRun(opened.db, request.body);
+      return result.ok ? result : reply.code(409).send(result);
+    } catch (error) {
+      return reply.code(400).send({ ok: false, code: error instanceof Error ? error.message : "batch_occurrence_dry_run_failed" });
+    } finally { opened.db.close(); }
+  },
+);
+
+server.post<{ Body: unknown }>(
+  "/prototype/repositories/budget-snapshot-occurrences/batch/write",
+  async (request, reply) => {
+    if (!areBudgetSnapshotOccurrenceWritesEnabled()) return reply.code(403).send({ ok: false, code: "budget_snapshot_occurrence_writes_disabled" });
+    let opened: ReturnType<typeof openConfiguredWritableDatabase>;
+    try { opened = openConfiguredWritableDatabase(); } catch { return reply.code(503).send({ ok: false, code: "sqlite_unavailable" }); }
+    if (!opened.ok) return reply.code(503).send({ ok: false, code: opened.code });
+    try {
+      const result = budgetSnapshotOccurrenceBatchWrite(opened.db, request.body);
+      return result.ok ? result : reply.code(409).send(result);
+    } catch (error) {
+      return reply.code(400).send({ ok: false, code: error instanceof Error ? error.message : "batch_occurrence_write_failed" });
+    } finally { opened.db.close(); }
+  },
+);
+
+server.post<{ Body: unknown }>(
   "/prototype/repositories/budgets/from-transaction/dry-run",
   async (request, reply) => {
     let opened: ReturnType<typeof openConfiguredReadOnlyDatabase>;
@@ -2513,6 +2577,9 @@ server.post<{ Body: unknown }>(
       });
     }
 
+    // PF-005 occurrences are historical catch-up rows or transaction-linked
+    // prospective rows.  The legacy coverage generator could persist arbitrary
+    // future placeholders, so this endpoint is intentionally retired.
     if (!areBudgetSnapshotGenerationWritesEnabled()) {
       const dryRun = budgetSnapshotGenerationRequestErrorResponse(
         "budget_snapshot_generation_writes_disabled",

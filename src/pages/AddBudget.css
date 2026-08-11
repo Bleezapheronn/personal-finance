@@ -1,0 +1,22 @@
+.budget-option-toggles {
+  margin: 2px 0;
+}
+
+.budget-option-toggle {
+  --padding-start: 0;
+  --inner-padding-end: 0;
+  --background: transparent;
+  min-height: 64px;
+}
+
+.budget-option-toggle ion-label h3 {
+  margin: 0 0 2px;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.budget-option-toggle ion-label p {
+  margin: 0;
+  white-space: normal;
+  font-size: 0.8rem;
+}
