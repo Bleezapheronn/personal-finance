@@ -36,8 +36,24 @@ keeps one verified daily backup for the latest 30 days and one verified monthly
 backup thereafter.
 
 The standalone backup and restore commands operate on explicit paths. Restore
-always targets a fresh SQLite output path; it never replaces the live database.
-Keep backup files outside the repository and protect them as financial data.
+always targets a fresh SQLite output path. The user-facing Settings & Status
+restore card can arm a separate guarded live cutover only after current
+verification and a disposable rehearsal. The authenticated API persists a
+one-shot operational request; the existing launcher stops its owned services,
+creates and verifies a rollback, performs the exact replacement, verifies the
+result, and restarts the runtime. A failed immediate or startup verification
+automatically restores the verified rollback. Keep backup and rollback files
+outside the repository and protect them as financial data.
+
+The retained rollback remains explicitly selectable after restored-state
+acceptance through the same typed, launcher-owned handoff. Before replacing the
+accepted state, that rollback path creates and verifies a separate pre-rollback
+safety artifact. Neither retained artifact is removed by automatic-backup
+retention or by restored-state acceptance.
+
+Restore-control API writes are narrowly limited to operational rehearsal,
+handoff, status, and acceptance state. They do not add general financial-data
+write capabilities or a new authentication mechanism.
 
 ## Development
 

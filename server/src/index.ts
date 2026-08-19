@@ -4,6 +4,10 @@ import {
 } from "./config.js";
 import { createLocalApiServer } from "./createLocalApiServer.js";
 import { registerAutomaticBackupsRoutes } from "./lib/automaticBackups.js";
+import {
+  registerRestoreControlRoutes,
+  RESTORE_HANDOFF_EXIT_CODE,
+} from "./lib/restoreControl.js";
 import { registerLocalApiAuthentication } from "./lib/localApiAuthentication.js";
 import { readOrCreateToken } from "./tokenStore.js";
 
@@ -12,6 +16,13 @@ const server = createLocalApiServer({
   getSqlitePath,
   registerAuthentication: registerLocalApiAuthentication,
   registerAutomaticBackups: registerAutomaticBackupsRoutes,
+  registerRestoreControl: (instance) =>
+    registerRestoreControlRoutes(instance, {
+      onHandoffArmed: () => {
+        process.exitCode = RESTORE_HANDOFF_EXIT_CODE;
+        void instance.close().finally(() => process.exit(RESTORE_HANDOFF_EXIT_CODE));
+      },
+    }),
 });
 
 const start = async () => {

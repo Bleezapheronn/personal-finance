@@ -14,15 +14,24 @@ import {
   type RuntimePreflightResult,
 } from "./runtimePreflight.js";
 import { readRuntimeConfig, runtimeConfigPathFromArgs } from "./runtimeConfig.js";
+import {
+  automaticRollbackAfterRuntimeFailure,
+  markRestoreRuntimeHealthy,
+  performArmedRestoreHandoff,
+  RESTORE_HANDOFF_EXIT_CODE,
+  type RestoreHandoffResult,
+} from "./lib/restoreControl.js";
 
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const runtimeConfigPath = runtimeConfigPathFromArgs(process.argv.slice(2));
 const config = readRuntimeConfig(runtimeConfigPath);
-const children: ChildProcess[] = [];
+let children: ChildProcess[] = [];
 let frontendIpv6Proxy: Server | undefined;
 let stopping = false;
+let handoffInProgress = false;
+let suppressChildExit = false;
 
 const stopChildTree = (child: ChildProcess): void => {
   if (child.exitCode !== null || !child.pid) return;
@@ -44,6 +53,7 @@ const stop = (exitCode: number): void => {
   if (stopping) return;
   stopping = true;
   frontendIpv6Proxy?.close();
+  frontendIpv6Proxy = undefined;
   for (const child of children) stopChildTree(child);
   process.exitCode = exitCode;
 };
@@ -77,6 +87,25 @@ const waitForClearPorts = async (): Promise<boolean> => {
     await delay(200);
   }
   return false;
+};
+
+const waitForChildExit = async (child: ChildProcess): Promise<void> => {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await Promise.race([
+    new Promise<void>((resolve) => child.once("exit", () => resolve())),
+    delay(5_000),
+  ]);
+};
+
+const stopOwnedRuntime = async (): Promise<void> => {
+  suppressChildExit = true;
+  frontendIpv6Proxy?.close();
+  frontendIpv6Proxy = undefined;
+  const owned = [...children];
+  for (const child of owned) stopChildTree(child);
+  await Promise.all(owned.map(waitForChildExit));
+  children = [];
+  suppressChildExit = false;
 };
 
 const preflight = async (): Promise<"start" | "stop"> => {
@@ -175,7 +204,7 @@ const startRuntime = (): void => {
       },
     },
   );
-  children.push(api, frontend);
+  children = [api, frontend];
 
   frontendIpv6Proxy = createServer((client) => {
     const upstream = connect({ host: "127.0.0.1", port: config.frontendPort });
@@ -196,17 +225,93 @@ const startRuntime = (): void => {
 
   for (const child of children) {
     child.once("error", (error) => {
+      if (suppressChildExit || handoffInProgress) return;
       console.error(`Unable to start Personal Finance runtime: ${error.message}`);
       stop(1);
     });
-    child.once("exit", (code, signal) => {
-      if (!stopping) {
-        console.error(
-          `Personal Finance runtime process stopped (${signal ?? `exit code ${code ?? 1}`}).`,
-        );
-        stop(code ?? 1);
+  }
+  api.once("exit", (code, signal) => {
+    if (suppressChildExit || stopping) return;
+    if (code === RESTORE_HANDOFF_EXIT_CODE) {
+      void handleRestoreHandoff();
+      return;
+    }
+    if (!handoffInProgress) {
+      console.error(
+        `Personal Finance runtime process stopped (${signal ?? `exit code ${code ?? 1}`}).`,
+      );
+      stop(code ?? 1);
+    }
+  });
+  frontend.once("exit", (code, signal) => {
+    if (suppressChildExit || stopping || handoffInProgress) return;
+    console.error(
+      `Personal Finance runtime process stopped (${signal ?? `exit code ${code ?? 1}`}).`,
+    );
+    stop(code ?? 1);
+  });
+};
+
+const waitForHealthyRuntime = async (): Promise<boolean> => {
+  const until = Date.now() + 30_000;
+  while (Date.now() < until) {
+    try {
+      if ((await inspectRuntimePreflight(config, runtimeConfigPath)).kind === "healthy-existing") {
+        return true;
       }
-    });
+    } catch {
+      // The runtime can be between child startup and listener discovery.
+    }
+    await delay(250);
+  }
+  return false;
+};
+
+const restartAfterHandoff = async (
+  result: RestoreHandoffResult,
+): Promise<void> => {
+  startRuntime();
+  if (await waitForHealthyRuntime()) {
+    markRestoreRuntimeHealthy(runtimeConfigPath, result);
+    console.log(
+      result.action === "restore"
+        ? "Restore verified and Personal Finance restarted. Refresh the browser to continue verification."
+        : "Rollback verified and Personal Finance restarted.",
+    );
+    handoffInProgress = false;
+    return;
+  }
+
+  console.error("Restored runtime did not become healthy; applying the verified automatic rollback.");
+  await stopOwnedRuntime();
+  if (!(await waitForClearPorts())) throw new Error("restore_runtime_ports_not_clear");
+  await automaticRollbackAfterRuntimeFailure(runtimeConfigPath, result);
+  startRuntime();
+  if (!(await waitForHealthyRuntime())) {
+    throw new Error("restore_rollback_runtime_failed");
+  }
+  console.log("Automatic rollback verified and the previous Personal Finance runtime restarted.");
+  handoffInProgress = false;
+};
+
+const handleRestoreHandoff = async (): Promise<void> => {
+  if (handoffInProgress || stopping) return;
+  handoffInProgress = true;
+  try {
+    console.log("Restore handoff armed; stopping the owned Personal Finance services.");
+    await stopOwnedRuntime();
+    if (!(await waitForClearPorts())) throw new Error("restore_runtime_ports_not_clear");
+    const result = await performArmedRestoreHandoff(runtimeConfigPath);
+    await restartAfterHandoff(result);
+  } catch (error) {
+    console.error(
+      `Restore handoff failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    if (children.length === 0 && !stopping) {
+      startRuntime();
+      await waitForHealthyRuntime();
+    }
+    handoffInProgress = false;
   }
 };
 

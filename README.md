@@ -20,8 +20,17 @@ recovery gates before opening the frontend.
 Configure automatic backups in Settings. Windows Task Scheduler runs the
 independent worker even while the application is closed. Each published backup
 is verified together with a disposable restore. Restore tooling requires an
-explicit backup, manifest, and fresh output path; it never overwrites the live
-database.
+explicit backup, manifest, and fresh output path.
+
+Settings & Status also provides a guarded Restore from Backup workflow for
+verified scheduled backups. It requires deliberate selection, a disposable
+rehearsal, typed confirmation, and a verified pre-cutover rollback. The existing
+launcher temporarily stops and restarts its owned API/frontend services for the
+one-shot handoff. Restore-control endpoints mutate only operational handoff and
+status state; they are not general financial-data write APIs. The verified
+rollback remains available after acceptance. A guarded rollback first creates a
+verified safety artifact of the state it is replacing, and both artifacts remain
+outside normal automatic-backup retention until separately cleaned up.
 
 ## Development
 

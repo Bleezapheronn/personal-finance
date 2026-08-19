@@ -16,5 +16,15 @@ native SQLite backup, verifies it and a disposable restore, then publishes only
 the verified result. The restore command requires explicit backup, manifest,
 and fresh output paths.
 
+The authenticated restore-control routes support the Settings & Status restore
+card. They inventory verified scheduled pairs, create a disposable rehearsal,
+and arm a versioned one-shot request after typed confirmation. The existing
+runtime launcher claims that request only after its API exits, stops the owned
+frontend, creates and verifies a rollback, applies the exact SQLite cutover, and
+restarts the normal runtime. The retained rollback remains available after
+acceptance; invoking it through the same typed handoff first creates and verifies
+a pre-rollback safety artifact. These routes mutate operational restore state
+only; they are not general financial-data write endpoints.
+
 Run focused checks with the scripts in `package.json`. Keep SQLite files,
 tokens, backups, logs, and financial data outside this repository.

@@ -261,6 +261,7 @@ export interface LocalApiServerOptions {
   readonly getSqlitePath: () => string | undefined;
   readonly registerAuthentication: (server: FastifyInstance) => void;
   readonly registerAutomaticBackups: (server: FastifyInstance) => void;
+  readonly registerRestoreControl?: (server: FastifyInstance) => void;
 }
 
 export const createLocalApiServer = (options: LocalApiServerOptions): FastifyInstance => {
@@ -552,6 +553,7 @@ server.get("/health", async () => {
 });
 
 options.registerAutomaticBackups(server);
+options.registerRestoreControl?.(server);
 
 server.get("/metadata", async () => {
   return {

@@ -50,7 +50,9 @@ const main = async (): Promise<void> => {
     allowRepoOutputForTests: args.allowRepoOutputForTests,
   });
   console.log("SQLite restore: PASS");
+  console.log(`Manifest kind: ${result.manifestKind}`);
   console.log(`Verified tables: ${result.tableCount}`);
+  console.log(`Candidate ID: ${result.candidateId}`);
 };
 
 if (isDirectRun(import.meta.url)) {

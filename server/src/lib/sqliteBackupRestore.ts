@@ -1,10 +1,12 @@
 import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
 import {
   closeSync,
   existsSync,
   mkdirSync,
   openSync,
   readFileSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -54,6 +56,18 @@ export interface SqliteRestoreResult {
   manifestFile: string;
   databaseIdentityFingerprint: string;
   tableCount: number;
+  candidateId: string;
+  manifestKind: "native" | "scheduled";
+}
+
+export interface VerifiedSqliteBackupManifest {
+  manifestKind: "native" | "scheduled";
+  createdAt: string;
+  normalizedLocalDay: string;
+  classification?: "daily" | "monthly";
+  sqliteSha256?: string;
+  sqliteSizeBytes?: number;
+  expectedVerification: SqliteLogicalVerification;
 }
 
 const strictLocalDay = (value: string): Date => {
@@ -169,6 +183,93 @@ export const readSqliteBackupManifest = (
   return verifyManifestShape(parsed);
 };
 
+const sha256File = (filePath: string): string =>
+  createHash("sha256").update(readFileSync(filePath)).digest("hex");
+
+const verifyScheduledManifestShape = (
+  value: unknown,
+): VerifiedSqliteBackupManifest => {
+  if (
+    !isPlainObject(value) ||
+    value.manifestVersion !== 1 ||
+    value.manifestKind !== "personal-finance-scheduled-sqlite-backup" ||
+    typeof value.createdAt !== "string" ||
+    Number.isNaN(new Date(value.createdAt).getTime()) ||
+    typeof value.normalizedLocalDay !== "string" ||
+    (value.classification !== "daily" && value.classification !== "monthly") ||
+    typeof value.sqliteSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.sqliteSha256) ||
+    typeof value.sqliteSizeBytes !== "number" ||
+    !Number.isSafeInteger(value.sqliteSizeBytes) ||
+    value.sqliteSizeBytes < 1 ||
+    value.verificationStatus !== "pass" ||
+    typeof value.schemaVersion !== "number" ||
+    !isPlainObject(value.logicalVerification)
+  ) {
+    throw new Error("scheduled_backup_manifest_invalid");
+  }
+  strictLocalDay(value.normalizedLocalDay);
+  const verification = value.logicalVerification as unknown as SqliteLogicalVerification;
+  if (
+    verification.verificationVersion !== 1 ||
+    verification.integrityCheck !== "ok" ||
+    verification.normalizedAsOf !== value.normalizedLocalDay ||
+    verification.schemaVersion !== value.schemaVersion ||
+    typeof verification.databaseIdentityFingerprint !== "string"
+  ) {
+    throw new Error("scheduled_backup_manifest_invalid");
+  }
+  return {
+    manifestKind: "scheduled",
+    createdAt: value.createdAt,
+    normalizedLocalDay: value.normalizedLocalDay,
+    classification: value.classification,
+    sqliteSha256: value.sqliteSha256,
+    sqliteSizeBytes: value.sqliteSizeBytes,
+    expectedVerification: verification,
+  };
+};
+
+export const readVerifiedSqliteBackupManifest = (
+  manifestPath: string,
+): VerifiedSqliteBackupManifest => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
+  } catch {
+    throw new Error("backup_manifest_invalid");
+  }
+  if (
+    isPlainObject(parsed) &&
+    parsed.manifestKind === "personal-finance-scheduled-sqlite-backup"
+  ) {
+    return verifyScheduledManifestShape(parsed);
+  }
+  const native = verifyManifestShape(parsed);
+  return {
+    manifestKind: "native",
+    createdAt: native.createdAt,
+    normalizedLocalDay: native.normalizedAsOf,
+    expectedVerification: native.backupVerification,
+  };
+};
+
+export const verifiedBackupCandidateId = (
+  backupPath: string,
+  manifestPath: string,
+  expectedVerification: SqliteLogicalVerification,
+): string =>
+  createHash("sha256")
+    .update(
+      JSON.stringify({
+        backupSha256: sha256File(backupPath),
+        manifestSha256: sha256File(manifestPath),
+        databaseIdentityFingerprint:
+          expectedVerification.databaseIdentityFingerprint,
+      }),
+    )
+    .digest("hex");
+
 const verifyDatabaseAtPath = (
   databasePath: string,
   asOf: Date,
@@ -275,12 +376,22 @@ export const restoreSqliteNativeBackup = async (options: {
 }): Promise<SqliteRestoreResult> => {
   const manifestPath = path.resolve(options.manifestPath);
   assertFileExists(manifestPath, "SQLite backup manifest");
-  const manifest = readSqliteBackupManifest(manifestPath);
+  const manifest = readVerifiedSqliteBackupManifest(manifestPath);
+  const backupPath = path.resolve(options.backupPath);
+  if (manifest.sqliteSizeBytes !== undefined) {
+    if (
+      statSync(backupPath).size !== manifest.sqliteSizeBytes ||
+      sha256File(backupPath) !== manifest.sqliteSha256
+    ) {
+      throw new Error("scheduled_backup_checksum_or_size_mismatch");
+    }
+  }
   return restoreSqliteVerifiedBackup({
-    backupPath: options.backupPath,
+    backupPath,
     outputPath: options.outputPath,
     manifestPath,
-    expectedVerification: manifest.backupVerification,
+    expectedVerification: manifest.expectedVerification,
+    manifestKind: manifest.manifestKind,
     allowRepoOutputForTests: options.allowRepoOutputForTests,
   });
 };
@@ -290,6 +401,7 @@ export const restoreSqliteVerifiedBackup = async (options: {
   outputPath: string;
   manifestPath: string;
   expectedVerification: SqliteLogicalVerification;
+  manifestKind?: "native" | "scheduled";
   allowRepoOutputForTests?: boolean;
 }): Promise<SqliteRestoreResult> => {
   const backupPath = path.resolve(options.backupPath);
@@ -352,6 +464,12 @@ export const restoreSqliteVerifiedBackup = async (options: {
       databaseIdentityFingerprint:
         restoredVerification.databaseIdentityFingerprint,
       tableCount: restoredVerification.tableNames.length,
+      candidateId: verifiedBackupCandidateId(
+        backupPath,
+        manifestPath,
+        options.expectedVerification,
+      ),
+      manifestKind: options.manifestKind ?? "native",
     };
   } catch (error) {
     if (outputReserved) cleanupSqliteOutput(outputPath);

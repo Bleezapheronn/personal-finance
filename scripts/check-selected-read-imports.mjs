@@ -12,6 +12,7 @@ const approvedFiles = new Set(
     "src/api/localApiClient.ts",
     "src/api/localApiClient.test.ts",
     "src/api/automaticBackupsApi.ts",
+    "src/api/restoreControlApi.ts",
     "src/hooks/useAccountImageUrls.ts",
     "src/hooks/useAccountImageUrls.test.tsx",
     "src/pages/AccountsManagement.tsx",
