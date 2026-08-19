@@ -5,6 +5,7 @@ import {
 } from "@ionic/react";
 import { checkmarkCircleOutline, close, closeCircleOutline, trashOutline } from "ionicons/icons";
 import type { Budget, BudgetSnapshot, Category, Recipient } from "../db";
+import { isExpenseBudgetAmount } from "../utils/budgetAmountColor";
 import { occurrenceDisplayTarget } from "../utils/budgetDisplayTarget";
 
 export type DefinitionOccurrence = BudgetSnapshot & {
@@ -105,7 +106,7 @@ export const DefinitionOccurrencesModal: React.FC<Props> = ({
                     <div style={{ fontSize: "0.85rem", color: "#888" }}>{recipientName(row.recipientId)}</div>
                     <div style={{ fontSize: "0.8rem", color: "#999" }}>{categoryName(row.categoryId)} · {row.dueDate.toLocaleDateString()}</div>
                   </IonCol>
-                  <IonCol size="4" style={{ textAlign: "right" }}><div style={{ fontWeight: "bold", color: row.amount + (row.transactionCost ?? 0) < 0 ? "#eb445c" : "#009688" }}>{money(Math.abs(rowDependency.linkedTransactionTotal ?? 0))}</div>
+                  <IonCol size="4" style={{ textAlign: "right" }}><div style={{ fontWeight: "bold", color: isExpenseBudgetAmount(row) ? "#eb445c" : "#009688" }}>{money(Math.abs(rowDependency.linkedTransactionTotal ?? 0))}</div>
                     <div style={{ fontSize: "0.8rem", color: "#999" }}>{target(row) == null ? "Target unavailable" : `of ${money(target(row)!)}`}</div>
                     <IonRow className="ion-justify-content-end ion-align-items-center">
                       <IonButton fill="clear" size="small" disabled={busy} title={active ? "Deactivate this Budget occurrence" : "Reactivate this Budget occurrence"} aria-label={active ? "Deactivate this Budget occurrence" : "Reactivate this Budget occurrence"} onClick={() => run(() => onSetActive([rowId], !active))}><IonIcon color={active ? "success" : "medium"} icon={active ? checkmarkCircleOutline : closeCircleOutline} /></IonButton>
