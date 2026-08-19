@@ -10,7 +10,7 @@ const expect = (condition: unknown, code: string): void => {
 
 const root = mkdtempSync(path.join(os.tmpdir(), "pf-account-image-api-"));
 const sqlitePath = path.join(root, "fixture.sqlite");
-const imageBytes = Buffer.from("account-image-api-fixture");
+const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 const imageBlob = {
   __type: "Blob",
   mimeType: "image/png",
@@ -42,6 +42,25 @@ try {
   });
   await server.ready();
   try {
+    const invalidSignature = await server.inject({
+      method: "POST",
+      url: "/prototype/repositories/accounts/images/dry-run/set",
+      payload: {
+        accountId: 1,
+        imageBlob: {
+          __type: "Blob",
+          mimeType: "image/png",
+          size: 12,
+          base64: Buffer.from("not-an-image").toString("base64"),
+        },
+      },
+    });
+    expect(
+      invalidSignature.statusCode === 400 &&
+        invalidSignature.json().code === "account_image_content_signature_invalid" &&
+        !invalidSignature.body.includes("not-an-image"),
+      "image_api_invalid_signature_dry_run_accepted",
+    );
     const emptyDry = await server.inject({
       method: "POST",
       url: "/prototype/repositories/accounts/images/dry-run/set",

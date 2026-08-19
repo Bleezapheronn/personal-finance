@@ -20,6 +20,13 @@ const blob = (bytes: Buffer, mimeType = "image/png") => ({
   base64: bytes.toString("base64"),
 });
 
+const imageBytes = {
+  gif: Buffer.from("GIF89a\u0000"),
+  jpeg: Buffer.from([0xff, 0xd8, 0xff, 0x00]),
+  png: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
+  webp: Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBP\u0000"),
+};
+
 const planFingerprint = (response: { planFingerprint?: unknown }): string => {
   if (typeof response.planFingerprint !== "string") {
     throw new Error("account_image_plan_missing");
@@ -42,8 +49,8 @@ const fixture = (): { root: string; db: Database.Database } => {
 
 const testSetReplaceAndRemove = (): void => {
   const { root, db } = fixture();
-  const first = Buffer.from("first-account-image");
-  const replacement = Buffer.from("replacement-account-image");
+  const first = imageBytes.png;
+  const replacement = imageBytes.jpeg;
   try {
     const setPayload = { accountId: 1, imageBlob: blob(first) };
     const dry = accountImageMutationDryRun(db, setPayload, "set");
@@ -131,6 +138,43 @@ const testValidation = (): void => {
     } catch (error) {
       expect(error instanceof AccountImageMutationRequestError && error.code === "account_image_mime_unsupported", "image_invalid_mime_error_invalid");
     }
+    for (const [mimeType, bytes] of [
+      ["image/gif", imageBytes.gif],
+      ["image/jpeg", imageBytes.jpeg],
+      ["image/png", imageBytes.png],
+      ["image/webp", imageBytes.webp],
+    ] as const) {
+      const valid = accountImageMutationDryRun(db, { accountId: 1, imageBlob: blob(bytes, mimeType) }, "set");
+      expect(valid.ok, `image_${mimeType}_signature_rejected`);
+    }
+    for (const invalidImage of [
+      blob(Buffer.from("not-an-image")),
+      blob(imageBytes.gif),
+    ]) {
+      try {
+        accountImageMutationDryRun(db, { accountId: 1, imageBlob: invalidImage }, "set");
+        throw new Error("image_invalid_signature_dry_run_accepted");
+      } catch (error) {
+        expect(error instanceof AccountImageMutationRequestError && error.code === "account_image_content_signature_invalid", "image_invalid_signature_dry_run_error_invalid");
+      }
+      try {
+        accountImageMutationWrite(db, {
+          accountId: 1,
+          imageBlob: invalidImage,
+          dryRunReviewed: true,
+          confirmation: ACCOUNT_IMAGE_MUTATION_CONFIRMATIONS.set,
+          expectedPlanFingerprint: "0".repeat(64),
+        }, "set");
+        throw new Error("image_invalid_signature_write_accepted");
+      } catch (error) {
+        expect(error instanceof AccountImageMutationRequestError && error.code === "account_image_content_signature_invalid", "image_invalid_signature_write_error_invalid");
+      }
+    }
+    const afterInvalidSignature = db.prepare("SELECT imageBlob, imageMimeType FROM accounts WHERE id = 1").get() as {
+      imageBlob: Buffer | null;
+      imageMimeType: string | null;
+    };
+    expect(afterInvalidSignature.imageBlob === null && afterInvalidSignature.imageMimeType === null, "image_invalid_signature_persisted");
     const missing = accountImageMutationDryRun(db, { accountId: 99 }, "remove");
     expect(!missing.ok && missing.code === "account_not_found" && missing.sqliteMutated === false, "image_missing_account_not_safe");
     const absent = accountImageMutationDryRun(db, { accountId: 1 }, "remove");

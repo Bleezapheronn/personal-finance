@@ -75,6 +75,25 @@ const fingerprint = (value: unknown): string =>
 const bytesFingerprint = (bytes: Buffer | null): string | null =>
   bytes === null ? null : createHash("sha256").update(bytes).digest("hex");
 
+const hasExpectedImageSignature = (image: DecodedAccountImage): boolean => {
+  const { bytes, mimeType } = image;
+  if (mimeType === "image/gif") {
+    return bytes.subarray(0, 6).equals(Buffer.from("GIF87a")) ||
+      bytes.subarray(0, 6).equals(Buffer.from("GIF89a"));
+  }
+  if (mimeType === "image/jpeg") {
+    return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  if (mimeType === "image/png") {
+    return bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }
+  if (mimeType === "image/webp") {
+    return bytes.subarray(0, 4).equals(Buffer.from("RIFF")) &&
+      bytes.subarray(8, 12).equals(Buffer.from("WEBP"));
+  }
+  return false;
+};
+
 const positiveInteger = (value: unknown, code: string): number => {
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     throw new AccountImageMutationRequestError(code);
@@ -108,6 +127,9 @@ const normalizePayload = (
     try {
       const image = decodeSerializedAccountImage(payload.imageBlob);
       if (!image) throw new AccountImageMutationRequestError("account_image_required");
+      if (!hasExpectedImageSignature(image)) {
+        throw new AccountImageMutationRequestError("account_image_content_signature_invalid");
+      }
       input.image = image;
     } catch (error) {
       if (error instanceof AccountImageMutationRequestError) throw error;
