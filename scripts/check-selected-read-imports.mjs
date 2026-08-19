@@ -19,6 +19,7 @@ const approvedFiles = new Set(
     "src/pages/AddBudget.tsx",
     "src/pages/AddTransaction.tsx",
     "src/pages/Budget.tsx",
+    "src/pages/BudgetDefinitions.tsx",
     "src/pages/BudgetHistory.tsx",
     "src/pages/BucketsManagement.tsx",
     "src/pages/RecipientsManagement.tsx",
