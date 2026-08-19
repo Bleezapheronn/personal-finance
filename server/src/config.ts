@@ -15,6 +15,8 @@ export const SQLITE_PATH_ENV_VAR = "PERSONAL_FINANCE_SQLITE_PATH" as const;
 const configuredAdditionalOrigin =
   process.env[ADDITIONAL_ALLOWED_ORIGIN_ENV_VAR]?.trim();
 
+let configuredLoopbackOrigins: string[] = [];
+
 if (configuredAdditionalOrigin) {
   let parsedOrigin: URL;
   try {
@@ -34,6 +36,9 @@ if (configuredAdditionalOrigin) {
   ) {
     throw new Error("PERSONAL_FINANCE_ADDITIONAL_ALLOWED_ORIGIN must be a local HTTP origin.");
   }
+  const alternateOrigin = new URL(parsedOrigin.origin);
+  alternateOrigin.hostname = parsedOrigin.hostname === "localhost" ? "127.0.0.1" : "localhost";
+  configuredLoopbackOrigins = [parsedOrigin.origin, alternateOrigin.origin];
 }
 
 export const ALLOWED_ORIGINS = new Set([
@@ -41,7 +46,7 @@ export const ALLOWED_ORIGINS = new Set([
   "http://127.0.0.1:8100",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-  ...(configuredAdditionalOrigin ? [configuredAdditionalOrigin] : []),
+  ...configuredLoopbackOrigins,
 ]);
 
 export const getServerPort = (): number => {
