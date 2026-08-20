@@ -1,0 +1,98 @@
+.sms-template-editor-card {
+  margin: 0 0 16px;
+}
+
+.sms-template-editor-heading {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.sms-template-editor-card ion-text p {
+  margin: 0 0 16px;
+}
+
+.sms-template-editor-spaced-field {
+  margin-top: 12px;
+}
+
+.sms-template-control {
+  width: 100%;
+  min-height: 46px;
+  padding: 12px;
+  border: 1px solid var(--ion-color-medium);
+  border-radius: 4px;
+  background: var(--ion-background-color);
+  color: var(--ion-text-color);
+  font: inherit;
+}
+
+.sms-template-control:focus {
+  border-color: var(--ion-color-primary);
+  outline: none;
+}
+
+textarea.sms-template-control {
+  resize: vertical;
+}
+
+.sms-template-code-input {
+  font-family: monospace;
+}
+
+.sms-template-workshop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.sms-template-assistant-grid {
+  margin-top: 16px;
+}
+
+.sms-template-assistant-button {
+  margin-top: 16px;
+}
+
+.sms-template-assistant-suggestion {
+  margin-top: 16px;
+}
+
+.sms-template-results {
+  margin-top: 16px;
+}
+
+.sms-template-results h3 {
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.sms-template-diagnostic {
+  padding: 10px 0;
+  border-top: 1px solid var(--ion-color-step-200);
+}
+
+.sms-template-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 4px 0 16px;
+}
+
+.sms-template-editor-actions ion-button {
+  margin: 0;
+}
+
+@media (max-width: 576px) {
+  .sms-template-editor-actions {
+    justify-content: flex-end;
+  }
+
+  .sms-template-workshop-actions ion-button {
+    flex: 1 1 100%;
+    margin-inline: 0;
+  }
+}

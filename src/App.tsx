@@ -38,6 +38,7 @@ import BucketsManagement from "./pages/BucketsManagement";
 import AccountsManagement from "./pages/AccountsManagement";
 import RecipientsManagement from "./pages/RecipientsManagement";
 import SmsImportTemplatesManagement from "./pages/SmsImportTemplatesManagement";
+import SmsImportTemplateEditor from "./pages/SmsImportTemplateEditor";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings"; // NEW
 import RuntimeSettings from "./pages/RuntimeSettings";
@@ -173,7 +174,13 @@ const InnerApp: React.FC = () => {
             <Route path="/recipients-management">
               <RecipientsManagement />
             </Route>
-            <Route path="/sms-import-templates">
+            <Route exact path="/sms-import-templates/new">
+              <SmsImportTemplateEditor />
+            </Route>
+            <Route exact path="/sms-import-templates/:id/edit">
+              <SmsImportTemplateEditor />
+            </Route>
+            <Route exact path="/sms-import-templates">
               <SmsImportTemplatesManagement />
             </Route>
             <Route path="/reports">

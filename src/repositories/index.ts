@@ -14,6 +14,8 @@ export * as transactionRepository from "./transactionRepository";
 export * as budgetRepository from "./budgetRepository";
 export * as reportRepository from "./reportRepository";
 export * as smsImportTemplateRepository from "./smsImportTemplateRepository";
+export * as smsTemplateManagementRepository from "./http/smsTemplateManagement";
+export type { SmsTemplateWriteInput } from "./http/smsTemplateManagement";
 export * from "./adapterSelection";
 export * from "./selectedReadRepositories";
 

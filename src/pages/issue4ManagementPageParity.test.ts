@@ -10,6 +10,7 @@ describe("Issue #4 management-page presentation", () => {
   const buckets = source("src/pages/BucketsManagement.tsx");
   const recipients = source("src/pages/RecipientsManagement.tsx");
   const templates = source("src/pages/SmsImportTemplatesManagement.tsx");
+  const templateEditor = source("src/pages/SmsImportTemplateEditor.tsx");
 
   it("keeps migration-era presentation out of the normal management pages", () => {
     for (const page of [accounts, buckets, recipients, templates]) {
@@ -40,8 +41,8 @@ describe("Issue #4 management-page presentation", () => {
     expect(accountForm).toContain("Change image unavailable");
     expect(accountForm).toContain("Account image editing is not available yet.");
     expect(accountForm).not.toContain("db.accounts.");
-    expect(templates).toContain("Test parse unavailable");
-    expect(templates).toContain("Import SMS unavailable");
-    expect(templates).toContain("Test parsing and SMS import are not available yet.");
+    expect(templateEditor).toContain("Test Sample");
+    expect(templateEditor).toContain("Build from Sample");
+    expect(templates).not.toContain("Import SMS");
   });
 });
