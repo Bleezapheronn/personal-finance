@@ -1727,6 +1727,10 @@ const AddTransaction: React.FC = () => {
         transactionCost.trim() !== "") ||
       !httpCurrentTypeEligible);
 
+  const handleCancel = () => {
+    history.push("/transactions");
+  };
+
   return (
     <IonPage>
       <IonHeader>
@@ -2526,15 +2530,26 @@ const AddTransaction: React.FC = () => {
 
             <IonRow>
               <IonCol size="11">
-                <IonButton
-                  type="submit"
-                  expand="block"
-                  color="primary"
-                  className="ion-margin-top"
-                  disabled={transactionSubmitDisabled}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    marginTop: 16,
+                  }}
                 >
-                  {isEditMode ? "Update Transaction" : "Add Transaction"}
-                </IonButton>
+                  <IonButton type="button" fill="outline" onClick={handleCancel}>
+                    Cancel
+                  </IonButton>
+                  <IonButton
+                    type="submit"
+                    color="primary"
+                    disabled={transactionSubmitDisabled}
+                  >
+                    {isEditMode ? "Update Transaction" : "Add Transaction"}
+                  </IonButton>
+                </div>
               </IonCol>
             </IonRow>
           </IonGrid>

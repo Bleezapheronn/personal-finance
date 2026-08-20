@@ -161,6 +161,10 @@ const AddBudget: React.FC = () => {
     rehearsal.ready &&
     rehearsal.budgetSnapshotOccurrenceWritesAvailable;
 
+  const handleCancel = () => {
+    history.push("/budget");
+  };
+
   // Budget fields
   const [budgetType, setBudgetType] = useState<BudgetType>("expense");
   const [description, setDescription] = useState("");
@@ -1820,22 +1824,34 @@ const AddBudget: React.FC = () => {
             {/* Submit Button */}
             <IonRow>
               <IonCol size="11">
-                <IonButton
-                  type="submit"
-                  expand="block"
-                  color="primary"
-                  disabled={
-                    budgetDefinitionHttpMode &&
-                    !budgetDefinitionWriteExperimentActive &&
-                    !budgetLifecycleWriteExperimentActive
-                  }
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    marginTop: 16,
+                  }}
                 >
-                  {isEditMode
-                    ? "Update Budget"
-                    : isFromTransaction
-                      ? "Create Budget"
-                      : "Add Budget"}
-                </IonButton>
+                  <IonButton type="button" fill="outline" onClick={handleCancel}>
+                    Cancel
+                  </IonButton>
+                  <IonButton
+                    type="submit"
+                    color="primary"
+                    disabled={
+                      budgetDefinitionHttpMode &&
+                      !budgetDefinitionWriteExperimentActive &&
+                      !budgetLifecycleWriteExperimentActive
+                    }
+                  >
+                    {isEditMode
+                      ? "Update Budget"
+                      : isFromTransaction
+                        ? "Create Budget"
+                        : "Add Budget"}
+                  </IonButton>
+                </div>
               </IonCol>
             </IonRow>
           </IonGrid>
