@@ -2393,36 +2393,53 @@ const Transactions: React.FC = () => {
                 >
                   {group}
                 </h3>
-                <IonList style={{ borderRadius: "4px" }}>
+                <IonList className="transaction-list" style={{ borderRadius: "4px" }}>
                   {txns.map((txn) => (
-                    <IonItem key={txn.id}>
+                    <IonItem key={txn.id} className="transaction-row">
                       <IonGrid>
                         <IonRow>
                           <IonCol size="1" className="date-column">
-                            <h2>
-                              <div className="date-column-weekday">
-                                {new Date(txn.date)
-                                  .toLocaleDateString("en-US", {
-                                    weekday: "short",
-                                  })
-                                  .toUpperCase()}
-                              </div>
-                              <div className="date-column-day">
-                                {new Date(txn.date).toLocaleDateString(
-                                  "en-US",
-                                  {
-                                    day: "2-digit",
-                                  },
-                                )}
-                              </div>
-                              <div className="date-column-month">
-                                {new Date(txn.date)
-                                  .toLocaleDateString("en-US", {
-                                    month: "short",
-                                  })
-                                  .toUpperCase()}
-                              </div>
-                            </h2>
+                            <div
+                              className="transaction-date-block"
+                              tabIndex={0}
+                              aria-label={`Transaction time: ${new Date(
+                                txn.date,
+                              ).toLocaleTimeString(undefined, {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}`}
+                            >
+                              <h2>
+                                <div className="date-column-weekday">
+                                  {new Date(txn.date)
+                                    .toLocaleDateString("en-US", {
+                                      weekday: "short",
+                                    })
+                                    .toUpperCase()}
+                                </div>
+                                <div className="date-column-day">
+                                  {new Date(txn.date).toLocaleDateString(
+                                    "en-US",
+                                    {
+                                      day: "2-digit",
+                                    },
+                                  )}
+                                </div>
+                                <div className="date-column-month">
+                                  {new Date(txn.date)
+                                    .toLocaleDateString("en-US", {
+                                      month: "short",
+                                    })
+                                    .toUpperCase()}
+                                </div>
+                              </h2>
+                              <span className="transaction-date-time">
+                                {new Date(txn.date).toLocaleTimeString(undefined, {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            </div>
                           </IonCol>
                           <IonCol size="7">
                             <IonRow>

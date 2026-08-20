@@ -46,6 +46,52 @@ ion-accordion::part(content) {
   font-size: 19px;
 }
 
+.transaction-date-block {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  border-radius: 4px;
+  outline-offset: 2px;
+}
+
+.transaction-row {
+  overflow: visible;
+}
+
+.transaction-row:has(.transaction-date-block:hover),
+.transaction-row:has(.transaction-date-block:focus-visible) {
+  z-index: 2;
+}
+
+.transaction-list {
+  contain: layout style;
+}
+
+.transaction-date-time {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  z-index: 2;
+  padding: 3px 6px;
+  border-radius: 4px;
+  transform: translateX(-50%);
+  background: #3a3a3a;
+  color: #d6d6d6;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease-in-out;
+  white-space: nowrap;
+}
+
+.transaction-date-block:hover .transaction-date-time,
+.transaction-date-block:focus-visible .transaction-date-time {
+  opacity: 1;
+}
+
 @media (max-width: 420px) {
   .transaction-actions {
     gap: 0;
