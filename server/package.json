@@ -35,6 +35,7 @@
     "test:budget-occurrence-model": "tsx src/testBudgetOccurrenceModel.ts",
     "test:budget-delete": "tsx src/testBudgetDelete.ts",
     "test:recipient-lifecycle": "tsx src/testRecipientLifecycle.ts",
+    "test:recipient-name-normalization": "tsx src/testRecipientNameNormalization.ts",
     "test:account-lifecycle": "tsx src/testAccountLifecycle.ts",
     "test:account-images": "tsx src/testAccountImages.ts",
     "test:account-image-mutation": "tsx src/testAccountImageMutation.ts",

@@ -1,4 +1,8 @@
 import Database from "better-sqlite3";
+import {
+  normalizeRecipientName,
+  recipientNameMatchKey,
+} from "../../shared/recipientName.js";
 
 const CREATE_FIELDS = new Set([
   "name",
@@ -144,7 +148,7 @@ const normalizePositiveInteger = (
 const normalizeAliases = (aliases: string): string[] =>
   aliases
     .split(";")
-    .map((alias) => alias.toLowerCase().trim())
+    .map(recipientNameMatchKey)
     .filter((alias) => alias.length > 0);
 
 const countAliasCollisions = (proposedAliases: string[], rows: RecipientLookupRow[]): number => {
@@ -289,7 +293,7 @@ const buildRecipientDryRun = (
 
   const normalized = {
     id: normalizePositiveInteger(input.id, "id"),
-    name: normalizeOptionalText(input.name, "name"),
+    name: normalizeRecipientName(normalizeOptionalText(input.name, "name")),
     aliases: normalizeOptionalText(input.aliases, "aliases"),
     email: normalizeOptionalText(input.email, "email"),
     phone: normalizeOptionalText(input.phone, "phone"),
@@ -330,9 +334,11 @@ const buildRecipientDryRun = (
     action === "update" && normalized.id !== undefined
       ? rows.filter((row) => row.id !== normalized.id)
       : rows;
-  const normalizedNameLower = normalized.name.toLowerCase();
+  const normalizedNameLower = recipientNameMatchKey(normalized.name);
   const duplicateNameCandidates = normalized.name
-    ? candidateRows.filter((row) => row.name.toLowerCase() === normalizedNameLower).length
+    ? candidateRows.filter(
+        (row) => recipientNameMatchKey(row.name) === normalizedNameLower,
+      ).length
     : 0;
   const duplicatePhoneCandidates = normalized.phone
     ? candidateRows.filter((row) => row.phone?.trim() === normalized.phone).length

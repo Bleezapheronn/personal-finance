@@ -1,4 +1,5 @@
 import { db, Recipient } from "../db";
+import { recipientNameMatchKey } from "../../server/shared/recipientName.js";
 
 export interface MergeResult {
   success: boolean;
@@ -119,8 +120,8 @@ const combinedAliases = (primary: Recipient, secondary: Recipient): string => {
  * Multiple recipients can legitimately share contact details
  */
 const isSimilarName = (name1: string, name2: string): boolean => {
-  const n1 = name1.toLowerCase().trim();
-  const n2 = name2.toLowerCase().trim();
+  const n1 = recipientNameMatchKey(name1);
+  const n2 = recipientNameMatchKey(name2);
 
   // Exact match (case-insensitive)
   if (n1 === n2) {

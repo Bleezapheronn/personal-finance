@@ -95,6 +95,7 @@ import {
   isRecipientsWriteExperimentEnabled,
   recipientWriteErrorCode,
 } from "../repositories/http/recipientWriteExperiment";
+import { recipientNameMatchKey } from "../../server/shared/recipientName.js";
 import {
   bucketCategoryWriteErrorCode,
   createCategoryInDisposableSqlite,
@@ -1563,7 +1564,8 @@ const AddTransaction: React.FC = () => {
       // Fallback: Check if recipient exists by name
       const existingRecipient = sortedRecipients.find(
         (r) =>
-          r.name?.toLowerCase() === parsedData.recipientName?.toLowerCase(),
+          recipientNameMatchKey(r.name ?? "") ===
+          recipientNameMatchKey(parsedData.recipientName ?? ""),
       );
 
       if (existingRecipient) {

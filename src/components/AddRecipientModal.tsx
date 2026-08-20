@@ -16,6 +16,7 @@ import {
 } from "@ionic/react";
 import { close } from "ionicons/icons";
 import { db, Recipient } from "../db";
+import { recipientNameMatchKey } from "../../server/shared/recipientName.js";
 
 interface AddRecipientModalProps {
   isOpen: boolean;
@@ -181,7 +182,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
       if (aliases.trim()) {
         const aliasesList = aliases
           .split(";")
-          .map((alias) => alias.toLowerCase().trim())
+          .map(recipientNameMatchKey)
           .filter((alias) => alias.length > 0);
 
         const allRecipients = existingRecipients ?? await db.recipients.toArray();
@@ -194,7 +195,7 @@ export const AddRecipientModal: React.FC<AddRecipientModalProps> = ({
             if (recipient.aliases) {
               const existingAliases = recipient.aliases
                 .split(";")
-                .map((a) => a.toLowerCase().trim());
+                .map(recipientNameMatchKey);
 
               if (existingAliases.includes(alias)) {
                 setErrorMsg(

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Recipient, SmsImportTemplate } from "../db";
 import { recipientRepository } from "../repositories";
+import { recipientNameMatchKey } from "../../server/shared/recipientName.js";
 import {
   parseSmsWithTemplate,
   type ParsedSmsData,
@@ -24,9 +25,9 @@ export const useSmsParser = (
     try {
       const allRecipients =
         recipientCandidates ?? (await recipientRepository.listRecipients());
-      const searchName = recipientName.toLowerCase().trim();
+      const searchName = recipientNameMatchKey(recipientName);
       const exactMatch = allRecipients.find(
-        (recipient) => recipient.name.toLowerCase() === searchName,
+        (recipient) => recipientNameMatchKey(recipient.name) === searchName,
       );
       if (exactMatch) return exactMatch;
 
@@ -34,7 +35,7 @@ export const useSmsParser = (
         if (!recipient.aliases) continue;
         const aliases = recipient.aliases
           .split(";")
-          .map((alias) => alias.toLowerCase().trim());
+          .map(recipientNameMatchKey);
         if (aliases.includes(searchName)) return recipient;
       }
       return null;

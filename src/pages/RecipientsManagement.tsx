@@ -38,6 +38,7 @@ import {
   type RecipientFormValues,
 } from "../components/AddRecipientModal";
 import { findAllDuplicatePairs } from "../utils/recipientMerge";
+import { recipientNameMatchKey } from "../../server/shared/recipientName.js";
 import { MergeRecipientsModal } from "../components/MergeRecipientsModal";
 import {
   getRepositoryBackend,
@@ -350,10 +351,10 @@ const RecipientsManagement: React.FC = () => {
 
       // Apply search filter
       if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
+        const term = recipientNameMatchKey(searchTerm);
         result = result.filter(
           (r) =>
-            r.name.toLowerCase().includes(term) ||
+            recipientNameMatchKey(r.name).includes(term) ||
             r.phone?.toLowerCase().includes(term) ||
             r.email?.toLowerCase().includes(term) ||
             r.tillNumber?.toLowerCase().includes(term) ||
@@ -416,7 +417,7 @@ const RecipientsManagement: React.FC = () => {
           if (r.id === excludeId) return false;
 
           // Check name (case-insensitive)
-          if (r.name.toLowerCase() === name.toLowerCase()) {
+          if (recipientNameMatchKey(r.name) === recipientNameMatchKey(name)) {
             return true;
           }
 

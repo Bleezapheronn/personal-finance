@@ -1,6 +1,6 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SmsImportTemplate } from "../db";
+import type { Recipient, SmsImportTemplate } from "../db";
 import { useSmsParser } from "./useSmsParser";
 
 const template = (
@@ -15,6 +15,19 @@ const template = (
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   ...overrides,
+});
+
+const recipient = (
+  id: number,
+  name: string,
+  aliases?: string,
+): Recipient => ({
+  id,
+  name,
+  aliases,
+  isActive: true,
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
 });
 
 describe("useSmsParser template regression", () => {
@@ -64,6 +77,42 @@ describe("useSmsParser template regression", () => {
 
     await expect(result.current.parseSms("received Ksh 10")).resolves.toMatchObject({
       templateId: 4,
+    });
+  });
+
+  it("matches extracted Recipient names across whitespace and case differences", async () => {
+    const recipients = [recipient(42, "EVANS ONG'ENI")];
+    const smsTemplate = template(5, {
+      recipientNamePattern: "to\\s+([A-Z'\\s]+?)\\s+Ksh",
+    });
+    const { result } = renderHook(() =>
+      useSmsParser([smsTemplate], undefined, recipients),
+    );
+
+    await expect(
+      result.current.parseSms("received to EVANS  ONG'ENI Ksh 10"),
+    ).resolves.toMatchObject({
+      recipientId: 42,
+      recipientName: "Evans  Ong'eni",
+      templateId: 5,
+    });
+  });
+
+  it("matches individual aliases without changing parser extraction", async () => {
+    const recipients = [recipient(43, "Different Recipient", "EVANS  ONG'ENI; Other")];
+    const smsTemplate = template(6, {
+      recipientNamePattern: "to\\s+([A-Z'\\s]+?)\\s+Ksh",
+    });
+    const { result } = renderHook(() =>
+      useSmsParser([smsTemplate], undefined, recipients),
+    );
+
+    await expect(
+      result.current.parseSms("received to EVANS ONG'ENI Ksh 10"),
+    ).resolves.toMatchObject({
+      recipientId: 43,
+      recipientName: "Evans Ong'eni",
+      templateId: 6,
     });
   });
 });

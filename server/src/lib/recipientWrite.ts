@@ -1,4 +1,8 @@
 import Database from "better-sqlite3";
+import {
+  normalizeRecipientName,
+  recipientNameMatchKey,
+} from "../../shared/recipientName.js";
 
 export const RECIPIENT_ACTIVATE_WRITE_CONFIRMATION =
   "activate recipient in disposable sqlite" as const;
@@ -245,7 +249,7 @@ const normalizeRequiredText = (value: unknown, fieldName: string): string => {
 const normalizeAliases = (aliases: string | null): string[] =>
   (aliases ?? "")
     .split(";")
-    .map((alias) => alias.toLowerCase().trim())
+    .map(recipientNameMatchKey)
     .filter((alias) => alias.length > 0);
 
 const nextTimestamp = (previous?: string): string => {
@@ -376,7 +380,7 @@ const validateRecipientCreateUpdateWritePayload = (
 
   const normalized: RecipientCreateUpdateWriteInput = {
     ...(action === "update" ? { id: normalizePositiveInteger(input.id) } : {}),
-    name: normalizeRequiredText(input.name, "name"),
+    name: normalizeRecipientName(normalizeRequiredText(input.name, "name")),
     aliases: normalizeOptionalText(input.aliases, "aliases"),
     email: normalizeOptionalText(input.email, "email"),
     phone: normalizeOptionalText(input.phone, "phone"),
@@ -487,11 +491,11 @@ const duplicateSummaryForInput = (
     action === "update" && input.id !== undefined
       ? rows.filter((row) => row.id !== input.id)
       : rows;
-  const normalizedNameLower = input.name.toLowerCase();
+  const normalizedNameLower = recipientNameMatchKey(input.name);
 
   return {
     duplicateNameCandidates: candidateRows.filter(
-      (row) => row.name.toLowerCase() === normalizedNameLower,
+      (row) => recipientNameMatchKey(row.name) === normalizedNameLower,
     ).length,
     duplicatePhoneCandidates: input.phone
       ? candidateRows.filter((row) => row.phone?.trim() === input.phone).length
