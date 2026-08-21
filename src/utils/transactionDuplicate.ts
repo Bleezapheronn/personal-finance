@@ -1,5 +1,9 @@
 import type { Transaction } from "../db";
 import { resolveTransferPairEditLinks } from "./transferPairs";
+import {
+  exchangeRateModeForStoredRate,
+  type ExchangeRateMode,
+} from "./transactionExchangeRate";
 
 export interface DuplicateTransactionPrefill {
   transactionType: "expense" | "income" | "transfer";
@@ -8,7 +12,7 @@ export interface DuplicateTransactionPrefill {
   originalAmount: string;
   originalCurrency: string;
   exchangeRate: string;
-  exchangeRateOverride: boolean;
+  exchangeRateMode: ExchangeRateMode;
   categoryId: number | undefined;
   accountId: number | undefined;
   recipientId: number | undefined;
@@ -29,7 +33,7 @@ const ordinaryPrefill = (
   originalAmount: absoluteString(transaction.originalAmount),
   originalCurrency: transaction.originalCurrency || "",
   exchangeRate: transaction.exchangeRate?.toString() || "",
-  exchangeRateOverride: !!transaction.exchangeRate,
+  exchangeRateMode: exchangeRateModeForStoredRate(transaction.exchangeRate),
   categoryId: transaction.categoryId,
   accountId: transaction.accountId,
   recipientId: transaction.recipientId,
@@ -64,7 +68,7 @@ export const buildDuplicateTransactionPrefill = (
     originalAmount: absoluteString(outgoing.originalAmount),
     originalCurrency: outgoing.originalCurrency || "",
     exchangeRate: outgoing.exchangeRate?.toString() || "",
-    exchangeRateOverride: !!outgoing.exchangeRate,
+    exchangeRateMode: exchangeRateModeForStoredRate(outgoing.exchangeRate),
     categoryId: outgoing.categoryId,
     accountId: outgoing.accountId,
     recipientId: outgoing.recipientId,

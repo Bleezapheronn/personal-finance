@@ -33,7 +33,7 @@ import {
   Recipient,
   SmsImportTemplate,
 } from "../db";
-import { addOutline } from "ionicons/icons";
+import { addOutline, refreshOutline } from "ionicons/icons";
 import { documentTextOutline } from "ionicons/icons";
 import {
   validateTransactionForm,
@@ -61,6 +61,13 @@ import {
   resolveTransferPairEditLinks,
 } from "../utils/transferPairs";
 import type { DuplicateTransactionPrefill } from "../utils/transactionDuplicate";
+import {
+  deriveExchangeRate,
+  derivedExchangeRateState,
+  exchangeRateModeForStoredRate,
+  exchangeRateStateForInput,
+  type ExchangeRateMode,
+} from "../utils/transactionExchangeRate";
 import {
   accountRepository,
   categoryRepository,
@@ -378,7 +385,8 @@ const AddTransaction: React.FC = () => {
   const [originalAmount, setOriginalAmount] = useState("");
   const [originalCurrency, setOriginalCurrency] = useState("");
   const [exchangeRate, setExchangeRate] = useState("");
-  const [exchangeRateOverride, setExchangeRateOverride] = useState(false);
+  const [exchangeRateMode, setExchangeRateMode] =
+    useState<ExchangeRateMode>("derived");
   const [categoryId, setCategoryId] = useState<number | undefined>(undefined);
 
   const [accountId, setAccountId] = useState<number | undefined>(undefined);
@@ -449,7 +457,7 @@ const AddTransaction: React.FC = () => {
     setOriginalAmount("");
     setOriginalCurrency("");
     setExchangeRate("");
-    setExchangeRateOverride(false);
+    setExchangeRateMode("derived");
     setCategoryId(undefined);
     setAccountId(undefined);
     setRecipientId(undefined);
@@ -476,21 +484,12 @@ const AddTransaction: React.FC = () => {
     setViewEntry((entry) => entry + 1);
   });
 
-  // Auto-calculate exchange rate when amount and original amount change
+  // Keep derived rates current and clear them when either source is unusable.
   useEffect(() => {
-    if (exchangeRateOverride) return;
-
-    const numAmount = parseFloat(amount);
-    const numOriginal = parseFloat(originalAmount);
-
-    if (!isNaN(numAmount) && !isNaN(numOriginal) && numOriginal !== 0) {
-      const calculated = Math.abs(numAmount / numOriginal);
-      setExchangeRate(calculated.toFixed(4));
-    } else if (!originalAmount || !amount) {
-      // clear rate if either field is empty
-      setExchangeRate("");
+    if (exchangeRateMode === "derived") {
+      setExchangeRate(deriveExchangeRate(amount, originalAmount));
     }
-  }, [amount, originalAmount, exchangeRateOverride]);
+  }, [amount, originalAmount, exchangeRateMode]);
 
   // Load lookup data on mount AND when page is visited
   useIonViewWillEnter(() => {
@@ -760,7 +759,7 @@ const AddTransaction: React.FC = () => {
             );
             setOriginalCurrency(txn.originalCurrency || "");
             setExchangeRate(txn.exchangeRate?.toString() || "");
-            setExchangeRateOverride(!!txn.exchangeRate);
+            setExchangeRateMode(exchangeRateModeForStoredRate(txn.exchangeRate));
             setDescription(txn.description || "");
             setBudgetSnapshotId(txn.budgetSnapshotId);
           }
@@ -781,7 +780,7 @@ const AddTransaction: React.FC = () => {
       setOriginalAmount(duplicatePrefill.originalAmount);
       setOriginalCurrency(duplicatePrefill.originalCurrency);
       setExchangeRate(duplicatePrefill.exchangeRate);
-      setExchangeRateOverride(duplicatePrefill.exchangeRateOverride);
+      setExchangeRateMode(duplicatePrefill.exchangeRateMode);
       setCategoryId(duplicatePrefill.categoryId);
       setAccountId(duplicatePrefill.accountId);
       setRecipientId(duplicatePrefill.recipientId);
@@ -1441,7 +1440,7 @@ const AddTransaction: React.FC = () => {
         setOriginalAmount("");
         setOriginalCurrency("");
         setExchangeRate("");
-        setExchangeRateOverride(false);
+        setExchangeRateMode("derived");
         setCategoryId(undefined);
         setAccountId(undefined);
         setRecipientId(undefined);
@@ -2520,13 +2519,35 @@ const AddTransaction: React.FC = () => {
                     step="0.0001"
                     value={exchangeRate}
                     onIonChange={(e) => {
-                      setExchangeRate(e.detail.value ?? "");
-                      setExchangeRateOverride(true);
+                      const nextExchangeRate = exchangeRateStateForInput(
+                        e.detail.value ?? "",
+                        amount,
+                        originalAmount,
+                      );
+                      setExchangeRate(nextExchangeRate.value);
+                      setExchangeRateMode(nextExchangeRate.mode);
                     }}
-                    onIonFocus={() => setExchangeRateOverride(true)}
                     inputMode="decimal"
                   />
                 </div>
+              </IonCol>
+              <IonCol size="1">
+                <IonButton
+                  style={{ marginTop: "23px" }}
+                  color="primary"
+                  onClick={() => {
+                    const nextExchangeRate = derivedExchangeRateState(
+                      amount,
+                      originalAmount,
+                    );
+                    setExchangeRate(nextExchangeRate.value);
+                    setExchangeRateMode(nextExchangeRate.mode);
+                  }}
+                  aria-label="Recalculate exchange rate"
+                  title="Recalculate exchange rate"
+                >
+                  <IonIcon icon={refreshOutline} />
+                </IonButton>
               </IonCol>
             </IonRow>
 

@@ -30,7 +30,7 @@ describe("transaction duplication", () => {
       originalAmount: "",
       originalCurrency: "",
       exchangeRate: "",
-      exchangeRateOverride: false,
+      exchangeRateMode: "derived",
       categoryId: 2,
       accountId: 3,
       recipientId: 4,
@@ -71,6 +71,21 @@ describe("transaction duplication", () => {
         transferPairId: 999,
       }),
     ).toBeUndefined();
+  });
+
+  test("preserves copied exchange rates as manual, including zero", () => {
+    expect(
+      buildDuplicateTransactionPrefill({
+        ...ordinary,
+        exchangeRate: 0,
+      }),
+    ).toMatchObject({ exchangeRate: "0", exchangeRateMode: "manual" });
+    expect(
+      buildDuplicateTransactionPrefill({
+        ...ordinary,
+        exchangeRate: 1.25,
+      }),
+    ).toMatchObject({ exchangeRate: "1.25", exchangeRateMode: "manual" });
   });
 
   test("keeps action order stable as optional actions disappear", () => {

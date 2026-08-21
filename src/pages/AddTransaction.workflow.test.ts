@@ -26,4 +26,10 @@ describe("authoritative transaction entry workflow", () => {
     expect(source).toContain("selectSuggestion");
     expect(source).toContain("getDescriptionPrefill");
   });
+
+  it("keeps exchange-rate persistence unchanged while exposing derived/manual controls", () => {
+    expect(source).toContain("exchangeRate: numericExchangeRate");
+    expect(source).toContain('useState<ExchangeRateMode>("derived")');
+    expect(source).toContain('aria-label="Recalculate exchange rate"');
+  });
 });
