@@ -645,16 +645,35 @@ const BucketsManagement: React.FC = () => {
 
                         {/* Buttons on the right */}
                         <IonCol size="auto">
+                          <div
+                            className="bucket-header-actions"
+                            onClickCapture={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              const action = (
+                                event.target as HTMLElement
+                              ).closest<HTMLElement>("[data-bucket-header-action]")
+                                ?.dataset.bucketHeaderAction;
+
+                              if (action === "add") {
+                                resetCategoryForm();
+                                setSelectedCategoryBucket(b.id);
+                                setShowCategoryModal(true);
+                              } else if (action === "edit") {
+                                editBucket(b);
+                                setShowBucketModal(true);
+                              } else if (action === "toggle-active") {
+                                toggleBucketActive(b);
+                              } else if (action === "delete") {
+                                initiateBucketDelete(b);
+                              }
+                            }}
+                          >
                             <IonButton
                               fill="clear"
                               size="small"
                               color="secondary"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                resetCategoryForm();
-                                setSelectedCategoryBucket(b.id);
-                                setShowCategoryModal(true);
-                              }}
+                              data-bucket-header-action="add"
                               aria-label={`Add category to ${b.name}`}
                               title="Add Category"
                             >
@@ -665,11 +684,7 @@ const BucketsManagement: React.FC = () => {
                               fill="clear"
                               size="small"
                               color="secondary"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                editBucket(b);
-                                setShowBucketModal(true);
-                              }}
+                              data-bucket-header-action="edit"
                               aria-label={`Edit ${b.name}`}
                               title="Edit"
                             >
@@ -680,10 +695,7 @@ const BucketsManagement: React.FC = () => {
                                   fill="clear"
                                   size="small"
                                   color={b.isActive ? "success" : "medium"}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleBucketActive(b);
-                                  }}
+                                  data-bucket-header-action="toggle-active"
                                   aria-label={
                                     b.isActive
                                       ? `Deactivate ${b.name}`
@@ -708,15 +720,13 @@ const BucketsManagement: React.FC = () => {
                                   fill="clear"
                                   size="small"
                                   color="danger"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    initiateBucketDelete(b);
-                                  }}
+                                  data-bucket-header-action="delete"
                                   aria-label={`Delete ${b.name}`}
                                   title="Delete"
                                 >
                                   <IonIcon icon={trashOutline} />
-                                </IonButton>
+                            </IonButton>
+                          </div>
                           </IonCol>
                       </IonRow>
                     </IonGrid>
@@ -728,7 +738,7 @@ const BucketsManagement: React.FC = () => {
                         No categories for this bucket.
                       </div>
                     ) : (
-                      <IonList>
+                      <IonList className="bucket-category-list">
                         {getCategoriesForBucket(b.id).map((c) => {
                           const isInactiveCategory = c.isActive === false;
                           return (

@@ -1921,11 +1921,7 @@ const Transactions: React.FC = () => {
                     getActiveFilterChips().map((chip) => (
                       <div
                         key={chip.filterName}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        onClick={(e) => {
+                        onClickCapture={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
                           clearIndividualFilter(chip.filterName);
@@ -1933,6 +1929,15 @@ const Transactions: React.FC = () => {
                       >
                         <IonChip
                           color="primary"
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              clearIndividualFilter(chip.filterName);
+                            }
+                          }}
                           style={{
                             cursor: "pointer",
                             fontSize: "0.75rem",

@@ -7,6 +7,10 @@ ion-icon {
   gap: 0.5rem;
 }
 
+.bucket-category-list > ion-item > ion-label {
+  margin-inline-start: 2.5rem;
+}
+
 ion-button[color="light"] ion-icon {
   color: #999;
 }
