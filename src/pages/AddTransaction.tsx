@@ -38,7 +38,6 @@ import { documentTextOutline } from "ionicons/icons";
 import {
   validateTransactionForm,
   validateDateTime,
-  validateAmount,
   validateDescription,
   validateTransactionCost,
   ValidationErrors,
@@ -68,6 +67,11 @@ import {
   exchangeRateStateForInput,
   type ExchangeRateMode,
 } from "../utils/transactionExchangeRate";
+import {
+  resolvedExpressionDisplayValue,
+  resolvedTransactionAmount,
+  validateTransactionAmountInput,
+} from "../utils/transactionAmountExpression";
 import {
   accountRepository,
   categoryRepository,
@@ -380,6 +384,7 @@ const AddTransaction: React.FC = () => {
   >("expense");
 
   const [amount, setAmount] = useState("");
+  const [amountValidationMessage, setAmountValidationMessage] = useState("");
   const [transactionCost, setTransactionCost] = useState("");
   const [transactionReference, setTransactionReference] = useState("");
   const [originalAmount, setOriginalAmount] = useState("");
@@ -452,6 +457,7 @@ const AddTransaction: React.FC = () => {
     setTransactionDateTime("");
     setTransactionType("expense");
     setAmount("");
+    setAmountValidationMessage("");
     setTransactionCost("");
     setTransactionReference("");
     setOriginalAmount("");
@@ -974,9 +980,10 @@ const AddTransaction: React.FC = () => {
     }
 
     // Validate amount
-    const amountValidation = validateAmount(amount);
+    const amountValidation = validateTransactionAmountInput(amount);
     if (!amountValidation.isValid) {
-      setFieldErrors(amountValidation.errors);
+      setFieldErrors((prev) => ({ ...prev, amount: true }));
+      setAmountValidationMessage(amountValidation.errorMessage || "Invalid amount.");
       setErrorMsg(amountValidation.errorMessage || "Invalid amount.");
       return;
     }
@@ -1000,7 +1007,7 @@ const AddTransaction: React.FC = () => {
 
     // Parse datetime directly from transactionDateTime
     const selectedDateTime = new Date(transactionDateTime);
-    const numericAmountRaw = parseFloat(amount);
+    const numericAmountRaw = resolvedTransactionAmount(amount)!;
 
     const parsedCost = transactionCost ? parseFloat(transactionCost) : NaN;
     const numericCost = !isNaN(parsedCost) ? -Math.abs(parsedCost) : undefined;
@@ -1435,6 +1442,7 @@ const AddTransaction: React.FC = () => {
         setTransactionDateTime("");
         setFieldErrors({});
         setAmount("");
+        setAmountValidationMessage("");
         setTransactionCost("");
         setTransactionReference("");
         setOriginalAmount("");
@@ -1678,12 +1686,29 @@ const AddTransaction: React.FC = () => {
   // Real-time validation
   useEffect(() => {
     if (fieldErrors.amount && amount) {
-      const validation = validateAmount(amount);
+      const validation = validateTransactionAmountInput(amount);
       if (validation.isValid) {
         setFieldErrors((prev) => ({ ...prev, amount: false }));
+        setAmountValidationMessage("");
       }
     }
   }, [amount, fieldErrors.amount]);
+
+  const resolveAmountExpression = (currentAmount = amount) => {
+    const resolvedValue = resolvedExpressionDisplayValue(currentAmount);
+    if (resolvedValue !== undefined) {
+      setAmount(resolvedValue);
+      setFieldErrors((prev) => ({ ...prev, amount: false }));
+      setAmountValidationMessage("");
+      return;
+    }
+
+    const validation = validateTransactionAmountInput(currentAmount);
+    if (!validation.isValid && currentAmount.trim() !== "") {
+      setFieldErrors((prev) => ({ ...prev, amount: true }));
+      setAmountValidationMessage(validation.errorMessage || "Invalid amount.");
+    }
+  };
 
   useEffect(() => {
     if (fieldErrors.description && description) {
@@ -2421,17 +2446,33 @@ const AddTransaction: React.FC = () => {
                   <IonInput
                     className="form-input"
                     placeholder="e.g. 1,000"
-                    type="number"
-                    step="0.01"
+                    type="text"
                     value={amount}
-                    onIonChange={(e) => {
-                      setAmount(e.detail.value!);
+                    onIonInput={(e) => {
+                      setAmount(e.detail.value ?? "");
                       setFieldErrors((prev) => ({ ...prev, amount: false }));
+                      setAmountValidationMessage("");
                     }}
-                    inputMode="decimal"
+                    onIonBlur={(event) =>
+                      resolveAmountExpression(
+                        String(
+                          (event.target as HTMLIonInputElement).value ?? amount,
+                        ),
+                      )
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        resolveAmountExpression(
+                          (event.target as HTMLInputElement).value,
+                        );
+                      }
+                    }}
                   />
                   {fieldErrors.amount && (
-                    <span className="error-message">Required field</span>
+                    <span className="error-message">
+                      {amountValidationMessage || "Required field"}
+                    </span>
                   )}
                 </div>
               </IonCol>

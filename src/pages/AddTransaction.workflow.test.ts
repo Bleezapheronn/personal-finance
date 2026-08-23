@@ -32,4 +32,19 @@ describe("authoritative transaction entry workflow", () => {
     expect(source).toContain('useState<ExchangeRateMode>("derived")');
     expect(source).toContain('aria-label="Recalculate exchange rate"');
   });
+
+  it("resolves only safe Transaction Amount expressions before existing save paths", () => {
+    expect(source).toContain('type="text"');
+    expect(source).toContain("resolvedTransactionAmount(amount)");
+    expect(source).toContain('event.key === "Enter"');
+    expect(source).toContain("event.preventDefault()");
+    expect(source).toContain("validateTransactionAmountInput(amount)");
+  });
+
+  it("uses the current Ionic input value for the first blur or Enter, not stale Amount state", () => {
+    expect(source).toContain('onIonInput={(e) => {\n                      setAmount(e.detail.value ?? "");');
+    expect(source).toContain("onIonBlur={(event) =>\n                      resolveAmountExpression(");
+    expect(source).toContain("(event.target as HTMLIonInputElement).value ?? amount");
+    expect(source).toContain("(event.target as HTMLInputElement).value");
+  });
 });
