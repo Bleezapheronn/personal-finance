@@ -33,7 +33,7 @@ import {
   Recipient,
   SmsImportTemplate,
 } from "../db";
-import { addOutline, refreshOutline } from "ionicons/icons";
+import { addOutline, informationCircleOutline, refreshOutline } from "ionicons/icons";
 import { documentTextOutline } from "ionicons/icons";
 import {
   validateTransactionForm,
@@ -1768,6 +1768,14 @@ const AddTransaction: React.FC = () => {
             {isEditMode ? "Edit Transaction" : "Add Transaction"}
           </IonTitle>
           <IonButtons slot="end">
+            {isEditMode && (
+              <IonButton
+                onClick={() => history.push(`/transaction-details/${id}`)}
+                title="Transaction Details"
+              >
+                <IonIcon slot="icon-only" icon={informationCircleOutline} />
+              </IonButton>
+            )}
             <IonButton
               onClick={() => setShowSmsImportModal(true)}
               disabled={smsTemplates.length === 0}

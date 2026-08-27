@@ -153,6 +153,20 @@ for (const [key, value] of Object.entries(beforeLink as Record<string, unknown>)
 }
 assert.equal(afterLink.budgetSnapshotId, snapshot.id);
 
+const secondLinkResult = reviewedWrite("link", {
+  snapshotId: Number(snapshot.id),
+  transactionId: 101,
+});
+assert.equal(secondLinkResult.rowsChanged.transactions, 1);
+const linkedContribution = (
+  db
+    .prepare(
+      `SELECT COALESCE(SUM(amount + COALESCE(transactionCost, 0)), 0) AS total
+       FROM transactions WHERE budgetSnapshotId = ?`,
+    )
+    .get(Number(snapshot.id)) as { total: number }
+).total;
+
 db.prepare("UPDATE budgets SET isActive = 0 WHERE id = 1").run();
 const linkedDelete = budgetSnapshotOccurrenceDryRun(
   db,
@@ -172,6 +186,64 @@ const afterUnlink = db.prepare("SELECT * FROM transactions WHERE id = 100").get(
 assert.equal(afterUnlink.budgetSnapshotId, null);
 assert.equal(afterUnlink.budgetId, null);
 assert.equal(afterUnlink.occurrenceDate, null);
+assert.ok(
+  db.prepare("SELECT id FROM transactions WHERE id = 100").get(),
+  "unlink retains the Transaction",
+);
+assert.ok(
+  db
+    .prepare("SELECT id FROM budgetSnapshots WHERE id = ?")
+    .get(Number(snapshot.id)),
+  "unlink retains the Budget occurrence",
+);
+const remainingLinkedTransaction = db
+  .prepare("SELECT budgetSnapshotId FROM transactions WHERE id = 101")
+  .get() as { budgetSnapshotId: number | null };
+assert.equal(remainingLinkedTransaction.budgetSnapshotId, snapshot.id);
+const contributionAfterFirstUnlink = (
+  db
+    .prepare(
+      `SELECT COALESCE(SUM(amount + COALESCE(transactionCost, 0)), 0) AS total
+       FROM transactions WHERE budgetSnapshotId = ?`,
+    )
+    .get(Number(snapshot.id)) as { total: number }
+).total;
+assert.notEqual(contributionAfterFirstUnlink, linkedContribution);
+
+const finalUnlinkResult = reviewedWrite("unlink", {
+  transactionId: 101,
+  snapshotId: Number(snapshot.id),
+});
+assert.equal(finalUnlinkResult.rowsChanged.transactions, 1);
+assert.ok(
+  db.prepare("SELECT id FROM transactions WHERE id = 101").get(),
+  "unlink retains the final Transaction",
+);
+assert.ok(
+  db
+    .prepare("SELECT id FROM budgetSnapshots WHERE id = ?")
+    .get(Number(snapshot.id)),
+  "a zero-linked occurrence remains accessible",
+);
+assert.equal(
+  (
+    db
+      .prepare("SELECT COUNT(*) AS count FROM transactions WHERE budgetSnapshotId = ?")
+      .get(Number(snapshot.id)) as { count: number }
+  ).count,
+  0,
+);
+assert.equal(
+  (
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount + COALESCE(transactionCost, 0)), 0) AS total
+         FROM transactions WHERE budgetSnapshotId = ?`,
+      )
+      .get(Number(snapshot.id)) as { total: number }
+  ).total,
+  0,
+);
 
 insertTransaction.run({
   id: 102,

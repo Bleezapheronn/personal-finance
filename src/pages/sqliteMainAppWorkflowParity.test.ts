@@ -42,12 +42,34 @@ describe("SQLite main-app workflow parity cleanup", () => {
     const modal = source("src/components/CompleteBudgetModal.tsx");
     const budget = source("src/pages/Budget.tsx");
     const history = source("src/pages/BudgetHistory.tsx");
+    const details = source("src/pages/TransactionDetails.tsx");
     expect(modal).toContain("onUnlinkInSqlite");
     expect(modal).toContain("budgetSnapshotId: undefined");
     expect(modal).toContain("budgetId: undefined");
     expect(modal).toContain("occurrenceDate: undefined");
     expect(budget).toContain('dryRunBudgetSnapshotOccurrence("unlink"');
     expect(history).toContain('dryRunBudgetSnapshotOccurrence("unlink"');
+    expect(details).toContain('dryRunBudgetSnapshotOccurrence("unlink"');
+    expect(details).toContain(
+      "The Transaction and occurrence will remain.",
+    );
+  });
+
+  it("keeps Transaction Budget management occurrence-based without raw identifiers", () => {
+    const details = source("src/pages/TransactionDetails.tsx");
+    const addTransaction = source("src/pages/AddTransaction.tsx");
+    expect(details).toContain("normalizeBudgetSnapshot");
+    expect(details).toContain("linkedSnapshot.description");
+    expect(details).toContain("linkedSnapshot.transactionCost");
+    expect(details).toContain("linkedSnapshot.isFlexible");
+    expect(details).toContain("EditSnapshotModal");
+    expect(details).not.toContain("Budget occurrence snapshot ID");
+    expect(details).not.toContain("handleLinkSnapshot");
+    expect(addTransaction).toContain("Transaction Details");
+    expect(addTransaction).toContain("/transaction-details/${id}");
+    expect(
+      addTransaction.indexOf("Transaction Details"),
+    ).toBeLessThan(addTransaction.indexOf("Import SMS"));
   });
 
   it("uses the originating transaction date as the first Budget occurrence", () => {
@@ -104,7 +126,9 @@ describe("SQLite main-app workflow parity cleanup", () => {
     const addTransaction = source("src/pages/AddTransaction.tsx");
     expect(addTransaction).not.toContain("Existing Budget Snapshot (optional)");
     expect(addTransaction).not.toContain("Existing snapshots only.");
-    expect(addTransaction).toContain("Manage\n                        the link from Transaction Details.");
+    expect(addTransaction).toMatch(
+      /This transaction is linked to a Budget occurrence\.\s+Manage\s+the link from Transaction Details\./,
+    );
   });
 
   it("opens a browser only when the launcher is explicitly asked", () => {

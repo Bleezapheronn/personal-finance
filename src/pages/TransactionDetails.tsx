@@ -23,13 +23,12 @@ import {
   IonCol,
 } from "@ionic/react";
 import { useParams, useHistory } from "react-router-dom";
-import { createOutline, calendar, linkOutline, trash } from "ionicons/icons";
-import { db, Transaction, Category, Recipient, Account, Budget, BudgetSnapshot } from "../db";
+import { createOutline, calendar, trash } from "ionicons/icons";
+import { db, Transaction, Category, Recipient, Account, BudgetSnapshot } from "../db";
 import { getRepositoryBackend, isHttpSelectedReadRepositoryBackend } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import type {
   AccountDto,
-  BudgetDto,
   BudgetSnapshotDto,
   CategoryDto,
   RecipientDto,
@@ -40,6 +39,7 @@ import {
   dryRunBudgetSnapshotOccurrence,
   writeBudgetSnapshotOccurrence,
 } from "../repositories/http/budgetSnapshotOccurrenceWrite";
+import { EditSnapshotModal } from "../components/EditSnapshotModal";
 
 const asBoolean = (value: boolean | number): boolean =>
   value === true || value === 1;
@@ -102,9 +102,10 @@ const normalizeAccount = (row: Account | AccountDto): Account => ({
   updatedAt: asDate(row.updatedAt),
 });
 
-const normalizeBudget = (row: Budget | BudgetDto): Budget => ({
+const normalizeBudgetSnapshot = (
+  row: BudgetSnapshot | BudgetSnapshotDto,
+): BudgetSnapshot => ({
   ...row,
-  paymentChannelId: row.paymentChannelId ?? undefined,
   accountId: row.accountId ?? undefined,
   recipientId: row.recipientId ?? undefined,
   transactionCost: row.transactionCost ?? undefined,
@@ -112,16 +113,26 @@ const normalizeBudget = (row: Budget | BudgetDto): Budget => ({
     typeof row.frequencyDetails === "string"
       ? undefined
       : (row.frequencyDetails ?? undefined),
+  occurrenceDate: asDate(row.occurrenceDate),
+  dueDate: asDate(row.dueDate),
   isGoal: asBoolean(row.isGoal),
   isFlexible: asBoolean(row.isFlexible),
   goalPercentage: row.goalPercentage ?? undefined,
   goalDirection: row.goalDirection ?? undefined,
-  isActive: asBoolean(row.isActive),
   remainingCyclesTotal: row.remainingCyclesTotal ?? undefined,
-  dueDate: asDate(row.dueDate),
+  isHistorical: asBoolean(row.isHistorical),
+  sourceBudgetUpdatedAt: asDate(row.sourceBudgetUpdatedAt),
   createdAt: asDate(row.createdAt),
   updatedAt: asDate(row.updatedAt),
 });
+
+const isFrozenOccurrence = (snapshot: BudgetSnapshot): boolean => {
+  const dueDate = new Date(snapshot.dueDate);
+  dueDate.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return dueDate < today;
+};
 
 const TransactionDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -134,7 +145,8 @@ const TransactionDetails: React.FC = () => {
   const [category, setCategory] = useState<Category | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [recipient, setRecipient] = useState<Recipient | null>(null);
-  const [budget, setBudget] = useState<Budget | null>(null);
+  const [linkedSnapshot, setLinkedSnapshot] = useState<BudgetSnapshot | null>(null);
+  const [showEditSnapshotModal, setShowEditSnapshotModal] = useState(false);
   const [showRemoveAlert, setShowRemoveAlert] = useState(false);
   const [mutationError, setMutationError] = useState("");
   const occurrenceWritesActive =
@@ -163,20 +175,20 @@ const TransactionDetails: React.FC = () => {
         setRecipient(rec ? normalizeRecipient(rec) : null);
         setAccount(acc ? normalizeAccount(acc) : null);
 
-        // Fetch linked budget through snapshot linkage when present.
+        // The immutable occurrence snapshot is the authoritative Budget link.
         if (transaction.budgetSnapshotId !== undefined) {
-          const linkedSnapshot = await repositories.budgetSnapshots.getById(
+          const snapshotRow = await repositories.budgetSnapshots.getById(
             transaction.budgetSnapshotId,
           );
-          if (linkedSnapshot) {
-            const snapshot = linkedSnapshot as BudgetSnapshot | BudgetSnapshotDto;
-            const linkedBudget = await repositories.budgets.getById(snapshot.budgetId);
-            setBudget(linkedBudget ? normalizeBudget(linkedBudget) : null);
-          } else {
-            setBudget(null);
-          }
+          setLinkedSnapshot(
+            snapshotRow
+              ? normalizeBudgetSnapshot(
+                  snapshotRow as BudgetSnapshot | BudgetSnapshotDto,
+                )
+              : null,
+          );
         } else {
-          setBudget(null);
+          setLinkedSnapshot(null);
         }
 
         // Fetch recent history for same recipient
@@ -215,7 +227,7 @@ const TransactionDetails: React.FC = () => {
         };
         const dryRun = await dryRunBudgetSnapshotOccurrence("unlink", input);
         const confirmed = window.confirm(
-          "Remove this Budget link?\n\nOnly this Transaction's Budget linkage fields will be cleared. The occurrence remains unchanged.",
+          "Remove this Budget link? The Transaction and occurrence will remain.",
         );
         if (!confirmed) return;
         await writeBudgetSnapshotOccurrence(
@@ -238,7 +250,7 @@ const TransactionDetails: React.FC = () => {
         budgetId: undefined,
         occurrenceDate: undefined,
       });
-      setBudget(null);
+      setLinkedSnapshot(null);
       setShowRemoveAlert(false);
     } catch (error) {
       console.error("Error removing transaction from budget:", error);
@@ -248,54 +260,23 @@ const TransactionDetails: React.FC = () => {
     }
   };
 
-  const handleLinkSnapshot = async () => {
-    if (!txn || !occurrenceWritesActive) {
-      setMutationError("Budget occurrence changes are currently unavailable.");
-      return;
-    }
-    const snapshotText = window.prompt("Budget occurrence snapshot ID");
-    if (!snapshotText) return;
-    const snapshotId = Number(snapshotText);
-    if (!Number.isInteger(snapshotId) || snapshotId <= 0) {
-      setMutationError("Enter a valid snapshot ID.");
-      return;
-    }
-    const action = txn.budgetSnapshotId ? "changeLink" : "link";
-    const input = {
-      transactionId: txn.id!,
-      snapshotId,
-      ...(txn.budgetSnapshotId
-        ? { expectedCurrentSnapshotId: txn.budgetSnapshotId }
-        : {}),
-    };
+  const handleSnapshotSaved = async () => {
+    if (!linkedSnapshot?.id) return;
+
     try {
-      const dryRun = await dryRunBudgetSnapshotOccurrence(action, input);
-      const confirmed = window.confirm(
-        `${txn.budgetSnapshotId ? "Change" : "Add"} this Budget link?\n\n` +
-          "Only this Transaction's Budget linkage fields will change.",
-      );
-      if (!confirmed) return;
-      const result = await writeBudgetSnapshotOccurrence(
-        action,
-        input,
-        dryRun.planFingerprint!,
-      );
-      const repositories = getSelectedReadRepositories(backend);
-      const [snapshotRow, transactionRow] = await Promise.all([
-        repositories.budgetSnapshots.getById(result.target.snapshotId!),
-        repositories.transactions.getById(txn.id!),
-      ]);
-      if (!snapshotRow || !transactionRow) {
-        throw new Error("budget_snapshot_link_refresh_failed");
+      const snapshotRow = await getSelectedReadRepositories(
+        backend,
+      ).budgetSnapshots.getById(linkedSnapshot.id);
+      if (!snapshotRow) {
+        throw new Error("budget_snapshot_refresh_failed");
       }
-      const snapshot = snapshotRow as BudgetSnapshot | BudgetSnapshotDto;
-      const budgetRow = await repositories.budgets.getById(snapshot.budgetId);
-      setTxn(normalizeTransaction(transactionRow));
-      setBudget(budgetRow ? normalizeBudget(budgetRow) : null);
+      setLinkedSnapshot(
+        normalizeBudgetSnapshot(snapshotRow as BudgetSnapshot | BudgetSnapshotDto),
+      );
       setMutationError("");
     } catch (error) {
       setMutationError(
-        error instanceof Error ? error.message : "Budget link failed.",
+        error instanceof Error ? error.message : "Budget occurrence refresh failed.",
       );
     }
   };
@@ -330,14 +311,6 @@ const TransactionDetails: React.FC = () => {
           </IonButtons>
           <IonTitle>Transaction Details</IonTitle>
           <IonButtons slot="end">
-            {httpSelected && occurrenceWritesActive && (
-              <IonButton
-                onClick={handleLinkSnapshot}
-                title={txn.budgetSnapshotId ? "Change Budget link" : "Link Budget"}
-              >
-                <IonIcon slot="icon-only" icon={linkOutline} />
-              </IonButton>
-            )}
             <IonButton
               onClick={() => navigate.push(`/budget/from-transaction/${id}`)}
               title="Create Budget from Transaction"
@@ -479,8 +452,8 @@ const TransactionDetails: React.FC = () => {
           </IonCardContent>
         </IonCard>
 
-        {/* Linked Budget Card - Only shown if transaction is linked to a budget */}
-        {txn.budgetSnapshotId && budget && txn.occurrenceDate && (
+        {/* Linked Budget occurrence */}
+        {txn.budgetSnapshotId && linkedSnapshot && (
           <IonCard style={{ marginTop: "1.6rem" }}>
             <IonCardHeader
               style={{
@@ -490,14 +463,19 @@ const TransactionDetails: React.FC = () => {
                 justifyContent: "space-between",
               }}
             >
-              <span>Linked Budget</span>
+              <span>Linked Budget occurrence</span>
             </IonCardHeader>
             <IonCardContent>
+              <IonText style={{ fontWeight: "bold", fontSize: "1.1rem" }}>
+                {linkedSnapshot.description}
+              </IonText>
               <IonGrid>
                 <IonRow>
                   <IonCol>
+                    <IonText color="medium">Due Date</IonText>
+                    <br />
                     <IonText style={{ fontWeight: "bold", fontSize: "1.1rem" }}>
-                      {new Date(txn.occurrenceDate).toLocaleDateString(
+                      {new Date(linkedSnapshot.dueDate).toLocaleDateString(
                         undefined,
                         {
                           month: "short",
@@ -508,14 +486,27 @@ const TransactionDetails: React.FC = () => {
                     </IonText>
                   </IonCol>
                   <IonCol style={{ textAlign: "right" }}>
+                    <IonText color="medium">Occurrence Amount</IonText>
+                    <br />
                     <IonText style={{ fontWeight: "bold", fontSize: "1.1rem" }}>
-                      {budget.amount.toLocaleString(undefined, {
+                      {Math.abs(linkedSnapshot.amount).toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
                     </IonText>
                   </IonCol>
-                  <IonCol size="1">
+                  <IonCol size="2" style={{ textAlign: "right" }}>
+                    {isFrozenOccurrence(linkedSnapshot) && (
+                      <IonButton
+                        fill="clear"
+                        size="small"
+                        style={{ marginTop: -4 }}
+                        onClick={() => setShowEditSnapshotModal(true)}
+                        title="Edit Budget occurrence"
+                      >
+                        <IonIcon icon={createOutline} />
+                      </IonButton>
+                    )}
                     <IonButton
                       fill="clear"
                       size="small"
@@ -527,6 +518,26 @@ const TransactionDetails: React.FC = () => {
                     >
                       <IonIcon icon={trash} />
                     </IonButton>
+                  </IonCol>
+                </IonRow>
+                <IonRow>
+                  <IonCol>
+                    <IonText color="medium">Transaction Cost</IonText>
+                    <br />
+                    <IonText>
+                      {Math.abs(linkedSnapshot.transactionCost ?? 0).toLocaleString(
+                        undefined,
+                        {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        },
+                      )}
+                    </IonText>
+                  </IonCol>
+                  <IonCol style={{ textAlign: "right" }}>
+                    <IonText color="medium">Flexible</IonText>
+                    <br />
+                    <IonText>{linkedSnapshot.isFlexible ? "Yes" : "No"}</IonText>
                   </IonCol>
                 </IonRow>
               </IonGrid>
@@ -583,7 +594,7 @@ const TransactionDetails: React.FC = () => {
           isOpen={showRemoveAlert}
           onDidDismiss={() => setShowRemoveAlert(false)}
           header="Remove from Budget?"
-          message="This transaction will no longer be linked to the budget item."
+          message="The Transaction and Budget occurrence will remain. This payment will no longer contribute to the occurrence."
           buttons={[
             {
               text: "Cancel",
@@ -595,6 +606,34 @@ const TransactionDetails: React.FC = () => {
               handler: handleRemoveFromBudget,
             },
           ]}
+        />
+        <EditSnapshotModal
+          snapshot={linkedSnapshot}
+          budgetDueDate={linkedSnapshot?.dueDate}
+          isOpen={showEditSnapshotModal}
+          onDismiss={() => setShowEditSnapshotModal(false)}
+          onSaved={() => {
+            setShowEditSnapshotModal(false);
+            void handleSnapshotSaved();
+          }}
+          onSaveInSqlite={
+            httpSelected
+              ? async (input) => {
+                  if (!occurrenceWritesActive) {
+                    throw new Error("budget_snapshot_occurrence_writes_unavailable");
+                  }
+                  const dryRun = await dryRunBudgetSnapshotOccurrence(
+                    "correct",
+                    input,
+                  );
+                  await writeBudgetSnapshotOccurrence(
+                    "correct",
+                    input,
+                    dryRun.planFingerprint!,
+                  );
+                }
+              : undefined
+          }
         />
       </IonContent>
     </IonPage>
