@@ -95,10 +95,30 @@ describe("SQLite main-app workflow parity cleanup", () => {
   it("keeps Budget reads free of snapshot generation and makes History occurrence-only", () => {
     const budget = source("src/pages/Budget.tsx");
     const history = source("src/pages/BudgetHistory.tsx");
+    const selector = source("src/utils/budgetOccurrenceSelector.ts");
     expect(budget).not.toContain("migrateBudgetSnapshots()");
     expect(history).not.toContain("migrateBudgetSnapshots()");
     expect(history).not.toContain("handleToggleBudgetActive");
     expect(history).toContain("occurrenceStateSupported");
+    expect(budget).toContain("selectBudgetOccurrences");
+    expect(history).toContain("selectBudgetOccurrences");
+    expect(history).toContain("timerOutline");
+    expect(history).toContain('title="Unrecorded occurrence"');
+    expect(history).not.toContain("values will be frozen when a payment is added");
+    expect(selector).toContain('source: "projected"');
+    expect(selector).toContain("projectionStartsOn");
+  });
+
+  it("lets projected History occurrences link one existing Transaction atomically", () => {
+    const history = source("src/pages/BudgetHistory.tsx");
+    const modal = source("src/components/LinkPastTransactionsModal.tsx");
+    expect(history).toContain('occ.occurrenceSource === "projected"');
+    expect(history).toContain('title="Link Transaction"');
+    expect(history).toContain('selectionMode={');
+    expect(history).toContain('budgetSnapshotIdForLinking === undefined ? "single" : "multiple"');
+    expect(history).toContain("Select one Transaction before linking a projected occurrence.");
+    expect(modal).toContain('selectionMode?: "single" | "multiple"');
+    expect(modal).toContain('selectionMode === "single"');
   });
 
   it("uses a snapshot linkage index instead of scanning all Transactions per occurrence", () => {

@@ -31,6 +31,7 @@ interface LinkPastTransactionsModalProps {
   categories: Category[];
   recipients: Recipient[];
   occurrenceDate: Date; // NEW: The occurrence being linked to
+  selectionMode?: "single" | "multiple";
 }
 
 export const LinkPastTransactionsModal: React.FC<
@@ -43,6 +44,7 @@ export const LinkPastTransactionsModal: React.FC<
   categories,
   recipients,
   occurrenceDate,
+  selectionMode = "multiple",
 }) => {
   const [selectedTransactionIds, setSelectedTransactionIds] = useState<
     Set<number>
@@ -58,6 +60,10 @@ export const LinkPastTransactionsModal: React.FC<
   }, [isOpen]);
 
   const handleToggleTransaction = (txnId: number) => {
+    if (selectionMode === "single") {
+      setSelectedTransactionIds(new Set([txnId]));
+      return;
+    }
     const newSelected = new Set(selectedTransactionIds);
     if (newSelected.has(txnId)) {
       newSelected.delete(txnId);
@@ -131,7 +137,7 @@ export const LinkPastTransactionsModal: React.FC<
               <p style={{ fontSize: "0.9rem", marginBottom: "16px" }}>
                 Found {matchingTransactions.length} unlinked transaction
                 {matchingTransactions.length !== 1 ? "s" : ""} matching this
-                budget. Select which ones to link:
+                budget. Select {selectionMode === "single" ? "one to link:" : "which ones to link:"}
               </p>
             </IonText>
 
@@ -142,17 +148,19 @@ export const LinkPastTransactionsModal: React.FC<
             )}
 
             {/* Select All Button */}
-            <IonButton
-              expand="block"
-              fill="outline"
-              size="small"
-              onClick={handleSelectAll}
-              style={{ marginBottom: "16px" }}
-            >
-              {selectedTransactionIds.size === matchingTransactions.length
-                ? "Deselect All"
-                : "Select All"}
-            </IonButton>
+            {selectionMode === "multiple" && (
+              <IonButton
+                expand="block"
+                fill="outline"
+                size="small"
+                onClick={handleSelectAll}
+                style={{ marginBottom: "16px" }}
+              >
+                {selectedTransactionIds.size === matchingTransactions.length
+                  ? "Deselect All"
+                  : "Select All"}
+              </IonButton>
+            )}
 
             {/* Transactions List */}
             <IonList>

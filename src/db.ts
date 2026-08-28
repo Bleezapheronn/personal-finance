@@ -50,6 +50,7 @@ export interface Budget {
   goalDirection?: "income" | "expense";
   isActive: boolean;
   remainingCyclesTotal?: number | null;
+  projectionStartsOn?: Date;
   dueDate: Date;
   createdAt: Date;
   updatedAt: Date;

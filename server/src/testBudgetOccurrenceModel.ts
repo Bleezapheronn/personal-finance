@@ -46,6 +46,29 @@ assert.equal(budgetSnapshotOccurrenceRealWrite(db, { ...linkInput, dryRunReviewe
 const futureSnapshotId = (db.prepare("SELECT budgetSnapshotId FROM transactions WHERE id=10").get() as { budgetSnapshotId: number }).budgetSnapshotId;
 const future = db.prepare("SELECT * FROM budgetSnapshots WHERE id=?").get(futureSnapshotId) as Record<string, unknown>;
 
+db.prepare("INSERT INTO transactions (id,categoryId,accountId,recipientId,date,amount,isTransfer) VALUES (12,1,1,1,'2026-08-19',-30,0)").run();
+const projectedLinkInput = { budgetId: 1, occurrenceDate: "2026-08-19", transactionId: 12 };
+const snapshotCountBeforeProjectedDryRun = (db.prepare("SELECT COUNT(*) count FROM budgetSnapshots").get() as { count: number }).count;
+const projectedLinkDryRun = budgetSnapshotOccurrenceDryRun(db, projectedLinkInput, "createAndLink");
+assert.equal(projectedLinkDryRun.ok, true, "a scheduled past occurrence can link an existing Transaction");
+assert.equal((db.prepare("SELECT COUNT(*) count FROM budgetSnapshots").get() as { count: number }).count, snapshotCountBeforeProjectedDryRun, "dry-run does not materialize a projected occurrence");
+const projectedLinkWrite = budgetSnapshotOccurrenceRealWrite(db, { ...projectedLinkInput, dryRunReviewed: true, confirmation: BUDGET_SNAPSHOT_OCCURRENCE_CONFIRMATIONS.createAndLink, expectedPlanFingerprint: projectedLinkDryRun.planFingerprint }, "createAndLink");
+assert.equal(projectedLinkWrite.ok, true);
+assert.equal((db.prepare("SELECT COUNT(*) count FROM budgetSnapshots").get() as { count: number }).count, snapshotCountBeforeProjectedDryRun + 1, "confirmed projected link creates exactly one snapshot");
+const projectedSnapshotId = (db.prepare("SELECT budgetSnapshotId FROM transactions WHERE id=12").get() as { budgetSnapshotId: number }).budgetSnapshotId;
+assert.ok(projectedSnapshotId);
+assert.equal((db.prepare("SELECT amount FROM transactions WHERE id=12").get() as { amount: number }).amount, -30, "linking preserves the Transaction financial value");
+assert.equal((db.prepare("SELECT COUNT(*) count FROM budgetSnapshots WHERE id=? AND budgetId=1").get(projectedSnapshotId) as { count: number }).count, 1, "projected link creates one durable occurrence snapshot");
+const projectedRetry = budgetSnapshotOccurrenceDryRun(db, projectedLinkInput, "createAndLink");
+assert.equal(projectedRetry.ok, false, "an already-linked Transaction cannot create a duplicate link");
+assert.equal((db.prepare("SELECT COUNT(*) count FROM budgetSnapshots").get() as { count: number }).count, snapshotCountBeforeProjectedDryRun + 1, "retry does not create a duplicate occurrence snapshot");
+
+db.prepare("INSERT INTO transactions (id,categoryId,accountId,recipientId,date,amount,isTransfer) VALUES (13,1,1,1,'2026-08-26',-20,1)").run();
+const snapshotCountBeforeInvalidProjectedLink = (db.prepare("SELECT COUNT(*) count FROM budgetSnapshots").get() as { count: number }).count;
+const invalidProjectedLink = budgetSnapshotOccurrenceDryRun(db, { budgetId: 1, occurrenceDate: "2026-08-26", transactionId: 13 }, "createAndLink");
+assert.equal(invalidProjectedLink.ok, false, "an incompatible Transaction cannot materialize a projected occurrence");
+assert.equal((db.prepare("SELECT COUNT(*) count FROM budgetSnapshots").get() as { count: number }).count, snapshotCountBeforeInvalidProjectedLink, "failed projected link leaves no snapshot behind");
+
 const deactivateInput = { snapshotId: Number(frozen.id), isActive: false };
 const deactivateDry = budgetSnapshotOccurrenceDryRun(db, deactivateInput, "setActive");
 assert.equal(deactivateDry.ok, true);

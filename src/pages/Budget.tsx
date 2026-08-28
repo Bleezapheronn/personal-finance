@@ -95,10 +95,12 @@ import {
 } from "../repositories/http/budgetLifecycleWriteExperiment";
 import { useAccountImageUrls } from "../hooks/useAccountImageUrls";
 import { occurrenceDisplayTarget } from "../utils/budgetDisplayTarget";
+import { selectBudgetOccurrences } from "../utils/budgetOccurrenceSelector";
 import "./Budget.css";
 
 interface BudgetOccurrence {
   budgetSnapshotId?: number;
+  occurrenceSource?: "snapshot" | "projected";
   budgetId: number;
   budget: Budget;
   dueDate: Date;
@@ -325,6 +327,7 @@ const normalizeBudgetRow = (row: unknown): Budget | undefined => {
       source.remainingCyclesTotal === null
         ? null
         : nullableNumberValue(source.remainingCyclesTotal),
+    projectionStartsOn: dateValue(source.projectionStartsOn),
     dueDate,
     createdAt,
     updatedAt,
@@ -1044,7 +1047,7 @@ const BudgetPage: React.FC = () => {
   };
 
   // Generate occurrences from immutable snapshots, with legacy fallback.
-  const generateBudgetOccurrences = (
+  const generateLegacyBudgetOccurrences = (
     horizonDays: number,
   ): BudgetOccurrence[] => {
     const horizonDate = new Date();
@@ -1270,6 +1273,45 @@ const BudgetPage: React.FC = () => {
       });
 
     return occurrences;
+  };
+
+  const generateBudgetOccurrences = (
+    horizonDays: number,
+  ): BudgetOccurrence[] => {
+    if (!budgetHttpReadonlyExperimentActive) {
+      return generateLegacyBudgetOccurrences(horizonDays);
+    }
+    const horizonDate = new Date();
+    horizonDate.setHours(0, 0, 0, 0);
+    horizonDate.setDate(horizonDate.getDate() + horizonDays);
+
+    return selectBudgetOccurrences({
+      budgets,
+      snapshots: budgetSnapshots,
+      through: horizonDate,
+    }).map((selection) => {
+      const amountPaid = getAmountPaidForOccurrence(
+        selection.budgetSnapshotId,
+        selection.budgetId,
+        selection.dueDate,
+      );
+      const target = getEffectiveBudgetTarget(selection.budget);
+      const isCompleted = isExpenseBudget(selection.budget)
+        ? amountPaid <= -target
+        : amountPaid >= target;
+      return {
+        ...selection,
+        occurrenceSource: selection.source,
+        amountPaid,
+        isCompleted,
+        timeGroup: getTimeGroup(selection.dueDate),
+        linkedTransactions: getLinkedTransactionsForOccurrence(
+          selection.budgetSnapshotId,
+          selection.budgetId,
+          selection.dueDate,
+        ),
+      };
+    });
   };
 
   const hasBudgetOccurrencesBeyondHorizon = (horizonDays: number): boolean => {

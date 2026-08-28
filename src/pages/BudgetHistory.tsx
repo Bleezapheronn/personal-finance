@@ -36,6 +36,7 @@ import {
   arrowUpCircle,
   arrowDownCircle,
   bag,
+  timerOutline,
   checkmarkCircleOutline,
   closeCircle,
   closeCircleOutline,
@@ -88,10 +89,12 @@ import {
 } from "../repositories/http/budgetSnapshotOccurrenceWrite";
 import { createBasicTransactionInDisposableSqlite } from "../repositories/http/transactionBasicWriteExperiment";
 import { occurrenceDisplayTarget } from "../utils/budgetDisplayTarget";
+import { selectBudgetOccurrences } from "../utils/budgetOccurrenceSelector";
 import "./Budget.css";
 
 interface BudgetOccurrence {
   budgetSnapshotId?: number;
+  occurrenceSource?: "snapshot" | "projected";
   budgetId: number;
   budget: Budget;
   dueDate: Date;
@@ -344,6 +347,7 @@ const normalizeBudgetRow = (row: unknown): Budget | undefined => {
       source.remainingCyclesTotal === null
         ? null
         : nullableNumberValue(source.remainingCyclesTotal),
+    projectionStartsOn: dateValue(source.projectionStartsOn),
     dueDate,
     createdAt,
     updatedAt,
@@ -1090,7 +1094,7 @@ const BudgetHistory: React.FC = () => {
     );
   };
 
-  const pastOccurrences = useMemo(() => {
+  const legacyPastOccurrences = useMemo(() => {
     const budgetById = new Map<number, Budget>();
     budgets.forEach((budget) => {
       if (budget.id) {
@@ -1227,6 +1231,48 @@ const BudgetHistory: React.FC = () => {
       .filter((occ): occ is BudgetOccurrence => occ !== null)
       .sort((a, b) => b.dueDate.getTime() - a.dueDate.getTime());
   }, [snapshots, budgets, getLinkedTransactions, getTimeGroup]);
+
+  const pastOccurrences = useMemo(() => {
+    if (!budgetHistoryHttpReadonlyExperimentActive) {
+      return legacyPastOccurrences;
+    }
+    const today = normalizeToLocalDay(new Date());
+    return selectBudgetOccurrences({
+      budgets,
+      snapshots,
+      through: today,
+      historicalOnly: true,
+    }).map((selection): BudgetOccurrence => {
+      const linkedTransactions = getLinkedTransactions(
+        selection.budgetSnapshotId,
+        selection.budgetId,
+        selection.dueDate,
+      );
+      const amountPaid = linkedTransactions.reduce(
+        (sum, transaction) =>
+          sum + transaction.amount + (transaction.transactionCost || 0),
+        0,
+      );
+      const target = getEffectiveBudgetTarget(selection.budget);
+      return {
+        ...selection,
+        occurrenceSource: selection.source,
+        amountPaid,
+        isCompleted: isExpenseBudget(selection.budget)
+          ? amountPaid <= -target
+          : amountPaid >= target,
+        timeGroup: getTimeGroup(selection.dueDate),
+        linkedTransactions,
+      };
+    });
+  }, [
+    budgetHistoryHttpReadonlyExperimentActive,
+    budgets,
+    snapshots,
+    getLinkedTransactions,
+    getTimeGroup,
+    legacyPastOccurrences,
+  ]);
 
   const getActiveFilterChips = (): Array<{
     label: string;
@@ -1686,6 +1732,10 @@ const BudgetHistory: React.FC = () => {
     occurrenceDate: Date,
   ) => {
     if (budgetIdForLinking === undefined) return;
+    if (budgetSnapshotIdForLinking === undefined && transactionIds.length !== 1) {
+      setError("Select one Transaction before linking a projected occurrence.");
+      return;
+    }
 
     try {
       const budget = budgets.find((b) => b.id === budgetIdForLinking);
@@ -2683,6 +2733,18 @@ const BudgetHistory: React.FC = () => {
                             <IonRow>
                               <h3 className="item-description">
                                 {occ.budget.description}
+                                {occ.occurrenceSource === "projected" && (
+                                  <IonIcon
+                                    icon={timerOutline}
+                                    style={{
+                                      marginLeft: "8px",
+                                      fontSize: "1rem",
+                                      color: "var(--ion-color-medium)",
+                                      verticalAlign: "middle",
+                                    }}
+                                    title="Unrecorded occurrence"
+                                  />
+                                )}
                                 {!occ.budget.isFlexible && (
                                   <IonIcon
                                     icon={bag}
@@ -2811,8 +2873,30 @@ const BudgetHistory: React.FC = () => {
                               style={{ marginTop: "4px" }}
                             />
 
-                            {(!budgetHistoryHttpReadonlyExperimentActive ||
-                              occurrenceWritesActive) && (
+                            {occ.occurrenceSource === "projected" &&
+                              (!budgetHistoryHttpReadonlyExperimentActive ||
+                                occurrenceWritesActive) && (
+                                <IonRow className="item-actions">
+                                  <IonCol className="item-actions-container">
+                                    <IonButton
+                                      fill="clear"
+                                      size="small"
+                                      style={{ marginRight: "0" }}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenLinkModal(occ);
+                                      }}
+                                      title="Link Transaction"
+                                      aria-label="Link Transaction"
+                                    >
+                                      <IonIcon icon={linkOutline} slot="end" />
+                                    </IonButton>
+                                  </IonCol>
+                                </IonRow>
+                              )}
+                            {occ.occurrenceSource !== "projected" &&
+                              (!budgetHistoryHttpReadonlyExperimentActive ||
+                                occurrenceWritesActive) && (
                               <IonRow className="item-actions">
                                 <IonCol className="item-actions-container">
                                   <IonButton
@@ -2992,6 +3076,9 @@ const BudgetHistory: React.FC = () => {
             categories={categories}
             recipients={recipients}
             occurrenceDate={budgetOccurrenceDateForLinking || new Date()}
+            selectionMode={
+              budgetSnapshotIdForLinking === undefined ? "single" : "multiple"
+            }
         />
       </IonContent>
     </IonPage>
