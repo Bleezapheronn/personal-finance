@@ -103,6 +103,12 @@ import {
   visibleDescriptionSuggestions,
   type DescriptionSuggestion,
 } from "../utils/descriptionAutocomplete";
+import {
+  buildRecipientFilterOptions,
+  buildRecipientTransactionCounts,
+  buildTransactionDateDisplays,
+  buildTransactionFilterIndex,
+} from "../utils/transactionDerivedData";
 import "./Transactions.css";
 
 const TRANSACTION_BATCH_DAYS = 30;
@@ -1308,6 +1314,75 @@ const Transactions: React.FC = () => {
     categories,
   ]);
 
+  const transactionFilterIndex = useMemo(
+    () => buildTransactionFilterIndex(transactions ?? [], categories),
+    [transactions, categories],
+  );
+
+  const recipientTransactionCounts = useMemo(
+    () => buildRecipientTransactionCounts(filteredTransactions),
+    [filteredTransactions],
+  );
+
+  const accountFilterOptions = useMemo(
+    () =>
+      accounts
+        .filter(
+          (account) =>
+            account.name &&
+            transactionFilterIndex.accountIds.has(account.id || 0),
+        )
+        .map((account) => ({ id: account.id, name: account.name as string })),
+    [accounts, transactionFilterIndex],
+  );
+
+  const recipientFilterOptions = useMemo(
+    () =>
+      buildRecipientFilterOptions(
+        recipients,
+        transactionFilterIndex.recipientIds,
+        recipientTransactionCounts,
+      ),
+    [recipients, transactionFilterIndex, recipientTransactionCounts],
+  );
+
+  const bucketFilterOptions = useMemo(
+    () =>
+      buckets
+        .filter(
+          (bucket) =>
+            bucket.name && transactionFilterIndex.bucketIds.has(bucket.id || 0),
+        )
+        .map((bucket) => ({ id: bucket.id, name: bucket.name as string })),
+    [buckets, transactionFilterIndex],
+  );
+
+  const categoryFilterOptions = useMemo(
+    () =>
+      categories
+        .filter((category) => {
+          if (selectedBucketId !== undefined) {
+            return (
+              category.bucketId === selectedBucketId &&
+              transactionFilterIndex.categoryIds.has(category.id || 0)
+            );
+          }
+
+          return (
+            category.name &&
+            transactionFilterIndex.categoryIds.has(category.id || 0)
+          );
+        })
+        .map((category) => {
+          const bucket = buckets.find((item) => item.id === category.bucketId);
+          return {
+            id: category.id,
+            name: `${category.name} - ${bucket?.name || "Unknown"}`,
+          };
+        }),
+    [buckets, categories, selectedBucketId, transactionFilterIndex],
+  );
+
   const visibleTransactions = useMemo(() => {
     if (selectedDateFrom) {
       // Date From explicitly defines the lower bound, so bypass rolling windowing.
@@ -1328,6 +1403,23 @@ const Transactions: React.FC = () => {
       return txnDate >= cutoffDate && txnDate <= today;
     });
   }, [filteredTransactions, selectedDateFrom, visibleTransactionWindowDays]);
+
+  const transactionDisplayLocale = Intl.DateTimeFormat().resolvedOptions().locale;
+  const transactionDisplayTimeZone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const transactionDateDisplays = useMemo(
+    () =>
+      buildTransactionDateDisplays(
+        visibleTransactions,
+        transactionDisplayLocale,
+        transactionDisplayTimeZone,
+      ),
+    [
+      transactionDisplayLocale,
+      transactionDisplayTimeZone,
+      visibleTransactions,
+    ],
+  );
 
   const groupedVisibleTransactions = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
@@ -1500,50 +1592,6 @@ const Transactions: React.FC = () => {
     setVisibleTransactionWindowDays(
       Math.max(TRANSACTION_BATCH_DAYS, daysToOldest),
     );
-  };
-
-  // Add this helper function before the return statement (after calculateAccountTotals)
-  const getRecipientTransactionCount = (recipientId: number): number => {
-    return filteredTransactions.filter((txn) => txn.recipientId === recipientId)
-      .length;
-  };
-
-  // Add these helper functions before the return statement (after getRecipientTransactionCount):
-  const getAccountsInTransactions = (): number[] => {
-    const accountIds = new Set<number>();
-    transactions?.forEach((txn) => {
-      if (txn.accountId) {
-        accountIds.add(txn.accountId);
-      }
-    });
-    return Array.from(accountIds);
-  };
-
-  const getBucketsInTransactions = (): number[] => {
-    const bucketIds = new Set<number>();
-    transactions?.forEach((txn) => {
-      const category = categories.find((c) => c.id === txn.categoryId);
-      if (category?.bucketId) {
-        bucketIds.add(category.bucketId);
-      }
-    });
-    return Array.from(bucketIds);
-  };
-
-  const getCategoriesInTransactions = (): number[] => {
-    const catIds = new Set<number>();
-    transactions?.forEach((txn) => {
-      catIds.add(txn.categoryId);
-    });
-    return Array.from(catIds);
-  };
-
-  const getRecipientsInTransactions = (): number[] => {
-    const recIds = new Set<number>();
-    transactions?.forEach((txn) => {
-      recIds.add(txn.recipientId);
-    });
-    return Array.from(recIds);
   };
 
   useEffect(() => {
@@ -2079,18 +2127,7 @@ const Transactions: React.FC = () => {
                         label="Account"
                         placeholder="All Accounts"
                         value={selectedAccountId}
-                        options={accounts
-                          .filter((a) => {
-                            const accountsWithTxns =
-                              getAccountsInTransactions();
-                            return (
-                              a.name && accountsWithTxns.includes(a.id || 0)
-                            );
-                          })
-                          .map((a) => ({
-                            id: a.id,
-                            name: a.name as string,
-                          }))}
+                        options={accountFilterOptions}
                         onIonChange={setSelectedAccountId}
                       />
                     </IonCol>
@@ -2110,24 +2147,7 @@ const Transactions: React.FC = () => {
                         label="Recipient"
                         placeholder="All Recipients"
                         value={selectedRecipientId}
-                        options={recipients
-                          .filter((r) => {
-                            const recsWithTxns = getRecipientsInTransactions();
-                            return r.name && recsWithTxns.includes(r.id || 0);
-                          })
-                          .map((r) => ({
-                            id: r.id,
-                            name: r.name,
-                          }))
-                          .sort((a, b) => {
-                            const countA = getRecipientTransactionCount(
-                              a.id || 0,
-                            );
-                            const countB = getRecipientTransactionCount(
-                              b.id || 0,
-                            );
-                            return countB - countA;
-                          })}
+                        options={recipientFilterOptions}
                         onIonChange={setSelectedRecipientId}
                       />
                     </IonCol>
@@ -2148,17 +2168,7 @@ const Transactions: React.FC = () => {
                         label="Bucket"
                         placeholder="All Buckets"
                         value={selectedBucketId}
-                        options={buckets
-                          .filter((b) => {
-                            const bucketsWithTxns = getBucketsInTransactions();
-                            return (
-                              b.name && bucketsWithTxns.includes(b.id || 0)
-                            );
-                          })
-                          .map((b) => ({
-                            id: b.id,
-                            name: b.name as string,
-                          }))}
+                        options={bucketFilterOptions}
                         onIonChange={setSelectedBucketId}
                       />
                     </IonCol>
@@ -2177,28 +2187,7 @@ const Transactions: React.FC = () => {
                         label="Category"
                         placeholder="All Categories"
                         value={selectedCategoryId}
-                        options={categories
-                          .filter((c) => {
-                            const catsWithTxns = getCategoriesInTransactions();
-
-                            if (selectedBucketId !== undefined) {
-                              return (
-                                c.bucketId === selectedBucketId &&
-                                catsWithTxns.includes(c.id || 0)
-                              );
-                            }
-
-                            return c.name && catsWithTxns.includes(c.id || 0);
-                          })
-                          .map((c) => {
-                            const bucket = buckets.find(
-                              (b) => b.id === c.bucketId,
-                            );
-                            return {
-                              id: c.id,
-                              name: `${c.name} - ${bucket?.name || "Unknown"}`,
-                            };
-                          })}
+                        options={categoryFilterOptions}
                         onIonChange={setSelectedCategoryId}
                       />
                     </IonCol>
@@ -2407,42 +2396,21 @@ const Transactions: React.FC = () => {
                             <div
                               className="transaction-date-block"
                               tabIndex={0}
-                              aria-label={`Transaction time: ${new Date(
-                                txn.date,
-                              ).toLocaleTimeString(undefined, {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}`}
+                              aria-label={`Transaction time: ${transactionDateDisplays.get(txn)!.time}`}
                             >
                               <h2>
                                 <div className="date-column-weekday">
-                                  {new Date(txn.date)
-                                    .toLocaleDateString("en-US", {
-                                      weekday: "short",
-                                    })
-                                    .toUpperCase()}
+                                  {transactionDateDisplays.get(txn)!.weekday}
                                 </div>
                                 <div className="date-column-day">
-                                  {new Date(txn.date).toLocaleDateString(
-                                    "en-US",
-                                    {
-                                      day: "2-digit",
-                                    },
-                                  )}
+                                  {transactionDateDisplays.get(txn)!.day}
                                 </div>
                                 <div className="date-column-month">
-                                  {new Date(txn.date)
-                                    .toLocaleDateString("en-US", {
-                                      month: "short",
-                                    })
-                                    .toUpperCase()}
+                                  {transactionDateDisplays.get(txn)!.month}
                                 </div>
                               </h2>
                               <span className="transaction-date-time">
-                                {new Date(txn.date).toLocaleTimeString(undefined, {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
+                                {transactionDateDisplays.get(txn)!.time}
                               </span>
                             </div>
                           </IonCol>
