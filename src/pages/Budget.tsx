@@ -611,6 +611,62 @@ const getLinkedTransactionCountForSnapshot = (
   ).length;
 };
 
+const isExpenseBudget = (
+  budget: Pick<Budget, "goalDirection" | "amount">,
+): boolean => {
+  if (budget.goalDirection === "expense") {
+    return true;
+  }
+
+  if (budget.goalDirection === "income") {
+    return false;
+  }
+
+  // Some older/restored records may contain null for optional fields.
+  return budget.amount < 0;
+};
+
+const getNextOccurrence = (currentDate: Date, budget: Budget): Date => {
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const day = currentDate.getDate();
+
+  let nextYear = year;
+  let nextMonth = month;
+  let nextDay = day;
+
+  switch (budget.frequency) {
+    case "daily":
+      nextDay += 1;
+      break;
+    case "weekly":
+      nextDay += 7;
+      break;
+    case "monthly":
+      if (budget.frequencyDetails?.dayOfMonth) {
+        const requestedDay = budget.frequencyDetails.dayOfMonth;
+        nextMonth += 1;
+        if (nextMonth > 11) {
+          nextMonth = 0;
+          nextYear += 1;
+        }
+        const lastDayOfMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
+        nextDay = Math.min(requestedDay, lastDayOfMonth);
+      }
+      break;
+    case "yearly":
+      nextYear += 1;
+      break;
+    case "custom":
+      if (budget.frequencyDetails?.intervalDays) {
+        nextDay += budget.frequencyDetails.intervalDays;
+      }
+      break;
+  }
+
+  return new Date(nextYear, nextMonth, nextDay);
+};
+
 const BudgetPage: React.FC = () => {
   const history = useHistory();
   const budgetReadExperimentEnabled = isBudgetReadExperimentEnabled();
@@ -625,6 +681,11 @@ const BudgetPage: React.FC = () => {
     rehearsalSelected ||
     (repositoryBackend === "http-readonly" &&
       (budgetReadExperimentEnabled || budgetDefinitionWriteExperimentActive));
+  const currentLocalDayKey = new Date().toDateString();
+  const currentLocalDay = useMemo(
+    () => new Date(currentLocalDayKey),
+    [currentLocalDayKey],
+  );
   const budgetDeleteWriteExperimentActive =
     rehearsalSelected &&
     rehearsal.ready &&
@@ -998,8 +1059,84 @@ const BudgetPage: React.FC = () => {
     return indexed;
   }, [transactions]);
 
+  const incomeByYear = useMemo(() => {
+    const incomeBucketIds = new Set(
+      buckets
+        .filter((bucket) => bucket.excludeFromReports)
+        .map((bucket) => bucket.id),
+    );
+    const incomeCategoryIds = new Set(
+      categories
+        .filter((category) => incomeBucketIds.has(category.bucketId))
+        .map((category) => category.id),
+    );
+    const totals = new Map<number, number>();
+
+    transactions.forEach((transaction) => {
+      if (!incomeCategoryIds.has(transaction.categoryId)) return;
+      const year = transaction.date.getFullYear();
+      totals.set(
+        year,
+        (totals.get(year) ?? 0) +
+          transaction.amount +
+          (transaction.transactionCost || 0),
+      );
+    });
+
+    return totals;
+  }, [transactions, categories, buckets]);
+
+  // Returns the absolute effective target for a budget. Frozen occurrences
+  // remain governed by their resolved target inside occurrenceDisplayTarget.
+  const getEffectiveBudgetTarget = useCallback(
+    (budget: Budget & { resolvedTarget?: number | null }): number =>
+      occurrenceDisplayTarget(
+        budget,
+        incomeByYear.get(budget.dueDate.getFullYear()) ?? 0,
+      ) ?? 0,
+    [incomeByYear],
+  );
+
+  const getTimeGroup = useMemo(() => {
+    const today = new Date(currentLocalDay);
+
+    const thisWeekStart = new Date(today);
+    thisWeekStart.setDate(today.getDate() - today.getDay());
+
+    const nextWeekStart = new Date(thisWeekStart);
+    nextWeekStart.setDate(thisWeekStart.getDate() + 7);
+
+    const weekAfterNext = new Date(nextWeekStart);
+    weekAfterNext.setDate(nextWeekStart.getDate() + 7);
+
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const monthFormatter = new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      year: "numeric",
+    });
+
+    return (dateObj: Date): string => {
+      if (dateObj < today) return "Overdue";
+      if (dateObj >= thisWeekStart && dateObj < nextWeekStart) {
+        return "This Week";
+      }
+      if (dateObj >= nextWeekStart && dateObj < weekAfterNext) {
+        return "Next Week";
+      }
+      if (
+        dateObj >= monthStart &&
+        dateObj <= monthEnd &&
+        dateObj.getMonth() === today.getMonth()
+      ) {
+        return "This Month";
+      }
+      return monthFormatter.format(dateObj);
+    };
+  }, [currentLocalDay]);
+
   // Calculate amount paid for a specific budget occurrence.
-  const getAmountPaidForOccurrence = (
+  const getAmountPaidForOccurrence = useCallback((
     budgetSnapshotId: number | undefined,
     _budgetId: number,
     occurrenceDate: Date,
@@ -1022,11 +1159,11 @@ const BudgetPage: React.FC = () => {
           new Date(txn.occurrenceDate).getTime() === targetTime,
       )
       .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
-  };
+  }, [transactions, transactionsBySnapshotId]);
 
   // Get linked transactions for a specific occurrence
   // Coerce snapshot IDs to numeric type to handle type drift from imports/restores
-  const getLinkedTransactionsForOccurrence = (
+  const getLinkedTransactionsForOccurrence = useCallback((
     budgetSnapshotId: number | undefined,
     _budgetId: number,
     occurrenceDate: Date,
@@ -1044,10 +1181,10 @@ const BudgetPage: React.FC = () => {
         txn.occurrenceDate &&
         new Date(txn.occurrenceDate).getTime() === targetTime,
     );
-  };
+  }, [transactions, transactionsBySnapshotId]);
 
   // Generate occurrences from immutable snapshots, with legacy fallback.
-  const generateLegacyBudgetOccurrences = (
+  const generateLegacyBudgetOccurrences = useCallback((
     horizonDays: number,
   ): BudgetOccurrence[] => {
     const horizonDate = new Date();
@@ -1273,13 +1410,25 @@ const BudgetPage: React.FC = () => {
       });
 
     return occurrences;
-  };
+  }, [
+    budgetSnapshots,
+    budgets,
+    getAmountPaidForOccurrence,
+    getEffectiveBudgetTarget,
+    getLinkedTransactionsForOccurrence,
+    getTimeGroup,
+    transactionsBySnapshotId,
+  ]);
 
-  const generateBudgetOccurrences = (
+  const generateBudgetOccurrences = useCallback((
     horizonDays: number,
+    goalOnly = false,
   ): BudgetOccurrence[] => {
     if (!budgetHttpReadonlyExperimentActive) {
-      return generateLegacyBudgetOccurrences(horizonDays);
+      const occurrences = generateLegacyBudgetOccurrences(horizonDays);
+      return goalOnly
+        ? occurrences.filter((occurrence) => occurrence.budget.isGoal)
+        : occurrences;
     }
     const horizonDate = new Date();
     horizonDate.setHours(0, 0, 0, 0);
@@ -1289,6 +1438,7 @@ const BudgetPage: React.FC = () => {
       budgets,
       snapshots: budgetSnapshots,
       through: horizonDate,
+      goalOnly,
     }).map((selection) => {
       const amountPaid = getAmountPaidForOccurrence(
         selection.budgetSnapshotId,
@@ -1312,9 +1462,18 @@ const BudgetPage: React.FC = () => {
         ),
       };
     });
-  };
+  }, [
+    budgetHttpReadonlyExperimentActive,
+    budgetSnapshots,
+    budgets,
+    generateLegacyBudgetOccurrences,
+    getAmountPaidForOccurrence,
+    getEffectiveBudgetTarget,
+    getLinkedTransactionsForOccurrence,
+    getTimeGroup,
+  ]);
 
-  const hasBudgetOccurrencesBeyondHorizon = (horizonDays: number): boolean => {
+  const hasBudgetOccurrencesBeyondHorizon = useCallback((horizonDays: number): boolean => {
     const horizonDate = new Date();
     horizonDate.setHours(0, 0, 0, 0);
     horizonDate.setDate(horizonDate.getDate() + horizonDays);
@@ -1379,109 +1538,11 @@ const BudgetPage: React.FC = () => {
     }
 
     return false;
-  };
+  }, [budgetSnapshots, budgets]);
 
   const loadMoreBudgetOccurrences = async () => {
     const nextHorizon = visibleBudgetHorizonDays + BUDGET_BATCH_DAYS;
     setVisibleBudgetHorizonDays(nextHorizon);
-  };
-
-  // Calculate next occurrence based on frequency with intelligent month boundary handling
-  const getNextOccurrence = (currentDate: Date, budget: Budget): Date => {
-    // Use local date parts consistently to avoid UTC/local drift.
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const day = currentDate.getDate();
-
-    let nextYear = year;
-    let nextMonth = month;
-    let nextDay = day;
-
-    switch (budget.frequency) {
-      case "daily":
-        nextDay += 1;
-        break;
-      case "weekly":
-        nextDay += 7;
-        break;
-      case "monthly":
-        if (budget.frequencyDetails?.dayOfMonth) {
-          const requestedDay = budget.frequencyDetails.dayOfMonth;
-
-          // Move to next month
-          nextMonth += 1;
-          if (nextMonth > 11) {
-            nextMonth = 0;
-            nextYear += 1;
-          }
-
-          // Get the last day of the new month
-          const lastDayOfMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-
-          // Use the requested day or last day of month, whichever is smaller
-          nextDay = Math.min(requestedDay, lastDayOfMonth);
-        }
-        break;
-      case "yearly":
-        nextYear += 1;
-        break;
-      case "custom":
-        if (budget.frequencyDetails?.intervalDays) {
-          nextDay += budget.frequencyDetails.intervalDays;
-        }
-        break;
-    }
-
-    const next = new Date(nextYear, nextMonth, nextDay);
-
-    return next;
-  };
-
-  // Group occurrences by time period
-  const getTimeGroup = (dateObj: Date): string => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const todayDay = today.getDay();
-    const thisWeekStart = new Date(today);
-    thisWeekStart.setDate(today.getDate() - todayDay);
-
-    const nextWeekStart = new Date(thisWeekStart);
-    nextWeekStart.setDate(thisWeekStart.getDate() + 7);
-
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-
-    // Overdue
-    if (dateObj < today) {
-      return "Overdue";
-    }
-    // This Week
-    else if (dateObj >= thisWeekStart && dateObj < nextWeekStart) {
-      return "This Week";
-    }
-    // Next Week
-    else if (dateObj >= nextWeekStart) {
-      const weekAfterNext = new Date(nextWeekStart);
-      weekAfterNext.setDate(nextWeekStart.getDate() + 7);
-      if (dateObj < weekAfterNext) {
-        return "Next Week";
-      }
-    }
-    // This Month
-    if (
-      dateObj >= monthStart &&
-      dateObj <= monthEnd &&
-      dateObj.getMonth() === today.getMonth()
-    ) {
-      return "This Month";
-    }
-
-    // Future months
-    return dateObj.toLocaleString("en-US", {
-      month: "long",
-      year: "numeric",
-    });
   };
 
   // Filter and group occurrences with proper sorting
@@ -1945,62 +2006,6 @@ const BudgetPage: React.FC = () => {
       ? recipients.find((r) => r.id === recipientId)?.name || "—"
       : "—";
 
-  // Sum of actual income transactions from Jan 1 of this year to today.
-  // Uses the bucket flagged as excludeFromReports to identify income categories.
-  const incomeForYear = useCallback(
-    (year: number) => {
-      const incomeBucketIds = new Set(
-        buckets
-          .filter((bucket) => bucket.excludeFromReports)
-          .map((bucket) => bucket.id),
-      );
-      const incomeCategoryIds = new Set(
-        categories
-          .filter((category) => incomeBucketIds.has(category.bucketId))
-          .map((category) => category.id),
-      );
-      return transactions
-        .filter(
-          (txn) =>
-            txn.date.getFullYear() === year &&
-            incomeCategoryIds.has(txn.categoryId),
-        )
-        .reduce((sum, txn) => sum + txn.amount + (txn.transactionCost || 0), 0);
-    },
-    [transactions, categories, buckets],
-  );
-
-  // Returns the absolute effective target for a budget.
-  // When goalPercentage is set: max(percentage × YTD income, optional floor).
-  // Otherwise: abs(amount + transactionCost) as before.
-  const getEffectiveBudgetTarget = useCallback(
-    (budget: Budget & { resolvedTarget?: number | null }): number => {
-      const target = occurrenceDisplayTarget(
-        budget,
-        incomeForYear(budget.dueDate.getFullYear()),
-      );
-      // Legacy frozen percentage rows without a resolved target are deliberately
-      // not recalculated from today's income.  They render without progress.
-      return target ?? 0;
-    },
-    [incomeForYear],
-  );
-
-  const isExpenseBudget = (
-    budget: Pick<Budget, "goalDirection" | "amount">,
-  ): boolean => {
-    if (budget.goalDirection === "expense") {
-      return true;
-    }
-
-    if (budget.goalDirection === "income") {
-      return false;
-    }
-
-    // Some older/restored records may contain null for optional fields.
-    return budget.amount < 0;
-  };
-
   const getProgressPercentage = (occ: BudgetOccurrence): number => {
     const budget = occ.budget;
     const effectiveTarget = getEffectiveBudgetTarget(budget);
@@ -2016,10 +2021,10 @@ const BudgetPage: React.FC = () => {
     }
   };
 
-  const getBudgetPeriodBoundaries = (
+  const getBudgetPeriodBoundaries = useCallback((
     period: "month" | "quarter" | "year",
   ): { start: Date; end: Date; label: string } => {
-    const today = new Date();
+    const today = currentLocalDay;
     const year = today.getFullYear();
     const month = today.getMonth();
 
@@ -2048,9 +2053,9 @@ const BudgetPage: React.FC = () => {
         return { start, end, label };
       }
     }
-  };
+  }, [currentLocalDay]);
 
-  const calculateBudgetedAmounts = (
+  const calculateBudgetedAmounts = useCallback((
     period: "month" | "quarter" | "year",
     occurrences: BudgetOccurrence[],
   ): {
@@ -2100,7 +2105,7 @@ const BudgetPage: React.FC = () => {
     });
 
     return { totalExpense, totalIncome, expensePaid, incomePaid };
-  };
+  }, [getBudgetPeriodBoundaries, getEffectiveBudgetTarget]);
 
   const handleBudgetPeriodPrevious = () => {
     if (budgetSummaryPeriod === "quarter") {
@@ -2119,9 +2124,8 @@ const BudgetPage: React.FC = () => {
   };
 
   const BudgetSummaryCard = () => {
-    const { label } = getBudgetPeriodBoundaries(budgetSummaryPeriod);
-    const { totalExpense, totalIncome, expensePaid, incomePaid } =
-      calculateBudgetedAmounts(budgetSummaryPeriod, visibleBudgetOccurrences);
+    const { label, totalExpense, totalIncome, expensePaid, incomePaid } =
+      budgetSummary;
 
     const netBudgeted = totalIncome - totalExpense;
     const netPaid = incomePaid - expensePaid;
@@ -2274,9 +2278,35 @@ const BudgetPage: React.FC = () => {
     );
   };
 
-  const visibleBudgetOccurrences = generateBudgetOccurrences(
-    visibleBudgetHorizonDays,
+  const visibleBudgetOccurrences = useMemo(
+    () => generateBudgetOccurrences(visibleBudgetHorizonDays),
+    [generateBudgetOccurrences, visibleBudgetHorizonDays],
   );
+
+  const extendedGoalOccurrences = useMemo(
+    () =>
+      generateBudgetOccurrences(
+        GOAL_CAROUSEL_EXTENDED_HORIZON_DAYS,
+        true,
+      ),
+    [generateBudgetOccurrences],
+  );
+
+  const budgetSummary = useMemo(() => {
+    const { label } = getBudgetPeriodBoundaries(budgetSummaryPeriod);
+    return {
+      label,
+      ...calculateBudgetedAmounts(
+        budgetSummaryPeriod,
+        visibleBudgetOccurrences,
+      ),
+    };
+  }, [
+    budgetSummaryPeriod,
+    calculateBudgetedAmounts,
+    getBudgetPeriodBoundaries,
+    visibleBudgetOccurrences,
+  ]);
 
   const allGoals = useMemo(() => {
     const visibleGoals = visibleBudgetOccurrences.filter(
@@ -2286,10 +2316,6 @@ const BudgetPage: React.FC = () => {
     const visibleGoalBudgetIds = new Set(
       visibleGoals.map((goal) => goal.budgetId),
     );
-
-    const extendedGoalOccurrences = generateBudgetOccurrences(
-      GOAL_CAROUSEL_EXTENDED_HORIZON_DAYS,
-    ).filter((occ) => occ.budget.isGoal);
 
     // Only append one representative occurrence for goal budgets hidden by
     // the normal 30-day horizon; keep currently visible goal entries intact.
@@ -2337,8 +2363,11 @@ const BudgetPage: React.FC = () => {
       // Keep deterministic order when due dates are equal.
       return (a.budgetId || 0) - (b.budgetId || 0);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleBudgetOccurrences, getEffectiveBudgetTarget]);
+  }, [
+    extendedGoalOccurrences,
+    getEffectiveBudgetTarget,
+    visibleBudgetOccurrences,
+  ]);
 
   const activeGoals = useMemo(
     () => allGoals.filter((goal) => !goal.isCompleted).slice(0, 2),
@@ -2357,8 +2386,9 @@ const BudgetPage: React.FC = () => {
     [visibleBudgetOccurrences],
   );
 
-  const hasMoreBudgetOccurrences = hasBudgetOccurrencesBeyondHorizon(
-    visibleBudgetHorizonDays,
+  const hasMoreBudgetOccurrences = useMemo(
+    () => hasBudgetOccurrencesBeyondHorizon(visibleBudgetHorizonDays),
+    [hasBudgetOccurrencesBeyondHorizon, visibleBudgetHorizonDays],
   );
 
   const getInitialGoalIndex = (): number => {

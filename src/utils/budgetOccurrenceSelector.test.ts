@@ -93,4 +93,34 @@ describe("Budget occurrence selector", () => {
       [1, "projected"],
     ]);
   });
+
+  test("filters goal-only selections using snapshot-owned and projected goal state", () => {
+    const rows = selectBudgetOccurrences({
+      budgets: [
+        baseBudget({ id: 1, isGoal: true }),
+        baseBudget({ id: 2, isGoal: true, dueDate: date("2026-08-15") }),
+        baseBudget({ id: 3, isGoal: false }),
+      ],
+      snapshots: [
+        // The current definition is a goal, but this durable occurrence is not.
+        snapshot({ budgetId: 1, isGoal: false }),
+        // The current definition is not a goal, but this frozen occurrence is.
+        snapshot({ id: 10, budgetId: 3, isGoal: true, dueDate: date("2026-08-21") }),
+      ],
+      through: date("2026-08-22"),
+      goalOnly: true,
+    });
+
+    expect(rows.map((row) => [row.budgetId, row.dueDate.getDate(), row.source])).toEqual([
+      [1, 22, "projected"],
+      [2, 22, "projected"],
+      [3, 21, "snapshot"],
+      [1, 15, "projected"],
+      [2, 15, "projected"],
+      [1, 1, "projected"],
+    ]);
+    expect(
+      rows.filter((row) => row.source === "snapshot").map((row) => row.budgetId),
+    ).toEqual([3]);
+  });
 });

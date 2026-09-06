@@ -21,6 +21,12 @@ interface SelectBudgetOccurrencesInput {
   snapshots: BudgetSnapshot[];
   through: Date;
   historicalOnly?: boolean;
+  /**
+   * Keeps only goal selections, using the resolved snapshot/projection budget.
+   * This is intentionally narrow: callers still receive the same selector
+   * semantics for every non-goal-only read.
+   */
+  goalOnly?: boolean;
 }
 
 const day = (value: Date): Date => normalizeToLocalDay(value);
@@ -62,6 +68,7 @@ export const selectBudgetOccurrences = ({
   snapshots,
   through,
   historicalOnly = false,
+  goalOnly = false,
 }: SelectBudgetOccurrencesInput): BudgetOccurrenceSelection[] => {
   const horizon = day(through);
   const budgetById = new Map(
@@ -87,10 +94,10 @@ export const selectBudgetOccurrences = ({
 
   const selections: BudgetOccurrenceSelection[] = Array.from(
     selectedSnapshots.values(),
-  ).map((snapshot) => {
+  ).flatMap((snapshot) => {
     const dueDate = day(snapshot.dueDate);
     const budget = budgetById.get(snapshot.budgetId)!;
-    return {
+    const selection: BudgetOccurrenceSelection = {
       source: "snapshot",
       budgetSnapshotId: snapshot.id,
       budgetId: snapshot.budgetId,
@@ -99,6 +106,7 @@ export const selectBudgetOccurrences = ({
       isActive: snapshot.isActive !== false,
       occurrenceStateSupported: snapshot.isActive !== undefined,
     };
+    return goalOnly && !selection.budget.isGoal ? [] : [selection];
   });
 
   budgets.forEach((budget) => {
@@ -116,6 +124,7 @@ export const selectBudgetOccurrences = ({
         return;
       }
       if (selectedSnapshots.has(occurrenceKey(budget.id!, dueDate))) return;
+      if (goalOnly && !budget.isGoal) return;
       selections.push({
         source: "projected",
         budgetId: budget.id!,
