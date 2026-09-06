@@ -198,16 +198,38 @@ export const listBudgets = (
 
   if (options.includeDefinitionDependencies && rows.length > 0) {
     const ids = rows.map((row) => Number(row.id));
-    const placeholders = ids.map(() => "?").join(",");
     const summaries = db.prepare(
-      `SELECT b.id,
-         COUNT(DISTINCT s.id) AS persistedOccurrenceCount,
-         COUNT(DISTINCT t.id) AS transactionDependencyCount
-       FROM budgets b
-       LEFT JOIN budgetSnapshots s ON s.budgetId = b.id
-       LEFT JOIN transactions t ON t.budgetId = b.id OR t.budgetSnapshotId = s.id
-       WHERE b.id IN (${placeholders})
-       GROUP BY b.id`,
+      `WITH selected(id) AS (
+         VALUES ${ids.map(() => "(?)").join(",")}
+       ),
+       snapshotCounts AS (
+         SELECT s.budgetId AS id, COUNT(*) AS persistedOccurrenceCount
+         FROM budgetSnapshots s
+         JOIN selected b ON b.id = s.budgetId
+         GROUP BY s.budgetId
+       ),
+       transactionDependencies AS (
+         SELECT s.budgetId AS id, t.id AS transactionId
+         FROM budgetSnapshots s
+         JOIN transactions t ON t.budgetSnapshotId = s.id
+         JOIN selected b ON b.id = s.budgetId
+         UNION
+         SELECT t.budgetId AS id, t.id AS transactionId
+         FROM transactions t
+         JOIN selected b ON b.id = t.budgetId
+         WHERE t.budgetId IS NOT NULL
+       ),
+       transactionCounts AS (
+         SELECT id, COUNT(*) AS transactionDependencyCount
+         FROM transactionDependencies
+         GROUP BY id
+       )
+       SELECT b.id,
+         COALESCE(snapshotCounts.persistedOccurrenceCount, 0) AS persistedOccurrenceCount,
+         COALESCE(transactionCounts.transactionDependencyCount, 0) AS transactionDependencyCount
+       FROM selected b
+       LEFT JOIN snapshotCounts ON snapshotCounts.id = b.id
+       LEFT JOIN transactionCounts ON transactionCounts.id = b.id`,
     ).all(...ids) as Array<{
       id: number;
       persistedOccurrenceCount: number;

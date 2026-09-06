@@ -43,6 +43,7 @@ for (let id = 1; id <= 501; id += 1) {
 }
 db.prepare("INSERT INTO transactions (id, budgetId, occurrenceDate, budgetSnapshotId, amount, transactionCost) VALUES (1, 1, '2026-01-02T00:00:00.000Z', 1, -120, -5)").run();
 db.prepare("INSERT INTO transactions (id, budgetId, occurrenceDate, budgetSnapshotId, amount, transactionCost) VALUES (2, 1, '2026-01-02T00:00:00.000Z', NULL, -50, NULL)").run();
+db.prepare("INSERT INTO transactions (id, budgetId, occurrenceDate, budgetSnapshotId, amount, transactionCost) VALUES (3, NULL, NULL, 2, -75, NULL)").run();
 
 const definitions = listBudgets(db, {
   limit: 10,
@@ -53,7 +54,7 @@ const definitions = listBudgets(db, {
 const withHistory = definitions.rows.find((row) => Number(row.id) === 1)!;
 assert.deepEqual(withHistory.definitionDependencySummary, {
   persistedOccurrenceCount: 501,
-  transactionDependencyCount: 2,
+  transactionDependencyCount: 3,
 });
 const empty = definitions.rows.find((row) => Number(row.id) === 2)!;
 assert.deepEqual(empty.definitionDependencySummary, {
