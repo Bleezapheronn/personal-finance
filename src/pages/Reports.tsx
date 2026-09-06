@@ -46,6 +46,7 @@ import {
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import type { SelectedReadRepositories } from "../repositories/selectedReadRepositories";
 import BucketCategoryPieModal from "../components/BucketCategoryPieModal";
 import SpendingChart from "../components/SpendingChart";
 import type { SpendingChartDataSource } from "../components/SpendingChart";
@@ -224,6 +225,74 @@ const normalizeBucketInput = (row: unknown): ReportBucketInput | undefined => {
   };
 };
 
+type SelectedReportLookupRepositories = {
+  buckets: Pick<SelectedReadRepositories["buckets"], "list">;
+  categories: Pick<SelectedReadRepositories["categories"], "list">;
+};
+
+export const loadSelectedReportLookupInputs = async (
+  repositories: SelectedReportLookupRepositories,
+): Promise<{
+  categories: ReportCategoryInput[];
+  buckets: ReportBucketInput[];
+}> => {
+  const [categoryLoad, bucketLoad] = await Promise.all([
+    loadPagedRows<unknown>(repositories.categories.list),
+    loadPagedRows<unknown>(repositories.buckets.list),
+  ]);
+  const categories = categoryLoad.rows
+    .map(normalizeCategoryInput)
+    .filter((row): row is ReportCategoryInput => row !== undefined);
+  const buckets = bucketLoad.rows
+    .map(normalizeBucketInput)
+    .filter((row): row is ReportBucketInput => row !== undefined);
+
+  if (
+    categories.length !== categoryLoad.rows.length ||
+    buckets.length !== bucketLoad.rows.length
+  ) {
+    throw new Error("reports_selected_read_input_normalization_failed");
+  }
+
+  return { categories, buckets };
+};
+
+export const getActiveReportBucketOptions = (
+  buckets: ReportBucketInput[],
+): Array<{ id: number; name: string }> =>
+  buckets
+    .filter(
+      (bucket) =>
+        Boolean(bucket.id) &&
+        Boolean(bucket.isActive) &&
+        !bucket.excludeFromReports,
+    )
+    .sort(
+      (left, right) =>
+        left.displayOrder - right.displayOrder || (left.id ?? 0) - (right.id ?? 0),
+    )
+    .map((bucket) => ({
+      id: bucket.id!,
+      name: bucket.name || "Unnamed",
+    }));
+
+export const getActiveReportCategoryOptions = (
+  categories: ReportCategoryInput[],
+  bucketId: number,
+): Array<{ id: number; name: string }> =>
+  categories
+    .filter(
+      (category) =>
+        Boolean(category.id) &&
+        category.bucketId === bucketId &&
+        Boolean(category.isActive),
+    )
+    .map((category) => ({
+      id: category.id!,
+      name: category.name || "Unnamed",
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
 const Reports: React.FC = () => {
   const [periodType, setPeriodType] = useState<PeriodType>("month");
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -280,43 +349,25 @@ const Reports: React.FC = () => {
     [repositoryBackend],
   );
 
+  const loadSelectedReportLookups = useCallback(
+    () =>
+      loadSelectedReportLookupInputs(
+        getSelectedReadRepositories(repositoryBackend),
+      ),
+    [repositoryBackend],
+  );
+
   const selectedReportDataSource = useMemo<SpendingChartDataSource | undefined>(
     () =>
       reportsHttpReadonlyExperimentActive
         ? {
             listBuckets: async () => {
-              const { buckets } = await loadSelectedReportInputs();
-              return buckets
-                .filter(
-                  (bucket) =>
-                    Boolean(bucket.id) &&
-                    Boolean(bucket.isActive) &&
-                    !Boolean(bucket.excludeFromReports),
-                )
-                .sort(
-                  (left, right) =>
-                    left.displayOrder - right.displayOrder ||
-                    (left.id ?? 0) - (right.id ?? 0),
-                )
-                .map((bucket) => ({
-                  id: bucket.id!,
-                  name: bucket.name || "Unnamed",
-                }));
+              const { buckets } = await loadSelectedReportLookups();
+              return getActiveReportBucketOptions(buckets);
             },
             listCategories: async (bucketId) => {
-              const { categories } = await loadSelectedReportInputs();
-              return categories
-                .filter(
-                  (category) =>
-                    Boolean(category.id) &&
-                    category.bucketId === bucketId &&
-                    Boolean(category.isActive),
-                )
-                .map((category) => ({
-                  id: category.id!,
-                  name: category.name || "Unnamed",
-                }))
-                .sort((left, right) => left.name.localeCompare(right.name));
+              const { categories } = await loadSelectedReportLookups();
+              return getActiveReportCategoryOptions(categories, bucketId);
             },
             getMonthlyChartData: async (
               options: MonthlyChartDataOptions,
@@ -347,7 +398,11 @@ const Reports: React.FC = () => {
             },
           }
         : undefined,
-    [loadSelectedReportInputs, reportsHttpReadonlyExperimentActive],
+    [
+      loadSelectedReportInputs,
+      loadSelectedReportLookups,
+      reportsHttpReadonlyExperimentActive,
+    ],
   );
 
   const loadSelectedBreakdown = useCallback(
