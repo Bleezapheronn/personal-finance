@@ -27,6 +27,18 @@ export class LocalApiError extends Error {
 }
 
 const getEnvValue = (key: string): string | undefined => {
+  const desktopRuntime = (window as Window & {
+    personalFinanceRuntime?: {
+      localApi?: { baseUrl?: string; token?: string; repositoryBackend?: string };
+    };
+  }).personalFinanceRuntime?.localApi;
+  const desktopValue =
+    key === "VITE_PERSONAL_FINANCE_LOCAL_API_URL"
+      ? desktopRuntime?.baseUrl
+      : key === "VITE_PERSONAL_FINANCE_LOCAL_API_TOKEN"
+        ? desktopRuntime?.token
+        : undefined;
+  if (desktopValue?.trim()) return desktopValue.trim();
   const env = import.meta.env as Record<string, string | undefined>;
   const value = env[key]?.trim();
   return value ? value : undefined;

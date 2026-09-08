@@ -3,6 +3,12 @@ export type RepositoryBackend = "dexie" | "http-readonly" | "http-sqlite";
 const REPOSITORY_BACKEND_ENV_VAR = "VITE_PERSONAL_FINANCE_REPOSITORY_BACKEND";
 
 const getEnvValue = (key: string): string | undefined => {
+  const desktopRuntime = (window as Window & {
+    personalFinanceRuntime?: { localApi?: { repositoryBackend?: string } };
+  }).personalFinanceRuntime?.localApi;
+  if (key === REPOSITORY_BACKEND_ENV_VAR && desktopRuntime?.repositoryBackend?.trim()) {
+    return desktopRuntime.repositoryBackend.trim();
+  }
   const value = (import.meta.env as Record<string, string | undefined>)[key]?.trim();
   return value || undefined;
 };

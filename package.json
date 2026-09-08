@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "main": "desktop/main.mjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -14,7 +15,9 @@
     "restore:ops": "node server/node_modules/tsx/dist/cli.mjs server/src/restoreOps.ts",
     "test.e2e": "cypress run",
     "test.unit": "vitest",
-    "lint": "eslint"
+    "lint": "eslint",
+    "desktop:package": "node desktop/scripts/build-internal.mjs",
+    "desktop:proof": "node desktop/test/run-packaged-proof.mjs"
   },
   "dependencies": {
     "@capacitor/app": "7.1.0",
@@ -27,7 +30,9 @@
     "@types/react-datepicker": "^6.2.0",
     "@types/react-router": "^5.1.20",
     "@types/react-router-dom": "^5.3.3",
+    "better-sqlite3": "12.11.1",
     "dexie": "^4.2.1",
+    "fastify": "5.4.0",
     "ionicons": "^7.4.0",
     "react": "19.0.0",
     "react-datepicker": "^8.8.0",
@@ -47,6 +52,8 @@
     "@vitejs/plugin-legacy": "^5.0.0",
     "@vitejs/plugin-react": "^4.0.1",
     "cypress": "^13.5.0",
+    "electron": "44.2.0",
+    "electron-builder": "26.16.0",
     "eslint": "^9.20.1",
     "eslint-plugin-react": "^7.32.2",
     "eslint-plugin-react-hooks": "^5.1.0",
@@ -62,5 +69,40 @@
   "overrides": {
     "rollup": "4.44.0"
   },
-  "description": "An Ionic project"
+  "description": "An Ionic project",
+  "build": {
+    "appId": "com.bleezapheronn.personalfinance",
+    "productName": "Personal Finance",
+    "directories": {
+      "output": "release-internal"
+    },
+    "files": [
+      "dist/**",
+      "desktop/main.mjs",
+      "desktop/preload.mjs",
+      "desktop-dist/**",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": false
+    },
+    "publish": null
+  }
 }
