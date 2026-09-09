@@ -17,7 +17,8 @@
     "test.unit": "vitest",
     "lint": "eslint",
     "desktop:package": "node desktop/scripts/build-internal.mjs",
-    "desktop:proof": "node desktop/test/run-packaged-proof.mjs"
+    "desktop:proof": "node desktop/test/run-packaged-proof.mjs",
+    "desktop:proof:recovery": "node desktop/test/run-packaged-recovery-proof.mjs"
   },
   "dependencies": {
     "@capacitor/app": "7.1.0",
