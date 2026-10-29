@@ -10,6 +10,8 @@ import { Account, Bucket, Budget, BudgetSnapshot, Category, db, Recipient, Trans
 import { DefinitionOccurrence, DefinitionOccurrencesModal } from "../components/DefinitionOccurrencesModal";
 import { getRepositoryBackend, isLocalSqliteBackend } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import { loadAllPages } from "../repositories/paginatedRead";
+import type { RecipientDto } from "../repositories/http/types";
 import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import { dryRunBudgetLifecycle, writeBudgetLifecycle } from "../repositories/http/budgetLifecycleWriteExperiment";
 import { dryRunBudgetDelete, writeBudgetDelete } from "../repositories/http/budgetDeleteWriteExperiment";
@@ -83,7 +85,7 @@ const BudgetDefinitions: React.FC = () => {
       if (isLocalSqliteBackend(backend)) {
         const repositories = getSelectedReadRepositories(backend);
         const [b, s, t, a, c, r, bucketRows] = await Promise.all([
-          repositories.budgets.list({ limit: 500, includeDefinitionDependencies: true }), repositories.budgetSnapshots.list({ limit: 500 }), readAllRows<unknown>(repositories.transactions.list), repositories.accounts.list({ limit: 500 }), repositories.categories.list({ limit: 500 }), repositories.recipients.list({ limit: 500 }), repositories.buckets.list({ limit: 500 }),
+          repositories.budgets.list({ limit: 500, includeDefinitionDependencies: true }), repositories.budgetSnapshots.list({ limit: 500 }), readAllRows<unknown>(repositories.transactions.list), repositories.accounts.list({ limit: 500 }), repositories.categories.list({ limit: 500 }), loadAllPages<Recipient | RecipientDto>(repositories.recipients.list), repositories.buckets.list({ limit: 500 }),
         ]);
         const legacySnapshots = rows<BudgetSnapshot>(s);
         const legacyTransactions = (Array.isArray(t) ? t : rows<unknown>(t))

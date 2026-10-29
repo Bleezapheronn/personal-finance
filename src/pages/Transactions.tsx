@@ -75,6 +75,13 @@ import {
 } from "../repositories/adapterSelection";
 import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import { loadAllPages } from "../repositories/paginatedRead";
+import type {
+  AccountDto,
+  BucketDto,
+  CategoryDto,
+  RecipientDto,
+} from "../repositories/http/types";
 import {
   isBasicTransactionWriteEligible,
   isTransactionsBasicWriteExperimentEnabled,
@@ -117,7 +124,6 @@ const TRANSACTIONS_READ_EXPERIMENT_FLAG =
   "VITE_PERSONAL_FINANCE_TRANSACTIONS_READ_EXPERIMENT";
 const TRANSACTIONS_READ_EXPERIMENT_LIMIT = 5000;
 const TRANSACTIONS_READ_EXPERIMENT_PAGE_SIZE = 200;
-const LOOKUP_READ_EXPERIMENT_LIMIT = 5000;
 
 const isTransactionsReadExperimentEnabled = (): boolean =>
   envFlagEnabled(TRANSACTIONS_READ_EXPERIMENT_FLAG);
@@ -363,43 +369,19 @@ const loadSelectedReadLookupRows = async (
   categories: Category[];
   recipients: Recipient[];
 }> => {
-  const [accountsResult, bucketsResult, categoriesResult, recipientsResult] =
+  const [accounts, buckets, categories, recipients] =
     await Promise.all([
-      repositories.accounts.list({
-        limit: LOOKUP_READ_EXPERIMENT_LIMIT,
-        offset: 0,
-      }),
-      repositories.buckets.list({
-        limit: LOOKUP_READ_EXPERIMENT_LIMIT,
-        offset: 0,
-      }),
-      repositories.categories.list({
-        limit: LOOKUP_READ_EXPERIMENT_LIMIT,
-        offset: 0,
-      }),
-      repositories.recipients.list({
-        limit: LOOKUP_READ_EXPERIMENT_LIMIT,
-        offset: 0,
-      }),
+      loadAllPages<Account | AccountDto>(repositories.accounts.list),
+      loadAllPages<Bucket | BucketDto>(repositories.buckets.list),
+      loadAllPages<Category | CategoryDto>(repositories.categories.list),
+      loadAllPages<Recipient | RecipientDto>(repositories.recipients.list),
     ]);
 
   return {
-    accounts: selectedReadListRows(
-      accountsResult as DevPreviewListResult,
-      "invalid_transactions_read_experiment_accounts_response",
-    ).map(selectedReadRowToAccount),
-    buckets: selectedReadListRows(
-      bucketsResult as DevPreviewListResult,
-      "invalid_transactions_read_experiment_buckets_response",
-    ).map(selectedReadRowToBucket),
-    categories: selectedReadListRows(
-      categoriesResult as DevPreviewListResult,
-      "invalid_transactions_read_experiment_categories_response",
-    ).map(selectedReadRowToCategory),
-    recipients: selectedReadListRows(
-      recipientsResult as DevPreviewListResult,
-      "invalid_transactions_read_experiment_recipients_response",
-    ).map(selectedReadRowToRecipient),
+    accounts: accounts.map(selectedReadRowToAccount),
+    buckets: buckets.map(selectedReadRowToBucket),
+    categories: categories.map(selectedReadRowToCategory),
+    recipients: recipients.map(selectedReadRowToRecipient),
   };
 };
 

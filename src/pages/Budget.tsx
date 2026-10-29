@@ -72,6 +72,10 @@ import {
 } from "../repositories/adapterSelection";
 import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import {
+  appendMissingRowsById,
+  loadAllPages,
+} from "../repositories/paginatedRead";
 import { isBudgetsWriteExperimentEnabled } from "../repositories/http/budgetDefinitionWriteExperiment";
 import {
   budgetDeleteWriteErrorCode,
@@ -140,6 +144,9 @@ interface SelectedReadLoadMeta {
   transactionLoadedCount: number;
   transactionReportedCount?: number;
   transactionTruncated: boolean;
+  recipientLoadedCount: number;
+  recipientReportedCount?: number;
+  recipientTruncated: boolean;
 }
 
 const getEnvValue = (key: string): string | undefined => {
@@ -893,7 +900,7 @@ const BudgetPage: React.FC = () => {
           transactionLoad,
           categoryLoad,
           bucketLoad,
-          recipientLoad,
+          recipientRows,
           accountLoad,
         ] = await Promise.all([
           loadPagedRows<unknown>(
@@ -916,30 +923,46 @@ const BudgetPage: React.FC = () => {
             repositories.buckets.list,
             SELECTED_READ_LOOKUP_LIMIT,
           ),
-          loadPagedRows<unknown>(
-            repositories.recipients.list,
-            SELECTED_READ_LOOKUP_LIMIT,
-          ),
+          loadAllPages<unknown>(repositories.recipients.list),
           loadPagedRows<unknown>(
             repositories.accounts.list,
             SELECTED_READ_LOOKUP_LIMIT,
           ),
         ]);
 
-        setBudgets(
-          normalizeRows(
-            budgetLoad.rows,
-            normalizeBudgetRow,
-            "budget_read_experiment_budget_normalization_failed",
-          ),
+        const normalizedBudgets = normalizeRows(
+          budgetLoad.rows,
+          normalizeBudgetRow,
+          "budget_read_experiment_budget_normalization_failed",
         );
-        setBudgetSnapshots(
-          normalizeRows(
-            snapshotLoad.rows,
-            normalizeBudgetSnapshotRow,
-            "budget_read_experiment_snapshot_normalization_failed",
-          ),
+        const normalizedSnapshots = normalizeRows(
+          snapshotLoad.rows,
+          normalizeBudgetSnapshotRow,
+          "budget_read_experiment_snapshot_normalization_failed",
         );
+        const normalizedRecipients = normalizeRows(
+          recipientRows,
+          normalizeRecipientRow,
+          "budget_read_experiment_recipient_normalization_failed",
+        );
+        const goalRecipientIds = [
+          ...normalizedBudgets,
+          ...normalizedSnapshots,
+        ]
+          .filter((row) => row.isGoal)
+          .map((row) => row.recipientId)
+          .filter((recipientId): recipientId is number => recipientId !== undefined);
+        const recipientsWithGoalFallback = await appendMissingRowsById(
+          normalizedRecipients,
+          goalRecipientIds,
+          async (recipientId) => {
+            const recipient = await repositories.recipients.getById(recipientId);
+            return recipient ? normalizeRecipientRow(recipient) : undefined;
+          },
+        );
+
+        setBudgets(normalizedBudgets);
+        setBudgetSnapshots(normalizedSnapshots);
         setTransactions(
           normalizeRows(
             transactionLoad.rows,
@@ -961,13 +984,7 @@ const BudgetPage: React.FC = () => {
             "budget_read_experiment_bucket_normalization_failed",
           ),
         );
-        setRecipients(
-          normalizeRows(
-            recipientLoad.rows,
-            normalizeRecipientRow,
-            "budget_read_experiment_recipient_normalization_failed",
-          ),
-        );
+        setRecipients(recipientsWithGoalFallback);
         setAccounts(
           normalizeRows(
             accountLoad.rows,
@@ -988,6 +1005,9 @@ const BudgetPage: React.FC = () => {
           transactionLoadedCount: transactionLoad.rows.length,
           transactionReportedCount: transactionLoad.reportedCount,
           transactionTruncated: transactionLoad.truncated,
+          recipientLoadedCount: recipientsWithGoalFallback.length,
+          recipientReportedCount: recipientsWithGoalFallback.length,
+          recipientTruncated: false,
         });
         setError("");
         return true;
@@ -2487,7 +2507,8 @@ const BudgetPage: React.FC = () => {
   const selectedReadInputsTruncated =
     selectedReadLoadMeta?.budgetTruncated === true ||
     selectedReadLoadMeta?.budgetSnapshotTruncated === true ||
-    selectedReadLoadMeta?.transactionTruncated === true;
+    selectedReadLoadMeta?.transactionTruncated === true ||
+    selectedReadLoadMeta?.recipientTruncated === true;
 
   return (
     <IonPage>
@@ -2714,7 +2735,9 @@ const BudgetPage: React.FC = () => {
                           "-"}
                         , transactions{" "}
                         {selectedReadLoadMeta.transactionLoadedCount}/
-                        {selectedReadLoadMeta.transactionReportedCount ?? "-"}.
+                        {selectedReadLoadMeta.transactionReportedCount ?? "-"},
+                        recipients {selectedReadLoadMeta.recipientLoadedCount}/
+                        {selectedReadLoadMeta.recipientReportedCount ?? "-"}.
                         {selectedReadInputsTruncated
                           ? " Inputs are capped, so Budget results should not be treated as full-confidence."
                           : " Inputs are not truncated."}

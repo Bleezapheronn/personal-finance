@@ -85,9 +85,12 @@ import {
 } from "../repositories/adapterSelection";
 import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import {
+  appendMissingRowsById,
+  loadAllPages,
+} from "../repositories/paginatedRead";
 import type {
   AccountDto,
-  ApiListResponse,
   BudgetDto,
   BudgetSnapshotDto,
   BucketDto,
@@ -136,40 +139,6 @@ interface AddTransactionLocationState {
 
 type TransferContentPayload = Omit<Transaction, "id" | "transferPairId">;
 type TransferUpdatePatch = TransferContentPayload & { transferPairId: number };
-
-const selectedRows = <Row,>(
-  result: Row[] | ApiListResponse<Row>,
-): Row[] => (Array.isArray(result) ? result : result.rows);
-
-const SELECTED_BUDGET_PAGE_SIZE = 200;
-const SELECTED_BUDGET_ROW_LIMIT = 5000;
-
-const loadSelectedPages = async <Row,>(
-  list: (options: {
-    limit: number;
-    offset: number;
-  }) => Promise<Row[] | ApiListResponse<Row>>,
-): Promise<Row[]> => {
-  const rows: Row[] = [];
-  while (rows.length < SELECTED_BUDGET_ROW_LIMIT) {
-    const limit = Math.min(
-      SELECTED_BUDGET_PAGE_SIZE,
-      SELECTED_BUDGET_ROW_LIMIT - rows.length,
-    );
-    const result = await list({ limit, offset: rows.length });
-    const page = selectedRows(result);
-    rows.push(...page);
-    const count = Array.isArray(result) ? undefined : result.count;
-    if (
-      page.length < limit ||
-      page.length === 0 ||
-      (typeof count === "number" && rows.length >= count)
-    ) {
-      break;
-    }
-  }
-  return rows;
-};
 
 const selectedBoolean = (value: boolean | number): boolean =>
   value === true || value === 1;
@@ -516,37 +485,29 @@ const AddTransaction: React.FC = () => {
           budgetRows,
           snapshotRows,
         ] = await Promise.all([
-          repositories.buckets.list({ limit: 5000 }),
-          repositories.categories.list({ limit: 5000 }),
-          repositories.accounts.list({ limit: 5000 }),
-          repositories.recipients.list({ limit: 5000 }),
-          repositories.smsImportTemplates.list({ limit: 5000 }),
+          loadAllPages<Bucket | BucketDto>(repositories.buckets.list),
+          loadAllPages<Category | CategoryDto>(repositories.categories.list),
+          loadAllPages<Account | AccountDto>(repositories.accounts.list),
+          loadAllPages<Recipient | RecipientDto>(repositories.recipients.list),
+          loadAllPages<SmsImportTemplate | SmsImportTemplateDto>(
+            repositories.smsImportTemplates.list,
+          ),
           transactionsCostBudgetWriteExperimentActive
-            ? loadSelectedPages<Budget | BudgetDto>((options) =>
-                repositories.budgets.list(options),
-              )
+            ? loadAllPages<Budget | BudgetDto>(repositories.budgets.list)
             : Promise.resolve([]),
           transactionsCostBudgetWriteExperimentActive
-            ? loadSelectedPages<BudgetSnapshot | BudgetSnapshotDto>((options) =>
-                repositories.budgetSnapshots.list(options),
+            ? loadAllPages<BudgetSnapshot | BudgetSnapshotDto>(
+                repositories.budgetSnapshots.list,
               )
             : Promise.resolve([]),
         ]);
-        const selectedBuckets = selectedRows<Bucket | BucketDto>(
-          bucketResult,
-        ).map(normalizeSelectedBucket);
-        const selectedCategories = selectedRows<Category | CategoryDto>(
-          categoryResult,
-        ).map(normalizeSelectedCategory);
-        const selectedAccounts = selectedRows<Account | AccountDto>(
-          accountResult,
-        ).map(normalizeSelectedAccount);
-        const selectedRecipients = selectedRows<Recipient | RecipientDto>(
-          recipientResult,
-        ).map(normalizeSelectedRecipient);
-        const selectedTemplates = selectedRows<
-          SmsImportTemplate | SmsImportTemplateDto
-        >(templateResult).map(normalizeSelectedSmsTemplate);
+        const selectedBuckets = bucketResult.map(normalizeSelectedBucket);
+        const selectedCategories = categoryResult.map(normalizeSelectedCategory);
+        const selectedAccounts = accountResult.map(normalizeSelectedAccount);
+        const selectedRecipients = recipientResult.map(
+          normalizeSelectedRecipient,
+        );
+        const selectedTemplates = templateResult.map(normalizeSelectedSmsTemplate);
 
         const activeAccounts = isEditMode
           ? selectedAccounts
@@ -810,6 +771,55 @@ const AddTransaction: React.FC = () => {
     transactionsCostBudgetWriteExperimentActive,
     transactionsHttpBackendSelected,
     viewEntry,
+  ]);
+
+  useEffect(() => {
+    if (!isEditMode || !transactionsHttpBackendSelected) {
+      return;
+    }
+
+    const selectedRecipientIds = [recipientId, transferRecipientId];
+    const missingRecipientIds = selectedRecipientIds.filter(
+      (candidate): candidate is number =>
+        typeof candidate === "number" &&
+        !sortedRecipients.some((recipient) => recipient.id === candidate),
+    );
+    if (missingRecipientIds.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    void appendMissingRowsById(
+      sortedRecipients,
+      missingRecipientIds,
+      async (recipientId) => {
+        const recipient = await getSelectedReadRepositories(
+          selectedBackend,
+        ).recipients.getById(recipientId);
+        return recipient ? normalizeSelectedRecipient(recipient) : undefined;
+      },
+    )
+      .then((recipients) => {
+        if (!cancelled) {
+          setSortedRecipients(recipients);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setErrorMsg("Couldn't load the selected recipient.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isEditMode,
+    recipientId,
+    selectedBackend,
+    sortedRecipients,
+    transactionsHttpBackendSelected,
+    transferRecipientId,
   ]);
 
   // Load descriptions sorted by frequency when component mounts

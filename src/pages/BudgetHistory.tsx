@@ -65,6 +65,7 @@ import {
   type RepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import { loadAllPages } from "../repositories/paginatedRead";
 import { findMatchingTransactions } from "../utils/transactionMatching";
 import {
   booleanValue,
@@ -150,6 +151,9 @@ interface SelectedReadBudgetHistoryLoadMeta {
   budgetLoadedCount: number;
   budgetReportedCount?: number;
   budgetTruncated: boolean;
+  recipientLoadedCount: number;
+  recipientReportedCount?: number;
+  recipientTruncated: boolean;
 }
 
 type ListResult<Row> =
@@ -697,7 +701,7 @@ const BudgetHistory: React.FC = () => {
           budgetLoad,
           categoryLoad,
           bucketLoad,
-          recipientLoad,
+          recipientRows,
           accountLoad,
         ] = await Promise.all([
           loadPagedRows<unknown>(
@@ -720,10 +724,7 @@ const BudgetHistory: React.FC = () => {
             repositories.buckets.list,
             SELECTED_READ_LOOKUP_LIMIT,
           ),
-          loadPagedRows<unknown>(
-            repositories.recipients.list,
-            SELECTED_READ_LOOKUP_LIMIT,
-          ),
+          loadAllPages<unknown>(repositories.recipients.list),
           loadPagedRows<unknown>(
             repositories.accounts.list,
             SELECTED_READ_LOOKUP_LIMIT,
@@ -767,7 +768,7 @@ const BudgetHistory: React.FC = () => {
         );
         setRecipients(
           normalizeRows(
-            recipientLoad.rows,
+            recipientRows,
             normalizeRecipientRow,
             "budget_history_read_experiment_recipient_normalization_failed",
           ),
@@ -791,6 +792,9 @@ const BudgetHistory: React.FC = () => {
           budgetLoadedCount: budgetLoad.rows.length,
           budgetReportedCount: budgetLoad.reportedCount,
           budgetTruncated: budgetLoad.truncated,
+          recipientLoadedCount: recipientRows.length,
+          recipientReportedCount: recipientRows.length,
+          recipientTruncated: false,
         });
         setError("");
         return;
@@ -1922,7 +1926,8 @@ const BudgetHistory: React.FC = () => {
   const selectedReadInputsTruncated =
     selectedReadLoadMeta?.snapshotTruncated === true ||
     selectedReadLoadMeta?.transactionTruncated === true ||
-    selectedReadLoadMeta?.budgetTruncated === true;
+    selectedReadLoadMeta?.budgetTruncated === true ||
+    selectedReadLoadMeta?.recipientTruncated === true;
 
   return (
     <IonPage>
@@ -2034,7 +2039,9 @@ const BudgetHistory: React.FC = () => {
                   transactions={selectedReadLoadMeta.transactionLoadedCount}/
                   {selectedReadLoadMeta.transactionReportedCount ?? "-"} budgets=
                   {selectedReadLoadMeta.budgetLoadedCount}/
-                  {selectedReadLoadMeta.budgetReportedCount ?? "-"}
+                  {selectedReadLoadMeta.budgetReportedCount ?? "-"} recipients=
+                  {selectedReadLoadMeta.recipientLoadedCount}/
+                  {selectedReadLoadMeta.recipientReportedCount ?? "-"}
                 </p>
                 <p>
                   {selectedReadInputsTruncated

@@ -44,6 +44,7 @@ import {
   getRepositoryBackend,
 } from "../repositories/adapterSelection";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import { loadAllPages } from "../repositories/paginatedRead";
 import {
   activateRecipientInDisposableSqlite,
   createRecipientInDisposableSqlite,
@@ -66,6 +67,7 @@ import {
   stringValue,
 } from "../utils/devPreview";
 import type { Recipient } from "../db";
+import type { RecipientDto } from "../repositories/http/types";
 
 type DeleteState =
   | { type: "none" }
@@ -77,8 +79,6 @@ type DeleteState =
       recipientName: string;
       sqlitePlanFingerprint?: string;
     };
-
-const RECIPIENTS_LIST_LIMIT = 500;
 
 const dateValue = (value: unknown): Date => {
   if (value instanceof Date) {
@@ -203,12 +203,9 @@ const RecipientsManagement: React.FC = () => {
       setLoading(true);
       let all: Recipient[];
       const repositories = getSelectedReadRepositories(selectedBackend);
-      const result = await repositories.recipients.list({
-        limit: RECIPIENTS_LIST_LIMIT,
-        offset: 0,
-      });
-      const rows = previewRows(result as DevPreviewListResult);
-      if (!rows) throw new Error("authoritative_recipients_read_unavailable");
+      const rows = await loadAllPages<Recipient | RecipientDto>(
+        repositories.recipients.list,
+      );
       all = rows.map(selectedReadRowToRecipient);
       // Get transactions to count usage
       const reportedCount = await repositories.transactions.count();

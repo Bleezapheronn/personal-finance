@@ -46,6 +46,8 @@ import {
 } from "../repositories/adapterSelection";
 import { useLocalSqliteRuntime } from "../contexts/LocalSqliteRuntimeContext";
 import { getSelectedReadRepositories } from "../repositories/selectedReadRepositories";
+import { loadAllPages } from "../repositories/paginatedRead";
+import type { RecipientDto } from "../repositories/http/types";
 import {
   budgetDefinitionWriteErrorCode,
   createBudgetDefinitionInDisposableSqlite,
@@ -245,7 +247,7 @@ const AddBudget: React.FC = () => {
           repositories.buckets.list({ limit: 500 }),
           repositories.categories.list({ limit: 500 }),
           repositories.accounts.list({ limit: 500 }),
-          repositories.recipients.list({ limit: 500 }),
+          loadAllPages<Recipient | RecipientDto>(repositories.recipients.list),
           repositories.budgets.list({ limit: 500 }),
         ]);
         b = selectedRows(
